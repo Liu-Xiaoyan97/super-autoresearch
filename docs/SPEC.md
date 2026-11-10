@@ -236,7 +236,7 @@ From §3 and Appendix A.2 (page 30):
 | `venue_format` | ICLR 2025 | A.2 |
 
 Unspecified in the paper (our choice, documented in `config.py`): `N_seed = 8`, `N0 = 2`,
-`N_k = 1`, `N_e = 1`, `N_meta = 2`, `N_t = 1 + len(review.questions)`.
+`N_k = 1`, `N_e = 1`, `N_meta = 2`, `N_t = max(1, len(review.questions))`.
 
 **Citation note:** Listing 1 and Table 1 are on **p.5** (the stage abstraction); Figure 3 is on
 p.4; Figure 7 and the meta-review prose are on p.9; A.2 is on p.30.

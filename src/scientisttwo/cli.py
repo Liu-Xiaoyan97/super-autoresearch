@@ -131,6 +131,8 @@ async def _run(args: argparse.Namespace) -> int:
     overrides: dict[str, Any] = {"run_id": run_id, "out_dir": args.out, "seed": args.seed}
     if args.max_refine_rounds is not None:
         overrides["max_refine_rounds"] = args.max_refine_rounds
+    if args.max_review_refinements is not None:
+        overrides["max_review_refinements"] = args.max_review_refinements
     config = ScientistTwoConfig(**overrides)
     provider_name = "mock" if args.mock else args.provider
     options: dict[str, Any] = {}
@@ -204,6 +206,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     run.add_argument("--out", default="runs")
     run.add_argument("--seed", type=int, default=7)
     run.add_argument("--max-refine-rounds", type=int)
+    run.add_argument("--max-review-refinements", type=int,
+                     help="cap on review-driven enhancements (§3.5, A.2: at most once)")
     for name in ("inspect", "replay"):
         command = commands.add_parser(name)
         command.add_argument("run_id")
