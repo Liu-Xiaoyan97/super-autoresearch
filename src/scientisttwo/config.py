@@ -63,7 +63,12 @@ class ScientistTwoConfig(BaseModel):
 
     # ------------------------------------------- §3.2 idea evaluation
     n0: int = Field(default=2, ge=1)  # [CHOICE] top-N0 seeds implemented in round 0
-    max_eng_rounds: int = Field(default=2, ge=0)  # [PAPER] A.2
+    max_eng_rounds: int = Field(default=2, ge=0)  # [PAPER] A.2 "at most two rounds"
+    engineering_budget_scope: Literal["per_idea", "per_stage"] = "per_idea"
+    """A.2 does not say whether the two engineering rounds are total per idea or per
+    stage. "the Idea Critic Agent ... at most two rounds" spans both critics, so
+    per_idea (total) is the default; per_stage gives the subset and full-set loops
+    two rounds each, i.e. up to four per idea."""
     subset_fraction: float = 0.25  # [CHOICE] benchmark subset size
     subset_margin: float = 0.02  # [CHOICE] required subset gain to scale up
 

@@ -280,9 +280,12 @@ class IdeaImplementer(BaseAgent):
         trace.evidence.append(current)
         verdict = await self.subset_critic.judge(current, baseline=baseline)
         trace.lessons.append(verdict.feedback)
-        for _ in range(self.ctx.config.max_eng_rounds):
-            if verdict.decision != Decision.ENGINEER:
-                break
+        per_stage = self.ctx.config.engineering_budget_scope == "per_stage"
+        budget = self.ctx.config.max_eng_rounds
+        used = 0
+        while verdict.decision == Decision.ENGINEER and (per_stage or used < budget):
+            if not per_stage:
+                used += 1
             current = await self.subset_engineer.refine(idea, evidence=current, feedback=verdict.feedback)
             trace.evidence.append(current)
             verdict = await self.subset_critic.judge(current, baseline=baseline)
@@ -293,10 +296,10 @@ class IdeaImplementer(BaseAgent):
             return trace
         current = await self.full_set_coder.scale(idea, subset=current)
         trace.evidence.append(current)
-        attempts = 0
+        attempts = used
         verdict = await self.full_critic.judge(current, baseline=baseline, attempts=attempts)
         trace.lessons.append(verdict.feedback)
-        while verdict.decision == Decision.ENGINEER and attempts < self.ctx.config.max_eng_rounds:
+        while verdict.decision == Decision.ENGINEER and (per_stage or attempts < budget):
             idea, current = await self.full_engineer.refine(
                 idea, evidence=current, feedback=verdict.feedback, reason="full",
             )
