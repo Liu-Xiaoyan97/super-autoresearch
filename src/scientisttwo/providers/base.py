@@ -2,9 +2,18 @@
 
 Every agent talks to the world through a single ``LLMProvider``. ``task`` is the
 stable dispatch key: the offline provider routes on it, and real providers use it
-for routing/logging/telemetry. Agent output schemas must be pydantic models that
-can be constructed from ``{}`` (all fields defaulted) so the offline provider can
-always return a valid object.
+for routing/logging/telemetry.
+
+Contract on schemas:
+
+* top-level schemas passed to :meth:`LLMProvider.structured` must be constructible
+  from ``{}`` (envelope models with defaults), so malformed model output degrades to
+  a valid empty envelope instead of raising;
+* nested domain models (``Idea``, ``Claim``, ...) may have required fields - the
+  offline provider synthesizes them, and no agent may assume ``{}`` validates one.
+
+A non-default-constructible top-level schema raises :class:`LLMError` on malformed
+output, which is the signal that an envelope model is missing.
 """
 
 from __future__ import annotations

@@ -199,9 +199,16 @@ class LLMProvider(ABC):
 ```
 
 `LLMRequest.task` is a **stable string key** (defined as `BaseAgent.task` on every agent). The mock
-provider dispatches on it, so every agent MUST set a unique `task` classvar. Output schemas MUST be
-constructible from `{}` (all fields have defaults) so the offline provider can always return a valid
-object.
+provider dispatches on it, so every agent MUST set a unique `task` classvar.
+
+Output-schema rule, stated precisely:
+
+* every **top-level** schema an agent passes to `ask()` MUST be constructible from `{}` (envelope
+  models such as `IdeaBatch`, `AblationPlanBatch`, `_DraftOutput`, `Verdict` — all verified by
+  `tests/`), so a malformed model reply degrades instead of crashing;
+* **nested domain models** (`Idea`, `Claim`, `Limitation`, ...) legitimately have required fields.
+  The offline provider synthesizes those fields; an agent must never rely on `{}` validating a
+  domain model directly.
 
 ---
 
