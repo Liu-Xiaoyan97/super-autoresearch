@@ -17,7 +17,7 @@ from .core.orchestrator import Orchestrator
 from .providers import build_provider
 from .runtime.budget import Budget
 from .runtime.store import ArtifactStore, TraceStore, as_jsonable
-from .runtime.workspace import FileWorkspace, SimulatedRunner
+from .runtime.workspace import FileWorkspace
 from .types import FinalArtifacts, Problem
 
 __all__ = ["main", "reconstruct_decision_path"]
@@ -128,7 +128,9 @@ def _summary(
 async def _run(args: argparse.Namespace) -> int:
     problem = Problem.model_validate(_load_json(Path(args.fixture)))
     run_id = _new_run_id(args.out, problem, args.seed)
-    overrides: dict[str, Any] = {"run_id": run_id, "out_dir": args.out, "seed": args.seed}
+    overrides: dict[str, Any] = {
+        "run_id": run_id, "out_dir": args.out, "seed": args.seed, "runner": args.runner,
+    }
     if args.max_refine_rounds is not None:
         overrides["max_refine_rounds"] = args.max_refine_rounds
     if args.max_review_refinements is not None:
@@ -158,7 +160,9 @@ async def _run(args: argparse.Namespace) -> int:
         max_llm_calls=config.max_llm_calls, max_experiments=config.max_experiments,
         max_wall_time_s=config.max_wall_time_s,
     )
-    workspace = FileWorkspace(problem, config, str(root), runner=SimulatedRunner(problem, config, store))
+    # FileWorkspace picks SimulatedRunner/SubprocessRunner from config.runner; the CLI
+    # must not hard-code one, or --runner would be silently ignored.
+    workspace = FileWorkspace(problem, config, str(root))
     ctx = AgentContext(
         problem=problem, config=config, llm=llm, workspace=workspace,
         store=store, traces=traces, budget=budget,
@@ -205,6 +209,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     run.add_argument("--provider", default="mock", choices=["mock", "openai", "kimi", "openai_compat"])
     run.add_argument("--out", default="runs")
     run.add_argument("--seed", type=int, default=7)
+    run.add_argument("--runner", default="simulated", choices=["simulated", "subprocess"],
+                     help="simulated = deterministic offline model; subprocess = execute the repo")
     run.add_argument("--max-refine-rounds", type=int)
     run.add_argument("--max-review-refinements", type=int,
                      help="cap on review-driven enhancements (§3.5, A.2: at most once)")

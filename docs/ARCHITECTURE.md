@@ -163,9 +163,10 @@ contract could not express something; each one also states the workaround.
   metric that has a physical range.
 * **New model provider** → implement `LLMProvider.complete`, register in
   `providers.build_provider`, and add a `ModelRoute` per role in `ScientistTwoConfig`.
-* **Real execution** → `runner="subprocess"`; the repo needs `run_experiment.py` that writes
-  `{"metrics": {...}}` to `--out`. `SubprocessRunner` never raises; a crash becomes
-  `status="failed"` evidence.
+* **Real execution** → `runner="subprocess"` (`--runner subprocess`); the repo needs
+  `run_experiment.py` that writes `{"metrics": {...}}` to `--out`. `SubprocessRunner` never raises;
+  a crash becomes `status="failed"` evidence. `FileWorkspace` owns the choice — the CLI never
+  imports a runner type.
 * **New agent** → subclass `BaseAgent` (unique `NAME`, `task`, `role`), add it to
   `AgentBundle`, and wire it in `Orchestrator` — the mock provider synthesizes its outputs
   automatically for offline runs.

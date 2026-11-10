@@ -60,6 +60,9 @@ export PYTHONPATH=src
 python3 -m scientisttwo.cli run examples/ood_frozen_encoder.json --mock
 python3 -m scientisttwo.cli inspect <run_id>
 python3 -m scientisttwo.cli replay  <run_id>     # rebuilds decisions from traces.jsonl, no model calls
+
+# execute the repository for real instead of the deterministic simulator:
+python3 -m scientisttwo.cli run examples/ood_frozen_encoder.json --runner subprocess
 python3 -m pytest -q                             # fully offline suite
 ```
 
@@ -87,8 +90,10 @@ cfg = ScientistTwoConfig(
 llm = build_provider(cfg, "openai")   # OpenAI-compatible endpoint, key from $KIMI_API_KEY
 ```
 
-`runner="subprocess"` executes the repository for real; `runner="simulated"` is the deterministic
-offline execution used by the tests.
+`runner="subprocess"` executes the repository for real (`--runner subprocess` on the CLI); the
+default `simulated` backend is the deterministic offline execution the tests assert on. With the
+synthetic scaffold a real run cannot beat the reproduced baseline, so it aborts with
+`no_good_ideas` — that is the honest outcome, not a bug.
 
 ## Reading order
 

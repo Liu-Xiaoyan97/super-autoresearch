@@ -112,7 +112,9 @@ def test_replay_and_inspect_round_trip_without_model(
 
     monkeypatch.setattr("scientisttwo.cli.build_provider", forbidden)
     monkeypatch.setattr("scientisttwo.cli.FileWorkspace", forbidden)
-    monkeypatch.setattr("scientisttwo.cli.SimulatedRunner", forbidden)
+    # The CLI no longer imports runner types at all (FileWorkspace picks them from
+    # config.runner), so replay's "no workspace, no model" guarantee is covered by
+    # the two patches above.
     before = (root / "traces.jsonl").read_bytes()
     code, stdout, stderr = run_cli(["replay", root.name, "--out", str(out)])
     assert code == 0, stderr
