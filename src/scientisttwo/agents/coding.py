@@ -111,6 +111,8 @@ class BaselineCoder(BaseAgent):
         )
         if requested_scope == Scope.SUBSET:
             self.ctx.scratch["baseline"] = evidence
+        else:
+            self.ctx.scratch["baseline_full"] = evidence
         return evidence
 
 
@@ -295,9 +297,14 @@ class IdeaImplementer(BaseAgent):
             trace.decision = Decision.BAD
             return trace
         current = await self.full_set_coder.scale(idea, subset=current)
+        # Table 1: the subset gate compares against the *reproduced* baseline, but the
+        # full-set gate compares against the full-benchmark reference. Comparing a
+        # full-set number to a subset baseline would be an unmatched comparison.
+        full_baseline = self.ctx.scratch.get("baseline_full") or baseline
+        current = current.model_copy(update={"baseline_metrics": dict(full_baseline.metrics)})
         trace.evidence.append(current)
         attempts = used
-        verdict = await self.full_critic.judge(current, baseline=baseline, attempts=attempts)
+        verdict = await self.full_critic.judge(current, baseline=full_baseline, attempts=attempts)
         trace.lessons.append(verdict.feedback)
         while verdict.decision == Decision.ENGINEER and (per_stage or attempts < budget):
             idea, current = await self.full_engineer.refine(
@@ -306,7 +313,7 @@ class IdeaImplementer(BaseAgent):
             trace.idea = idea
             trace.evidence.append(current)
             attempts += 1
-            verdict = await self.full_critic.judge(current, baseline=baseline, attempts=attempts)
+            verdict = await self.full_critic.judge(current, baseline=full_baseline, attempts=attempts)
             trace.lessons.append(verdict.feedback)
         trace.decision = Decision.GOOD if verdict.decision == Decision.GOOD else Decision.BAD
         trace.feedback = verdict.feedback

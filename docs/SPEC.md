@@ -258,6 +258,7 @@ p.4; Figure 7 and the meta-review prose are on p.9; A.2 is on p.30.
 | Novelty cutoff exists ("filtering for those with high novelty", p.5) but no number is given | `min_novelty = 0.35` (`[CHOICE]`); the gate itself is paper-grounded, the threshold is ours |
 | `N_p`, `N_t`, numeric `N_meta` never stated | `[INFERENCE]`/`[CHOICE]` defaults above, all overridable |
 | A.2 caps peer review at 2 rounds, but Table 5 numbers rounds beyond 2 | config value is authoritative (`max_peer_rounds=2`); the table is treated as a variant setting |
+| Which reference does the full-set gate compare against? | **a reproduced full-benchmark baseline**, not the subset one (Table 1: subset → "reproduced baseline", full-set → "original SOTA"). The orchestrator reproduces both (`baseline.ok`, `baseline.full.ok`); unit tests that drive `IdeaImplementer` alone fall back to `ctx.scratch["baseline"]` |
 | A.2's two engineering rounds: per idea, or per stage (subset + full-set)? | **per idea, shared** by both loops (`engineering_budget_scope="per_idea"`, the literal reading of "the Idea Critic Agent ... at most two rounds"); `"per_stage"` restores 2+2 |
 | Ablation `Refine` exhausted without improvement | keep incumbent, continue to drafting (no abort) |
 | Meta `Refine` exhausted / not strictly better | keep incumbent, export with `accepted=False` (paper: "termination using the previous best outputs") |

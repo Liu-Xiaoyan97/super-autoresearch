@@ -226,6 +226,13 @@ class Orchestrator:
         self.ctx.budget.check()
         if self.state.baseline is None:
             self.state.baseline = await self.agents.baseline_coder.reproduce(scope="subset")
+        # Table 1 needs a *full-benchmark* reference for the final gate; reproduce it
+        # once here rather than reusing the subset number (I3: reproduce, never trust
+        # the paper's reported figure).
+        if "baseline_full" not in self.ctx.scratch:
+            full = await self.agents.baseline_coder.reproduce(scope="full")
+            self.ctx.scratch["baseline_full"] = full
+            self._transition("stage.baseline", "baseline.full.ok", metrics=full.metrics)
         self.ctx.scratch["baseline"] = self.state.baseline
         self._transition("stage.baseline", "baseline.ok" if self.state.baseline.ok() else "baseline.bad",
                          metrics=self.state.baseline.metrics)
