@@ -30,16 +30,18 @@ class AblationPlanner(BaseAgent):
     task = "ablation.plan"
 
     async def plan(self, idea: Idea, *, best: Evidence, n: int | None = None) -> list[AblationPlan]:
-        """Produce exactly configured N_p distinct component interventions (§3.4).
+        """Produce ``n`` distinct component interventions (§3.4).
 
-        ``n`` is retained for caller compatibility; the configured N_p is
-        authoritative. Offline defaults derive candidate components from the
-        idea and clearly label structural controls instead of stalling research.
+        ``n`` overrides ``config.n_ablation_plans`` for this call; ``None`` uses the
+        configured N_p. A provided-but-ignored argument would silently diverge from
+        the caller's intent, so it is honoured. Offline defaults derive candidate
+        components from the idea and clearly label structural controls instead of
+        stalling research.
         """
 
-        count = self.ctx.config.n_ablation_plans
+        count = self.ctx.config.n_ablation_plans if n is None else n
         if count <= 0:
-            raise ValueError("config.n_ablation_plans must be positive")
+            raise ValueError("ablation plan count must be positive")
         batch = await self.ask(
             AblationPlanBatch,
             user=(

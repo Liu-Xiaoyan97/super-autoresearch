@@ -239,7 +239,7 @@ From §3 and Appendix A.2 (page 30):
 | `max_peer_rounds` | 2 | "peer-review simulation runs for at most two rounds" |
 | `max_review_refinements` | 1 | "review-based refinement conducted at most once" |
 | `novelty_refs` | 2 | "retrieves two reference papers" |
-| `n_ablation_plans` N_p | 5 | [INFERENCE] from §B Table 15 ("5–6 ablations per paper"); the paper never states N_p |
+| `n_ablation_plans` N_p | 5 | [INFERENCE] from §B Table 15 ("5–6 ablations per paper"); the paper never states N_p. `AblationPlanner.plan(n=...)` overrides it per call |
 | `venue_format` | ICLR 2025 | A.2 |
 
 Unspecified in the paper (our choice, documented in `config.py`): `N_seed = 8`, `N0 = 2`,

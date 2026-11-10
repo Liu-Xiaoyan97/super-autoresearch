@@ -297,3 +297,12 @@ def test_meta_unsupported_claim_cannot_accept(tmp_path: Path) -> None:
     paper.claims[0].value = 0.99
     result = asyncio.run(MetaReviewer(ctx).decide(paper, Review(score=10)))
     assert result.decision == "refine" and "does not match" in result.critique
+
+
+def test_planner_honours_an_explicit_count(tmp_path: Path) -> None:
+    """`n` is not decorative: it overrides the configured N_p for that call."""
+
+    ctx = make_context(tmp_path, n_ablation_plans=6)
+    assert len(asyncio.run(AblationPlanner(ctx).plan(idea(), best=best(), n=3))) == 3
+    assert len(asyncio.run(AblationPlanner(ctx).plan(idea(), best=best()))) == 6
+    assert len(asyncio.run(AblationPlanner(ctx).plan(idea(), best=best(), n=1))) == 1
