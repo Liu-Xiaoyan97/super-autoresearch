@@ -250,6 +250,18 @@ class MockLLMProvider(LLMProvider):
         "novelty_ref": "Prior work does not combine these components under this protocol.",
     }
 
+    #: A plausible component inventory, so an offline ablation table reads like a
+    #: real one instead of five variants of a single name.
+    _COMPONENTS = (
+        "primary mechanism",
+        "auxiliary alignment term",
+        "spectral prior",
+        "safety/calibration gate",
+        "prototype residual",
+        "input representation",
+        "regularization schedule",
+    )
+
     def _text(self, name: str, prefix: str, path: str, index: int = 0) -> str:
         """Readable template + a unique variant marker.
 
@@ -261,6 +273,12 @@ class MockLLMProvider(LLMProvider):
         base = self._TEMPLATES.get(name)
         if base:
             self._text_seq += 1
+            if name == "component":
+                # Cycle by *position in the batch* (index is the item index for list
+                # fields), so one plan batch covers N distinct components. Repeats
+                # across batches are fine: plan IDs stay unique, and two ideas may
+                # legitimately ablate the same kind of component.
+                return self._COMPONENTS[index % len(self._COMPONENTS)]
             return f"{base} (variant {self._text_seq})"
         return f"{name.replace('_', ' ').strip().capitalize()} for candidate {prefix}."
 
