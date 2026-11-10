@@ -48,7 +48,7 @@ class ScientistTwoConfig(BaseModel):
     n_seed: int = Field(default=8, ge=1)  # [CHOICE] N_seed
     max_limitation_rounds: int = Field(default=16, ge=1)  # [PAPER] A.2
     novelty_refs: int = Field(default=2, ge=0)  # [PAPER] A.2 ("two reference papers")
-    min_novelty: float = 0.35  # [CHOICE] reject seeds below this score
+    min_novelty: float = 0.35  # [PAPER] the gate exists (p.5 "filtering for those with high novelty"); threshold [CHOICE]
     min_limitations: int = 3  # [CHOICE] verifier floor before accepting a set
 
     # ------------------------------------------- exploration guidance [EXTENSION]
@@ -68,7 +68,7 @@ class ScientistTwoConfig(BaseModel):
     subset_margin: float = 0.02  # [CHOICE] required subset gain to scale up
 
     # ------------------------------------------- §3.3 idea refinement
-    max_refine_rounds: int = Field(default=4, ge=1)  # [PAPER] A.2
+    max_refine_rounds: int = Field(default=4, ge=1)  # [PAPER] A.2 "up to four rounds" = refinement rounds k>=1; round 0 is separate
     success_target: int = Field(default=4, ge=1)  # [PAPER] A.2
     n_evolved: int = Field(default=1, ge=0)  # [PAPER] A.2 ("one ... evolved idea")
     n_explore: int = Field(default=1, ge=0)  # [PAPER] A.2 ("one selected from the seed ideas")

@@ -246,6 +246,9 @@ p.4; Figure 7 and the meta-review prose are on p.9; A.2 is on p.30.
 | Ambiguity | Resolution |
 |---|---|
 | §3.3 writes `R0` over all of `H0` but the prose evaluates only top-`N0` | round 0 evaluates **exactly** top-`n0`; unevaluated seeds stay available for exploration |
+| A.2 says every round is "one seed + one evolved", but round 0 cannot evolve (no traces exist yet) | round 0 is seed-only (`n0` seeds); rounds `k >= 1` are `n_evolved` evolved + `n_explore` untouched seeds |
+| A.2's "up to four rounds" vs §3.3's `k = 0` bootstrap | `max_refine_rounds = 4` counts **refinement** rounds (`k >= 1`), so a full run has up to 5 evaluation batches / 10 candidates; set `--max-refine-rounds 3` for the "4 total rounds" reading |
+| Novelty cutoff exists ("filtering for those with high novelty", p.5) but no number is given | `min_novelty = 0.35` (`[CHOICE]`); the gate itself is paper-grounded, the threshold is ours |
 | `N_p`, `N_t`, numeric `N_meta` never stated | `[INFERENCE]`/`[CHOICE]` defaults above, all overridable |
 | A.2 caps peer review at 2 rounds, but Table 5 numbers rounds beyond 2 | config value is authoritative (`max_peer_rounds=2`); the table is treated as a variant setting |
 | Ablation `Refine` exhausted without improvement | keep incumbent, continue to drafting (no abort) |
