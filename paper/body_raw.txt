@@ -1,0 +1,3694 @@
+2026-09-18
+
+ScientistTwo: Pioneering the Human
+Knowledge Frontier with Autonomous AI
+Jaehyun Nam1 , Jinsung Yoon1 , Yanzhou Pan1 , Yubo Wang2 , Rui Meng1 , Parthasarathy Ranganathan1 and
+Tomas Pfister1
+
+arXiv:2609.19644v1 [cs.AI] 17 Sep 2026
+
+1 Google Cloud AI Research, 2 University of Waterloo
+
+Scientific discovery is defined by the ability to identify the boundaries of existing knowledge and
+venture into unexplored territory. The ultimate vision for AI in science is problem-driven autonomous
+research: given a fundamental challenge by a human expert, the AI independently navigates the scientific
+landscape, uncovers theoretical and empirical bottlenecks, and systematically expands the frontier of
+knowledge. In this paper, we introduce ScientistTwo, a fully autonomous multi-agent framework designed
+to realize this vision. Specifically, ScientistTwo takes an initial problem as input, establishes state-ofthe-art baselines, formulates novel hypotheses, and coordinates specialized agents to orchestrate an
+end-to-end discovery cycle without human intervention. Moreover, the framework rigorously conducts
+experiments using diverse datasets and metrics, refines methodologies through automated ablation
+studies, and validates research findings via a closed-loop simulated peer-review rebuttal engine. To
+evaluate ScientistTwo’s capabilities against the highest standards of human scientific achievement, we
+benchmark it across papers accepted at top-tier conferences such as ICLR, ICML, and NeurIPS. As a result,
+ScientistTwo autonomously generates expert-level, publishable papers and fully verified, executable
+codebases. Its solutions consistently outperform human state-of-the-art models, and achieve higher
+average review ratings than human-authored papers under automated AI review agents. These results
+show that ScientistTwo is not merely an assistive tool but an autonomous scientific pioneer capable of
+pushing the frontiers of human discovery. Project website: https://scientist-two.github.io/
+
+1. Introduction
+Scientific discovery has long been the hallmark of human ingenuity, defined by the ability to identify
+the boundaries of current knowledge and venture into the unknown. With the rapid advancement of
+foundation models (Liu et al., 2024; Singh et al., 2025; Team et al., 2023), artificial intelligence (AI)
+is transitioning from a passive conversational assistant to an active participant in the scientific process
+(Jansen et al., 2025; Meng et al., 2026; Xu and Peng, 2025). The ultimate ambition of this paradigm
+is purely problem-driven autonomous discovery: a human researcher simply specifies a scientific
+challenge, and an autonomous AI independently navigates the landscape of human knowledge,
+diagnoses theoretical and empirical bottlenecks, formulates novel hypotheses, and executes the
+end-to-end research lifecycle on its own to pioneer the human knowledge frontier.
+Despite recent progress in the field of autonomous research agents (Tang et al., 2026a; Weng et al.,
+2025; Yamada et al., 2025), a substantial gap remains between automated assistant systems and
+rigorous empirical scientific standards. Existing systems primarily focus on optimizing single-scalar
+metrics on isolated benchmarks, lacking the multi-dimensional reasoning capabilities required to
+tackle complex scientific problems (Chen et al., 2026c; Jin et al., 2026). More importantly, current
+agents lack the closed-loop empirical rigor of human scientists who continuously iterate based on
+evidence. They cannot systematically conduct ablation studies to isolate causal mechanisms for
+improvement, nor can they engage in dynamic peer-review processes essential for validating ideas
+and addressing methodological critiques through targeted supplementary experiments.
+
+Corresponding author(s): jaehyunnam@google.com, jinsungyoon@google.com
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Human Frontier
+
+Failed to Improve
+
+0-10% Gain
+
+10-25% Gain
+
+25-50% Gain
+
+50-75% Gain
+
+75-100% Gain
+
+> 100% Gain
+
+Upper Bound
+
+Expanded Frontier
+Ap
+
+pli
+
+ca
+
+tio
+
+ns
+
+RL
+
+Deep Learning
+
+Social A
+spects
+
+ry
+eo
+Th
+
+Human SOTA
+
+li
+bi
+
+a
+ob
+Pr
+ic
+st
+
+lM
+ra
+
+L
+
+Optimiz
+
+ne
+Ge
+
+ation
+
+(a) Expanded Frontier by ScientistTwo
+
+(b) Relative Gain compared to Human SOTA
+
+Figure 1 | Teaser. ScientistTwo pushes the frontier of human knowledge across diverse research
+domains (e.g., LLMs, robotics, neuroscience, speech, robustness, reinforcement learning, game theory,
+privacy, optimization, and time series) by generating publication-quality papers and fully verified
+codebases, with the resulting methodologies consistently outperforming human state-of-the-art
+baselines. Specifically, ScientistTwo improves 86 out of 107 papers (an 80.4% success rate) with an
+average relative improvement of 25.2% over human state-of-the-art methods. Furthermore, papers
+generated by ScientistTwo surpass the average scores of accepted papers at ICLR 2026 and NeurIPS
+2025 under the Stanford Agentic Reviewer, demonstrating its capability to produce manuscripts that
+reach the empirical acceptance standards of top-tier AI venues.
+To overcome these fundamental challenges, we introduce ScientistTwo, an expert-level autonomous
+multi-agent framework designed to pioneer the frontier of human knowledge (see Figure 1). Specifically, ScientistTwo operates on a foundational division of labor: the human researcher defines
+the target scientific challenge, while the AI autonomously orchestrates the path to advance it. To
+rigorously demonstrate this capability against the highest standard of scientific rigor, we subject
+ScientistTwo to the real-world testing ground: given competitive peer-reviewed human research from
+top-tier AI venues (e.g., ICLR, ICML, NeurIPS), ScientistTwo must independently discover meaningful
+advancements beyond the established state-of-the-art, while simultaneously demonstrating that its
+autonomous scientific discovery process is measurable, reproducible, and transparent.
+To achieve expert-level rigor across diverse disciplines demanded by top-tier science, ScientistTwo coordinates a collaborative ecosystem of specialized agents (see Figure 3):
+• Holistic Benchmark Reasoning & Efficient Screening: Rather than overfitting to a single metric,
+ScientistTwo evaluates proposed ideas across comprehensive, multi-dataset benchmarks. To
+balance computation efficiency, it employs a subset-first evaluation strategy, rapidly filtering
+ideas on representative benchmark slices before allocating compute to full-scale experiments.
+2
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Under review as a conference paper at ICLR 2025
+
+000
+001
+002
+003
+004
+005
+006
+007
+008
+009
+010
+011
+012
+013
+
+Anonymous authors
+Paper under double-blind review
+
+019
+020
+021
+022
+023
+024
+025
+026
+027
+028
+029
+030
+031
+032
+033
+034
+035
+036
+
+042
+043
+044
+045
+046
+047
+048
+049
+050
+051
+052
+053
+
+1
+
+054
+055
+056
+057
+058
+059
+060
+061
+062
+063
+064
+065
+066
+067
+
+A BSTRACT
+Byte Pair Encoding (BPE) subword tokenization is a foundational computational
+primitive in large language model (LLM) pipelines, yet its dynamic greedy priority heap maintenance and pointer-chasing search tree raversals present significant throughput bottlenecks in streaming inference and massive data preprocessing. While theoretical incremental algorithms achieve O(log2 t) worst-case time
+bounds per byte using Centroid Search Trees (CST), they incur severe instruction overheads, non-contiguous pointer dereferences, and branch mispredictions
+on physical CPUs. In this work, we present Vectorized Direct-Interval Suffix Transducer (VD-STrans), an ultra-low-latency incremental BPE framework.
+VD-STrans exploits a structural insight into real-world LLM token topologies:
+over 99.1% to 99.8% of all Suffix-Successor Trees SufSucTree(ω ) in production
+vocabularies contain at most 8 nodes. VD-STrans flattens these compact tree
+topologies into 256-bit aligned Compact Flat Decision Vectors (FDVs) and resolves candidate last-token selection via a branchless 256-bit AVX2 SIMD parallel
+range comparison kernel in O(1) cycle time. Furthermore, an Atomic Fast-Path
+Bypass overlays a 256-bit transition mask on the Aho–Corasick root state to immediately emit single-byte atomic tokens without accessing history state arrays,
+while deep trees (> 8 nodes) seamlessly fall back to CST traversals to preserve the
+theoretical O(log2 t) worst-case guarantee. Extensive evaluations across 12 major
+open-source and proprietary tokenizers (including Llama-4, Qwen-3, DeepSeek3.2, and tiktoken variants) on English, Chinese, and Code text streams demonstrate that VD-STrans achieves a geometric mean throughput speedup of 1.123→
+over state-of-the-art incremental BPE (with peak speedups of 1.271→) and up to
+23.64→ over standard heap-based BPE, while maintaining 100% exact tokenization fidelity.
+
+014
+015
+016
+017
+018
+
+037
+038
+039
+040
+041
+
+Under review as a conference paper at ICLR 2025
+
+VD-ST RANS : U LTRA -L OW-L ATENCY I NCREMENTAL
+B YTE PAIR E NCODING VIA V ECTORIZED D IRECTI NTERVAL S UFFIX T RANSDUCTION
+
+068
+069
+070
+071
+072
+073
+074
+075
+076
+077
+078
+
+To enable streaming processing without full-sequence buffering or regex dependencies, recent work
+by Jiang & Gong (2026) introduced an incremental BPE algorithm. By formalizing the Prefix Consistency property (Berglund & van der Merwe, 2023) and introducing Suffix-Successor Trees and
+Centroid Search Trees (CST), this approach incrementally updates the valid tokenization prefix in
+O(log2 t) worst-case time per byte, supported by fast Aho–Corasick state tracking (Kanda et al.,
+2022).
+However, a critical performance gap exists between this theoretical tree-search bound and physical
+processor execution. Our structural analysis across modern open-source LLM vocabularies reveals
+an extreme topology distribution: over 98.6% to 99.8% of all Suffix-Successor Trees SufSucTree(ω )
+contain at most 8 nodes, with an average tree depth of only 2 to 3 nodes. Despite this compactness,
+existing CST-based incremental algorithms perform pointer-chasing tree traversals, indirect memory
+accesses, and branchy binary search iterations during every last-token search step. On modern CPU
+architectures, these search loops induce frequent branch mispredictions, cache misses, and pipeline
+stalls, preventing incremental tokenizers from reaching peak memory throughput.
+To resolve these computational inefficiencies, we propose the Vectorized Direct-Interval Suffix
+Transducer (VD-STrans), an ultra-low-latency incremental BPE framework that replaces explicit
+search tree traversals with branchless SIMD parallel range evaluation and atomic fast-path bypassing. VD-STrans introduces three core technical innovations:
+1. Compact Flat Decision Vectors (FDV): For every canonical token whose SuffixSuccessor Tree contains 8 or fewer nodes (→ 8), VD-STrans flattens the hierarchical
+tree topology into a contiguous memory layout storing candidate token IDs, suffix history
+offsets |suc(ti )|, and Depth-First Search (DFS) pre-order entry/exit interval timestamps
+[Lti , Rti ).
+2. Branchless SIMD Parallel Interval Range Kernel: Rather than executing iterative tree
+searches or binary loops, VD-STrans fetches history timestamps dfsin(H(|sc| ↑ |suc(ti )|))
+for all candidates simultaneously and evaluates interval membership [Lti , Rti ) in parallel using a single 256-bit AVX2 SIMD vector comparison ( mm256 cmpgt epi32 and
+mm256 and si256). A bitmask extraction ( mm256 movemask ps) and trailing-zerocount instruction (tzcnt) identify the exact valid last token ε(sc) in O(1) branchless
+execution time.
+3. Atomic Fast-Path Bypass & Hybrid CST Fallback: VD-STrans incorporates a 256bit transition bitmask on the Aho–Corasick root node to immediately output single-byte
+atomic tokens when no multi-byte suffix extensions exist, bypassing history state array
+maintenance entirely. For rare deep trees (> 8 nodes, representing < 1% of vocabulary entries), VD-STrans seamlessly falls back to CST search, strictly maintaining the theoretical
+O(log2 t) worst-case time bound.
+
+079
+080
+081
+082
+083
+084
+085
+086
+087
+088
+089
+090
+
+I NTRODUCTION
+
+Subword tokenization is an essential preprocessing step in modern large language model (LLM)
+pipelines, serving as the bridge between raw character streams and discrete token representations
+(Sennrich et al., 2015; Dubey et al., 2024). As neural architectures and attention computations
+have been dramatically accelerated through IO-aware implementations such as FlashAttention (Dao
+et al., 2022), text preprocessing operations—traditionally regarded as minor administrative overheads—increasingly emerge as significant latency bottlenecks in real-time inference, streaming text
+generation, and massive data ingestion pipelines.
+Among various subword segmentation schemes, Byte Pair Encoding (BPE) (Sennrich et al., 2015)
+remains the de facto standard due to its deterministic greedy merge logic and effective vocabulary
+compression, alongside probabilistic alternatives such as Unigram language modeling (Kudo, 2018;
+Bostrom & Durrett, 2020) and regularized variants like BPE-dropout (Provilkov et al., 2019). Standard offline BPE tokenizers (e.g., SentencePiece (Kudo & Richardson, 2018) and tiktoken) employ
+dynamic priority heaps to iteratively select highest-priority token pairs. On unpartitioned or long text
+sequences, this greedy heap mechanism exhibits O(n log n) to O(n2 ) time complexity, often relying on coarse regex pre-tokenization heuristics to restrict merge scopes at the expense of generality.
+
+091
+092
+093
+094
+095
+096
+097
+098
+099
+100
+101
+102
+103
+104
+105
+106
+107
+
+We evaluate VD-STrans across 12 diverse LLM tokenizers (including Llama 3.1, Qwen-3,
+DeepSeek-3.2, and OpenAI tiktoken encodings) and real-world datasets spanning English, Chinese,
+and Code text domains. Across all 72 evaluated benchmark configurations, VD-STrans achieves
+a geometric mean speedup of 1.123↓ over the state-of-the-art CST incremental algorithm (with
+peak speedups up to 1.271↓) and up to 23.64↓ over standard offline heap implementations on nonpretokenized text streams, while guaranteeing 100% byte-identical tokenization accuracy and robust
+worst-case stability. While the state-of-the-art CST baseline already captured the primary algorithmic gains over naive priority heaps, VD-STrans eliminates the remaining physical CPU execution
+bottlenecks—yielding a vital 12.3% average throughput boost (and up to 27.1% peak) that directly
+translates into hardware infrastructure savings for streaming inference serving.
+
+2
+
+R ELATED W ORK
+
+Subword tokenization and offline BPE. Subword tokenization is a foundational component
+of modern NLP pipelines (Sennrich et al., 2015; Kudo, 2018; Bostrom & Durrett, 2020). Byte
+Pair Encoding (BPE), adapted from dictionary compression (Gallé, 2019), iteratively merges the
+most frequent adjacent pairs into vocabulary entries. Practical implementations—Hugging Face
+
+1
+
+M = mm256 and si256(Mlower , Mupper )
+
+278
+279
+280
+281
+282
+283
+284
+285
+286
+287
+288
+289
+290
+291
+292
+293
+294
+295
+296
+297
+298
+299
+300
+301
+302
+303
+304
+305
+306
+307
+308
+309
+310
+311
+312
+313
+314
+315
+316
+317
+318
+319
+320
+321
+322
+323
+
+(8)
+
+4. Bitmask Extraction: The 8-lane SIMD result is packed into an 8-bit scalar bitmask m →
+{0, . . . , 255} using sign-bit extraction:
+m = mm256 movemask ps( mm256 castsi256 ps(M))
+
+(9)
+
+5. Branchless Selection via Hardware Trailing-Zero Count: Candidates in FDV are ordered deepest-first. Because sibling intervals are mutually exclusive (Section 4.3 in Jiang
+& Gong (2026)), the deepest valid token corresponds strictly to the lowest set bit in m.
+The exact lane index idx is pinpointed in a single clock cycle using the hardware bit-scan
+instruction tzcnt:
+idx = tzcnt(m), ω(sc) = t[idx]
+(10)
+This vector pipeline resolves candidate validation in O(1) constant time with zero control flow
+branches, rendering execution latency completely immune to branch mispredictions.
+Unrolled Scalar Gather vs. Native Vector Gather. In Stage 1, non-contiguous history
+timestamps are retrieved into vector registers. While hardware vector gather instructions
+( mm256 i32gather epi32) exist, microarchitectural benchmarking across Intel (Ice Lake,
+Sapphire Rapids) and AMD (Zen 3, Zen 4) processors reveals that native gather instructions incur high instruction latencies (12–20 clock cycles) due to internal microcode serialization and L1
+memory port contention. In contrast, an unrolled scalar load loop into a 32-byte cache-aligned
+temporary buffer followed by a single contiguous vector load ( mm256 load si256) executes in
+only 5–7 cycles for N = 8 lanes, completely avoiding microcode sequencing stalls (see detailed
+microarchitectural breakdown in Appendix B).
+3.4
+
+ATOMIC FAST-PATH B YPASS AND H YBRID CST FALLBACK
+
+Atomic Fast-Path Bypass. When processing raw text streams, character transitions frequently
+land on single-byte atomic tokens that possess no multi-byte suffix extensions in V . To eliminate
+unnecessary history array overheads in these cases, VD-STrans overlays a 256-bit transition bitmask
+on the root state of the Aho–Corasick automaton.
+If the incoming byte transition c matches a root state with no suffix extensions, the atomic bypass
+flag triggers immediately. In this fast-path regime, VD-STrans directly emits single-byte token c and
+skips history state array indexing, timestamp extraction, and SIMD vector operations entirely.
+Hybrid CST Fallback. For rare deep Suffix-Successor Trees where |SufSucTree(ε )| > 8 (representing < 0.8% of vocabulary entries), flat SIMD register capacity is exceeded. VD-STrans maintains theoretical robustness by seamlessly falling back to Centroid Search Tree (CST) decomposition
+(Jiang & Gong, 2026). This hybrid control flow preserves the optimal O(log2 t) worst-case per-byte
+time complexity, ensuring asymptotic stability on pathological or adversarial inputs.
+
+4
+
+E XPERIMENTS
+
+In this section, we present an empirical evaluation of VD-STrans against baseline implementations
+across diverse LLM vocabularies, text datasets, and execution regimes. We then provide detailed
+ablation studies dissecting every structural component.
+4.1
+
+110
+111
+112
+113
+114
+115
+116
+117
+118
+119
+120
+121
+122
+123
+124
+125
+126
+127
+128
+129
+130
+131
+132
+133
+134
+135
+136
+137
+138
+139
+140
+141
+142
+143
+144
+145
+146
+147
+148
+149
+150
+151
+152
+153
+154
+155
+156
+157
+158
+159
+160
+161
+
+E XPERIMENTAL S ETUP
+
+Hardware Environment. All benchmarks were executed on a bare-metal server powered by an
+Intel Xeon Platinum 8362 CPU @ 2.80GHz (32 physical cores, 128 GB RAM) running Linux.
+To eliminate measurement noise, CPU execution was pinned to a single NUMA node, with
+Hyper-Threading (SMT), Turbo Boost, and Address Space Layout Randomization (ASLR) disabled. Benchmarks utilized 30 parallel workers running isolated single-threaded processes with
+the mimalloc allocator.
+6
+
+324
+325
+326
+327
+328
+329
+330
+331
+332
+333
+334
+335
+336
+337
+338
+339
+340
+341
+342
+343
+344
+345
+346
+347
+348
+349
+350
+351
+352
+353
+354
+355
+356
+357
+358
+359
+360
+361
+362
+363
+364
+365
+366
+367
+368
+369
+370
+371
+
+Incremental tokenization and search-tree structures. Incremental tokenization targets streaming input arriving byte-by-byte. Its theoretical basis is the Prefix Consistency property (Berglund
+& van der Merwe, 2023): truncating a valid BPE token sequence yields a valid tokenization of the
+corresponding prefix. Building on this, Berglund et al. (2024) study DFA constructions for BPE
+transduction and Mamouras et al. (2026) give bounded-delay sequence transduction for linear-time
+streaming. To maintain exact standard BPE semantics without delay bounds or regex partitioning, Jiang & Gong (2026) introduced an incremental BPE algorithm over Aho–Corasick automata
+(Kanda et al., 2022) and Suffix-Successor Trees, applying Centroid Decomposition (Gagie et al.,
+2013) to precompute Centroid Search Trees (CST) with an O(log2 t) per-byte bound. Yet CST
+traversals incur heavy pointer-chasing on modern CPUs. VD-STrans resolves this by observing that
+> 99% of Suffix-Successor Trees are small (→ 8 nodes), replacing pointer searches with branchless
+vector comparisons over flat arrays.
+Hardware-accelerated string processing and SIMD. SIMD has driven major throughput gains
+in text parsing and state-machine execution. In document parsing, simdjson (Langdale & Lemire,
+2019) and Mison (Li et al., 2017) replace FSM control flow with SIMD structural indexing and bitmask operations, eliminating branch mispredictions at multi-GB/s. For comparison-based search,
+Khuong & Morin (2015) show that contiguous, cache-aligned layouts with branchless vector instructions outperform pointer-based trees for small sets (N → 16). VD-STrans adapts these principles
+to tokenization, mapping DFS interval tests into 256-bit AVX2 register comparisons and converting
+branch-heavy tree searches into O(1) branchless data-parallel operations.
+
+3
+
+M ETHODOLOGY
+
+In this section, we present the mathematical and structural framework of Vectorized Direct-Interval
+Suffix Transduction (VD-STrans). We first review the formal topological foundations of incremental
+Byte Pair Encoding (BPE), define the Prefix Last-Token Condition and Depth-First Search (DFS)
+linearization, and then detail our high-performance hardware vectorization scheme, atomic fast-path
+bypass, and hybrid centroid search fallback.
+3.1
+
+S TRUCTURAL F OUNDATIONS OF I NCREMENTAL BPE
+
+Let ! be a finite byte alphabet, and let V ↑ !+ denote a finite subword vocabulary consisting of
+atomic tokens (|t| = 1) and non-atomic tokens (|t| > 1). A merge dictionary D = [r1 , r2 , . . . , rm ]
+defines an ordered sequence of merge rules, where each rule ri = (x, y) ↓ z merges adjacent
+tokens x, y ↔ V into z = xy with priority rank i.
+
+The tokenization TD (s) of a string s ↔ !+ under dictionary D is obtained by mapping s to byte
+sequence ω0 and sequentially applying priority merge rules:
+TD (s) = (Trm ↗ · · · ↗ Tr2 ↗ Tr1 )(ω0 )
+(1)
+Incremental BPE relies on the Prefix Consistency property (Berglund & van der Merwe, 2023),
+stated below.
+Lemma 1 (Prefix Consistency). Let s be a string and ε = T (s) be its valid BPE token sequence.
+For any proper prefix token sequence µ ↘ ε, T (ϑ(µ)) = µ, where ϑ(µ) is the detokenized string
+concatenation of µ.
+By Lemma 1, the BPE sequence of s can be expressed recursively in terms of its Last Token ϖ(s) =
+last(T (s)):
+T (s) = T (spre ) ≃ [ϖ(s)]
+(2)
+
+372
+373
+374
+375
+376
+377
+
+Tokenizer Model
+
+English
+
+Speedup over Inc-orig (VD/orig →)
+Chinese
+
+Code
+
+Speedup over Heap Base (VD/Base →)
+English
+
+Chinese
+
+Code
+
+CodeLlama
+Qwen-3
+DeepSeek-3.2
+Ouro
+Llama-3.1*
+GPT-OSS
+Llama-4
+Mistral-3
+P50K
+R50K
+CL100K
+O200K
+
+1.18→
+1.17→
+1.17→
+1.13→
+1.17→
+1.17→
+1.19→
+1.15→
+1.14→
+1.15→
+1.16→
+1.17→
+
+1.15→
+1.05→
+1.05→
+1.06→
+1.02→
+1.03→
+1.08→
+1.00→
+1.08→
+1.07→
+1.00→
+1.03→
+
+1.11→
+1.16→
+1.15→
+1.12→
+1.15→
+1.13→
+1.16→
+1.14→
+1.11→
+1.10→
+1.15→
+1.16→
+
+21.64→
+17.70→
+18.22→
+18.49→
+17.51→
+17.53→
+17.89→
+17.00→
+18.92→
+18.54→
+17.62→
+16.67→
+
+1.93→
+15.94→
+14.53→
+13.22→
+21.81→
+19.91→
+19.87→
+18.91→
+11.07→
+11.58→
+16.59→
+19.18→
+
+23.64→
+19.74→
+21.32→
+22.73→
+19.12→
+18.62→
+19.66→
+19.43→
+22.62→
+19.51→
+18.62→
+18.67→
+
+Geomean
+
+1.16→
+
+1.05→
+
+1.14→
+
+18.11→
+
+13.58→
+
+20.24→
+
+Datasets. Following standard evaluation protocols, we compiled three benchmark datasets totaling
+→ 50 MB from public sources:
+• English: 3,791 documents (16.8 MB) sampled from Wikipedia (20231101 dump).
+• Chinese: 4,054 documents (16.8 MB) sampled from Chinese Wikipedia.
+• Code: 2,491 documents (16.8 MB) sampled from RedPajama GitHub code repositories.
+
+218
+219
+220
+221
+222
+223
+
+170
+171
+172
+173
+174
+175
+
+224
+225
+226
+227
+228
+229
+
+176
+177
+178
+179
+180
+181
+182
+183
+184
+185
+186
+187
+188
+189
+190
+191
+192
+193
+194
+195
+196
+197
+198
+199
+200
+201
+202
+203
+204
+205
+206
+207
+208
+209
+210
+211
+212
+213
+214
+215
+
+Figure 1: Systematic architecture and execution pipeline of VD-STrans. Panel A illustrates the
+pointerless flattening of small Suffix-Successor Trees (size up to 8 nodes, representing 99.9% of
+cases in LLM vocabularies) into 256-bit aligned Compact Flat Decision Vectors (FDVs). Panel
+B details the AVX2 256-bit SIMD branchless engine, which loads history DFS timestamps and
+interval bounds into vector registers to evaluate candidate validity in parallel, selecting the valid
+last token in O(1) time using bitmask extraction
+trailing-zero counting. Panel C depicts the
+overall control flow, featuring an atomic fast-path bypass for immediate single-byte token output,
+the default vectorized SIMD path, and a Centroid Search Tree search fallback for deep trees (> 8
+nodes) to preserve the theoretical O(log2 t) worst-case time complexity.
+where spre is the string prefix obtained by removing the suffix corresponding to token ω(s), and
+→ denotes token list concatenation. When appending a character c to an existing string s to form
+s→ = sc, incremental tokenization reduces to identifying the new last token ω(sc) ↑ V .
+
+241
+242
+243
+244
+245
+246
+
+Vocabulary Normalization and Successor Forest. To eliminate non-canonical redundancies, we
+normalize V such that very token t ↑ V satisfies TD (t) = [t]. For non-atomic t, determinism yields
+a unique canonical rule (x, y) ↓ t, establishing predecessor pre(t) = x and successor suc(t) = y.
+The Successor Forest Fsuc = (V, E) is a directed acyclic graph with edges E = {(u, suc(u)) | u ↑
+V, |u| > 1} directed toward successors. Because length strictly decreases (|suc(u)| < |u|), Fsuc
+forms a set of trees rooted at atomic character tokens.
+
+247
+248
+249
+250
+251
+252
+
+Suffix-Successor Tree. For any canonical token ε ↑ V , the Suffix-Successor Tree, denoted as
+SufSucTree(ε ), is the subgraph of Fsuc induced by all canonical tokens that form suffixes of ε .
+Because all candidate suffix tokens of sc share the same final character c, SufSucTree(ε (sc)) forms
+a unified tree structure rooted at atomic token c, where ε (sc) is the longest canonical suffix token
+recognized by an Aho–Corasick automaton maintained over V .
+Prefix Last-Token Condition and Monotonic Path Property. To determine whether node t ↑
+SufSucTree(ε (sc)) represents the exact last token ω(sc), t must satisfy structural reachability and
+priority dominance constraints.
+Definition 1 (Prefix Last-Token Condition). For string s and suffix token t ↑ V , t satisfies the Prefix
+Last-Token Condition if t is atomic, or if t is non-atomic and for prefix state k = ω(s ↔ suc(t)):
+
+1. Reachability: k lies within the subtree of Fsuc rooted at pre(t) (including k = pre(t)).
+2. Priority Dominance: If k ↗= pre(t), let u be the child of pre(t) on the ancestor path to k.
+The canonical rule of t has strictly higher priority rank than u.
+Theorem 1 (Monotonic Path Property (Jiang & Gong, 2026)). Let k = ε (sc) be the longest canonical suffix token of string sc. The set of nodes in SufSucTree(k) satisfying the Prefix Last-Token
+Condition forms a unique contiguous path P starting from the atomic root c to ω(sc).
+
+Compared to standard heap-based BPE (Base), VD-STrans delivers drastic performance improvements, achieving up to 23.64↑ speedup on CodeLlama Code text streams where regex pretokenization is absent. On fine-grained regex-segmented streams, VD-STrans consistently maintains 16.5↑ to 21.8↑ higher throughput than priority heap baselines, while preserving 100% exact
+tokenization fidelity (72/72 PASS).
+Contextualizing Performance Improvements over Asymptotic Baselines. While Inc-orig already captured the core algorithmic speedup over naive priority heaps by reducing per-byte merge
+complexity from O(n log n) to O(log2 t), its physical execution remains bound by CPU pipeline
+
+253
+254
+255
+256
+257
+258
+259
+260
+261
+262
+263
+
+Under review as a conference paper at ICLR 2025
+
+440
+441
+442
+443
+444
+445
+
+392
+393
+394
+395
+396
+
+446
+447
+448
+449
+450
+
+415
+416
+417
+418
+419
+420
+421
+422
+423
+424
+425
+426
+427
+428
+429
+430
+431
+
+Figure 2: End-to-end throughput comparison across twelve open-source and proprietary tokenizers
+evaluated on English, Chinese, and Code datasets under concatenated and per-document evaluation
+regimes. Results contrast original heap-based BPE (Base), the original incremental BPE algorithm
+based on centroid search ree traversal (Inc-orig), and VD-STrans incremental BPE (Inc-VD). Annotations above the Inc-VD bars denote the relative throughput speedup factor achieved over Inc-orig.
+Table 2: Vocabulary topology statistics and Suffix-Successor Tree size distribution across 12 LLM
+vocabularies. Flat trees (→ 8 nodes) are handled in O(1) time by FDV SIMD evaluation.
+Vocab Size
+
+Total Trees
+
+Flat (→ 8)
+
+% Flat
+
+Max Nodes
+
+31,917
+151,643
+127,997
+49,152
+128,000
+199,998
+200,000
+131,072
+50,280
+50,256
+100,256
+199,998
+
+25,402
+151,643
+127,997
+49,135
+127,412
+199,998
+200,000
+130,072
+50,280
+50,256
+100,256
+199,998
+
+25,368
+150,309
+127,497
+48,714
+125,986
+198,920
+198,678
+129,659
+50,018
+50,011
+98,926
+198,920
+
+99.866%
+99.120%
+99.609%
+99.143%
+98.881%
+99.461%
+99.339%
+99.683%
+99.479%
+99.513%
+98.673%
+99.461%
+
+16
+86
+58
+45
+86
+84
+77
+64
+25
+23
+86
+84
+
+stalls, non-contiguous pointer dereferences, and branch mispredictions. VD-STrans directly attacks
+these microarchitectural bottlenecks. In high-throughput serving systems and large-scale data preprocessing pipelines handling trillions of subword tokens, achieving an additional 12.3% average
+throughput gain (and up to 27.1% peak) on top of an algorithmically optimal baseline represents
+a substantial hardware efficiency victory, unlocking gigabyte-per-second streaming preprocessing
+on standard commodity hardware.
+4.3
+
+VOCABULARY T OPOLOGY AND S UF S UC T REE S IZE D ISTRIBUTION
+
+Table 2 provides structural topological statistics for all evaluated vocabularies. Across every model,
+Suffix-Successor Trees containing 8 or fewer nodes (→ 8) represent 98.67% to 99.87% of the entire
+vocabulary space.
+Dynamic node depth histograms reveal that the mean tree size exercised during natural text processing is only ↑ 2.8 to 3.2 nodes. This empirical finding validates our 8-lane (256-bit SIMD) FDV
+register alignment choice: a single AVX2 register covers virtually the entire distribution with zero
+wasted capacity.
+8
+
+For every canonical token ε where |SufSucTree(ε )| ↓ 8, we flatten its tree topology in reverse
+topological order (deepest candidate tokens first) into a contiguous 256-bit SIMD-aligned memory
+vector structure. An FDV entry packs candidate attributes into parallel arrays:
+t = [t0 , t1 , . . . , t7 ] ↑ Z832
+
+451
+452
+453
+454
+455
+456
+457
+458
+459
+460
+461
+462
+463
+464
+465
+466
+467
+468
+469
+470
+471
+472
+473
+474
+475
+476
+477
+478
+479
+480
+481
+482
+483
+484
+485
+
+(a) Cutoff threshold K: coverage vs. throughput.
+
+(b) Deep-tree fallback scaling crossover.
+
+Figure 3: Sensitivity analyses. (a) SufSucTree vocabulary coverage and geomean throughput across
+tree cutoff thresholds K; throughput peaks at K=8 (28.44 MiB/s, 1.079→ over Inc-orig), aligning
+exactly with the 8-lane 256-bit AVX2 register while covering 99.19% of trees; larger K pays multiregister scanning cost for marginal coverage. (b) Throughput of deep-tree fallback strategies under
+a forced 97% fallback rate: linear/chained scans win for shallow trees (m ↑ 86, the typical LLM
+range) but degrade linearly, while the CST fallback retains O(log2 m) stability and crosses over at
+m ↓ 96 nodes, justifying it for pathological inputs.
+Table 3: Component-wise ablation: geometric-mean speedup of each variant over the Inc-orig CST
+baseline, averaged over 6 tokenizers → 3 datasets → 2 regimes. Each row adds one component.
+Variant
+
+Inc-orig (CST)
+Flat-Scalar
+Flat-SIMD
+VD-STrans (Full)
+
+4.4
+
+FDV flatten
+
+SIMD
+
+Atomic bypass
+
+Speedup vs. Inc-orig
+
+—
+↭
+↭
+↭
+
+—
+—
+↭
+↭
+
+—
+—
+—
+↭
+
+1.000→
+1.128→
+1.138→
+1.197→
+
+A BLATION S TUDIES AND S ENSITIVITY A NALYSIS
+
+Ablation 1: Impact of Cutoff Threshold K and 128-bit SIMD Portability. We systematically
+varied the tree flattening cutoff threshold K ↔ {0, 2, 4, 8, 16, 32} across representative tokenizers.
+As shown in Fig. 3a, vocabulary coverage increases rapidly from 0% at K = 0 to 99.192% at
+K = 8. Geomean throughput peaks sharply at K = 8 (28.436 MiB/s, yielding a 1.079→ speedup
+over Inc-orig). At K = 16 and K = 32, despite marginal coverage gains (99.88% and 99.97%),
+throughput degrades to 27.22 and 26.55 MiB/s due to the multi-register vector scanning overhead
+incurred on every search pass. Evaluating K = 4 probes a single-register 128-bit SIMD layout
+(matching ARM Neon capacity): single-pass coverage reaches 55.0% across tokenizers, achieving
+a 1.074→ geomean speedup, while dual 128-bit passes cover 99.2%—strong evidence for crossplatform portability to ARM Neon targets (e.g., AWS Graviton and mobile processors).
+Ablation 2: Component-Wise Deconstruction. To quantify individual design contributions, we
+deconstructed VD-STrans into four incremental modular variants (Table 3). Flattening the tree into
+a pointerless flat layout contributes the largest single gain (1.128→) by eliminating cache-unfriendly
+pointer chasing; branchless AVX2 vectorization adds 1.009→; and the Atomic Fast-Path Bypass
+adds 1.051→, stacking to a combined 1.197→ over Inc-orig (1.238→ in per-doc, where document
+starts emit many atomic tokens).
+Ablation 3: Decision Kernel Comparison & Working-Set Sweep. We evaluated four candidate decision kernels—Branchy Scalar, Branchless Scalar, AVX2, and AVX-512—across memory
+working-set regimes (L1, L2, LLC, DRAM) under both realistic (predictable) and adversarial (unpredictable) workloads, as illustrated in Fig. 4.
+In L1 cache (32 KiB), AVX2 achieves the lowest search latency (2.41 ns/search, 5.31 cycles) on
+realistic text. Under adversarial branch-unpredictable workloads in L2 cache (1040 KiB), Branchy
+Scalar latency degrades by 68% (from 5.82 ns to 9.76 ns) due to branch misprediction penalties. In
+contrast, AVX2 remains completely immune (5.23 ns vs 5.25 ns), demonstrating branchless vector
+9
+
+(Candidate Token IDs)
+
+d = [|suc(t0 )|, . . . , |suc(t7 )|] ↑ Z832
+
+L = [Lt0 , Lt1 , . . . , Lt7 ] ↑ Z832
+
+R = [Rt0 , Rt1 , . . . , Rt7 ] ↑ Z832
+
+(Suffix Offsets)
+
+(Interval Lower Bounds)
+(Interval Upper Bounds)
+
+(4)
+
+Unused vector lanes for trees with fewer than 8 nodes are padded with sentinel values (Li =
+↔, Ri = 0) that evaluate to false under range checks. By structuring the decision space as contiguous vectors, FDV eliminates pointer chasing, dynamic heap allocation, and indirect function
+calls entirely.
+Architecture Adaptation and Cross-Platform Portability. While configured for 256-bit AVX2
+SIMD registers (K = 8 lanes) on server-grade x86 CPUs, the FDV layout seamlessly adapts to 128bit SIMD architectures such as ARM Neon (standard on AWS Graviton, Apple Silicon, and edge
+devices). Under a 128-bit SIMD regime (K = 4 lanes), a single 128-bit vector pass covers 55.0%
+of all vocabulary trees in a single cycle (achieving a 1.074↗ speedup over CST baselines), while
+two 128-bit passes handle 99.2% of trees, demonstrating high structural flexibility across CPU ISA
+targets.
+3.3
+
+B RANCHLESS SIMD PARALLEL I NTERVAL E VALUATION K ERNEL
+
+Given an input string sc with current length |sc|, VD-STrans evaluates all candidates ti in an FDV
+concurrently using 256-bit AVX2 SIMD instructions. The search pipeline executes in five branchless
+stages, illustrated in Panel B of Fig. 1:
+1. Parallel History State Retrieval: Using candidate suffix offsets d, the engine queries the
+history array H(·) to xtract prefix last-tokens ki = H(|sc| → |suc(ti )|) and gathers their
+DFS entry timestamps into vector register YMM0:
+H = [dfsin(k0 ), dfsin(k1 ), . . . , dfsin(k7 )]
+
+(5)
+
+2. Vectorized Range Comparison: The lower bound check H ↘ L (equivalent to H >
+L → 1) and upper bound check H < R are executed in parallel via vector comparisons:
+Mlower = mm256 cmpgt epi32(H, L → 1)
+Mupper = mm256 cmpgt epi32(R, H)
+
+(6)
+(7)
+
+Under review as a conference paper at ICLR 2025
+
+386
+387
+388
+389
+390
+391
+
+CodeLlama
+Qwen-3
+DeepSeek-3.2
+Ouro
+Llama-3.1*
+GPT-OSS
+Llama-4
+Mistral-3
+P50K
+R50K
+CL100K
+O200K
+
+C OMPACT F LAT D ECISION V ECTOR (FDV) F ORMULATION
+
+Our empirical profiling across 12 modern LLM vocabularies reveals an extreme topological property: over 99.1% to 99.8% of all Suffix-Successor Trees contain at most 8 nodes, with average
+tree depth ranging from 2.8 to 3.2. Inspired by this structural compactness, VD-STrans replaces
+explicit pointer-based tree structures with Compact Flat Decision Vectors (FDVs).
+
+5
+
+488
+489
+490
+491
+492
+493
+
+Tokenizer Model
+
+3.2
+
+Existing incremental BPE implementations resolve the valid last token ω(sc) by performing Centroid
+Decomposition search traversals over SufSucTree(ε ), which incurs dynamic pointer dereferences,
+non-contiguous memory accesses, and binary search branch loops.
+
+4
+
+486
+487
+
+397
+398
+399
+400
+401
+402
+
+DFS Linearization and Interval Validation. To evaluate Definition 1 in O(1) time, we perform
+a pre-order Depth-First Search (DFS) over Fsuc , visiting children in increasing order of rule priority.
+Each node u is assigned entry timestamp dfsin(u) and exit timestamp dfsout(u), mapping its subtree
+to half-open interval [dfsin(u), dfsout(u)). For each non-atomic t, we precompute a valid entry
+interval It = [Lt , Rt ):
+Lt = dfsin(pre(t)), Rt = dfsin(uhigh )
+(3)
+where uhigh is the first child of pre(t) in DFS order with rule priority greater than or equal to t (or
+dfsout(pre(t)) if none). Thus, candidate t is valid if and only if dfsin(ω(sc → suc(t))) ↑ [Lt , Rt ).
+
+264
+265
+266
+267
+268
+269
+
+434
+435
+436
+437
+438
+439
+
+Evaluation Regimes. We evaluated two streaming modes: (1) concat, where all documents in
+a dataset are concatenated into a single continuous byte stream, and (2) per-doc, where documents are tokenized independently. Experiments isolate the BPE stage performance without pretokenization interference. All 72 configurations were verified to produce 100% byte-identical oken
+sequences compared to reference priority-heap implementations.
+M AIN T HROUGHPUT B ENCHMARK R ESULTS
+
+235
+236
+237
+238
+239
+240
+
+432
+433
+
+409
+410
+411
+412
+413
+414
+
+Across all 72 evaluated benchmark configurations, VD-STrans achieves a geometric mean throughput speedup of 1.123↑ over the state-of-the-art Inc-orig algorithm (1.115↑ in concat, 1.132↑ in
+per-doc). The peak speedup reaches 1.271↑ on the Llama-4 odel evaluated on English text in
+the per-doc regime.
+
+230
+231
+232
+233
+234
+
+380
+381
+382
+383
+384
+385
+
+403
+404
+405
+406
+407
+408
+
+7
+
+216
+217
+
+164
+165
+166
+167
+168
+169
+
+378
+379
+
+Evaluated Tokenizers. We evaluated 12 open-source and proprietary LLM tokenizers spanning
+Hugging Face tokenizers and OpenAI tiktoken libraries: CodeLlama (32K vocab), Qwen3 (151K), DeepSeek-3.2 (128K), Ouro (49K), Llama-3.1* (128K properized), GPT-OSS (200K),
+Llama-4 (200K), Mistral-3 (131K), P50K (50K), R50K (50K), CL100K (100K), and O200K
+(200K).
+
+Table 1 and Fig. 2 summarize the end-to-end throughput performance across all evaluated tokenizers,
+datasets, and execution regimes.
+
+Under review as a conference paper at ICLR 2025
+
+162
+163
+
+Under review as a conference paper at ICLR 2025
+
+Table 1: Main throughput speedup comparison in the concat regime across 12 LLM tokenizers
+and 3 datasets. Base: standard heap-based BPE implementation; Inc-orig: state-of-the-art CST
+incremental BPE (Jiang & Gong, 2026); Inc-VD: proposed VD-STrans framework. VD/orig denotes
+the relative speedup over Inc-orig, and VD/Base denotes speedup over Base.
+
+4.2
+
+Under review as a conference paper at ICLR 2025
+
+tokenizers, SentencePiece (Kudo & Richardson, 2018), and OpenAI tiktoken—employ dynamic priority heaps and rely on regex pre-tokenization (Dagan et al., 2024) to keep heap operations
+from scaling quadratically. Recent theory formalizes tokenization structurally: Geng et al. (2024)
+model byte BPE as an inverse string homomorphism, and Cognetta & Okazaki (2024) compile
+subword algorithms into finite-state transducers. To accelerate batch pretraining, BlockBPE (You,
+2025) executes concurrent intra-block merges on GPUs; however, these offline frameworks require
+buffering blocks or re-tokenizing prefixes from scratch, making them ill-suited to streaming text.
+
+3
+
+Under review as a conference paper at ICLR 2025
+
+3. Bitwise Intersection: The valid indicator bitmask vector M is computed via bitwise AND:
+
+272
+273
+274
+275
+276
+277
+
+108
+109
+
+2
+
+Under review as a conference paper at ICLR 2025
+
+270
+271
+
+Under review as a conference paper at ICLR 2025
+
+Theoretical investigations into BPE have established that optimal compression via pair encoding is
+APX-complete (Kozma & Voderholzer, 2024), reinforcing the reliance on heuristic merge structures.
+
+494
+495
+496
+497
+498
+499
+500
+501
+502
+503
+504
+505
+506
+507
+508
+509
+510
+511
+512
+513
+514
+515
+516
+517
+518
+519
+520
+521
+522
+523
+524
+525
+526
+527
+528
+529
+530
+531
+532
+533
+534
+535
+536
+537
+538
+539
+
+Figure 4: Search latency (ns / search) of decision kernels across hardware cache residency regimes
+(L1, L2, LLC, and DRAM) for predictable English text (Panel A) and branch-unpredictable adversarial workloads (Panel B). On predictable text, the branchy scalar kernel achieves low latency in
+L1 due to accurate branch prediction. Under adversarial conditions, branchy scalar latency degrades
+sharply in the L2 and LLC regimes owing to branch misprediction penalties. Vectorized SIMD
+kernels (AVX2 and AVX-512) eliminate branch mispredictions and consistently maintain minimal
+latency across compute-bound cache regimes, converging with other implementations as memory
+bandwidth limits performance in DRAM.
+robustness. AVX-512 offers no advantage over AVX2 (2.58 ns) because tree sizes rarely exceed 8
+lanes.
+Ablation 4: Atomic Fast-Path Bypass Across Text Domains. We evaluated the Atomic FastPath Bypass across text domains with varying character entropy. Fast-path hit rates (percentage
+of character transitions bypassing history lookups) were measured at 19.6%–23.3% on English,
+19.7%–28.4% on Code, and 35.1%–98.0% on Chinese text.
+On Chinese text with CodeLlama (98.0% fast-path hit rate), the atomic bypass yields a peak throughput gain of 1.192→ (geomean 1.103→ across Chinese). Fast-path throughput gain exhibits a strong
+positive correlation with hit rate (Pearson r = 0.811).
+Ablation 5: Deep-Tree Fallback Strategy Analysis. To evaluate fallback mechanisms for trees
+exceeding 8 nodes, we stress-tested Centroid Search Tree (CST), Chained Multi-Vector SIMD, and
+Linear Unrolled Scalar Search on synthetic trees with a forced 97% fallback rate across depths
+m ↑ [16, 255] (Fig. 3b). Linear scans achieve higher throughput for shallow trees (m ↓ 64) but
+degrade linearly with depth, whereas CST maintains logarithmic stability (O(log2 m)) and crosses
+over at m ↔ 96 nodes. This confirms CST as the optimal fallback for preserving the O(log2 t)
+k
+worst-case bound on pathological inputs (e.g., a2 ).
+
+5
+
+C ONCLUSION
+
+We introduced Vectorized Direct-Interval Suffix Transducer (VD-STrans), an ultra-low-latency
+incremental BPE framework. Exploiting the structural observation that > 99.1% of SuffixSuccessor Trees in real-world LLM vocabularies contain ↓ 8 nodes, VD-STrans flattens dynamic
+tree topologies into 256-bit aligned Compact Flat Decision Vectors and resolves last-token selection
+through a branchless AVX2 SIMD range kernel, an Atomic Fast-Path Bypass, and a CST fallback
+for deep trees—eliminating pointer dereferences, branch mispredictions, and search-loop overheads.
+Across 12 tokenizers and 3 text domains, VD-STrans attains a geometric-mean speedup of 1.123→
+(up to 1.271→) over the state-of-the-art incremental algorithm and up to 23.64→ over heap baselines,
+with 100% exact fidelity. Limitations and future work. VD-STrans is tuned for 256-bit AVX2, but
+our K=4 topology analysis shows strong potential for 128-bit ARM Neon; porting the vectorized
+primitives to ARM Neon and RISC-V Vector for edge deployment, and extending direct-interval
+transduction to hardware-accelerated FPGA/GPU preprocessing, are promising directions.
+10
+
+Figure 2 | Case study. ScientistTwo independently establishes a novel approach that achieves a 10.9%
+relative improvement over the human-designed state-of-the-art baseline (Jiang and Gong, 2026).
+Moreover, evaluated under the ICLR peer-review procedures, this AI-authored paper is accepted,
+receiving impressive scores of 8.0 from ScholarPeer and 6.5 from the Stanford Agentic Reviewer.
+• Ablation-Driven Hypothesis Refinement: Emulating the empirical rigor of expert researchers, ScientistTwo autonomously designs and executes ablation studies to isolate individual component
+contributions, dynamically pruning ineffective components and refining its core hypothesis.
+• Dynamic Peer-Review & Rebuttal Loops: To ensure publication-grade validity, generated drafts
+are critiqued by a simulated Peer-Review Agent. Rather than treating review comments as
+passive editorial guidance, a dedicated Rebuttal Agent actively conceives, codes, and executes
+targeted supplementary experiments to address critique. A Meta-Review Agent oversees this
+cycle, triggering recursive refinement loops until rigorous acceptance criteria are satisfied.
+We evaluate ScientistTwo across 107 diverse research challenges encompassing diverse areas
+such as optimization, reinforcement learning, large language models (LLMs), and theory (see Figure 1). Specifically, ScientistTwo successfully advances 80.4% of the target problems, delivering
+an average relative performance gain of 25.2% over the original human state-of-the-art baselines.
+Furthermore, the autonomously generated manuscripts and executable codebases consistently achieve
+high acceptance rates across independent automated peer-review evaluations with high scores. These
+results demonstrate that ScientistTwo moves beyond passive empirical problem-solving, serving as an
+autonomous pioneer capable of systematically expanding the frontiers of scientific knowledge.
+
+2. Related Work
+AI Agents. The rapid advancement of LLMs has sparked significant interest in autonomous AI agents
+capable of planning and using tools. Early general-purpose agents such as ReAct (Yao et al., 2022),
+HuggingGPT (Shen et al., 2023), and AutoGen (Wu et al., 2024) leverage external tools to break
+down and execute complex, open-ended tasks. In the field of software development, systems such as
+Voyager (Wang et al., 2023), AlphaCode (Li et al., 2022), SWE-agent (Yang et al., 2024), and Claude
+3
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Human
+
+Idea Generator
+
+Evaluator
+
+Analyzer
+
+I want to build an
+efficient tabular
+foundation model
+
+Seed Idea Generator
+
+Subset Experiment Agent
+
+Ablation Study Agent
+
+Pioneering
+
+Limitation
+Extractor
+
+Novelty
+Checker
+
+Critic
+Agent
+
+Full-Set Experiment Agent
+
+Idea Evolver
+Good Idea
+Bad Idea
+
+Coding
+Agent
+
+New Idea
+
+Coding
+Agent
+
+Critic
+Agent
+
+Planning
+Agent
+
+Coding
+Agent
+
+Idea Refiner
+Critic
+Agent
+
+New Idea
+
+Expanded
+Frontier
+Outputs
+
+Meta-Review Agent
+Idea
+Refiner
+
+Critic
+Agent
+
+Peer-Review Agent
+Rebuttal
+Agent
+
+Review
+Agent
+
+Writer Agent
+Draft
+Enhancer
+
+Initial
+Drafter
+
+Figure 3 | Overview. ScientistTwo leverages previous experiments, ablation studies, and reviewer to
+generate and validate novel ideas that advance human state-of-the-art baselines, verifying each idea
+across multiple datasets and evaluation metrics. Additionally, it simulates the peer-review process to
+iteratively refine drafts into publication-ready papers.
+Code (Liu et al., 2026b) use interfaces that recognize execution feedback and the environment to
+iteratively debug and solve coding problems. Recently, this paradigm has expanded into the fields of
+automated machine learning (ML) engineering and data science. Frameworks such as MLAgentBench
+(Huang et al., 2023), OpenHands (Wang et al., 2025c), AIDE (Jiang et al., 2025), MLE-STAR (Nam
+et al., 2026a), and MARS (Chen et al., 2026c) automate end-to-end ML workflows by executing and
+improving modeling pipelines, while data science agents such as DA-Agent (Huang et al., 2024), Data
+Interpreter (Hong et al., 2025), and DS-STAR (Nam et al., 2026b) tackle heterogeneous data challenges
+through structured planning and recursive verification. In this paper, we introduce ScientistTwo,
+a specialized AI agent for autonomous research, from idea generation and implementation to the
+writing of high-quality publishable academic papers.
+Autonomous Research Agents. Autonomous research agents have rapidly evolved from ML problems
+into sophisticated, multi-stage pipelines that coordinate the entire scientific workflow—from literaturebased analysis and hypothesis generation to execution and drafting of research papers. Early endto-end pipelines, such as AI Scientist (Lu et al., 2024), established this automation paradigm but
+suffered from execution instability and issues with hallucinated writing; subsequent versions, such
+as AI Scientist-v2 (Yamada et al., 2025), mitigated these problems through a best-first-tree search
+for experimental branches and review-based reporting. At the same time, modular systems have
+focused on resolving specific bottlenecks; for example, PaperOrchestra (Song et al., 2026) compiles
+unconstrained experiment logs and ideas into LaTeX manuscripts, while ScholarPeer (Goyal et al.,
+2026) deploys a multi-agent system that acts as peer-reviewers. Other frameworks introduce humanin-the-loop gates (Schmidgall et al., 2025), apply evolutionary optimization to algorithmic discovery
+(Lyu et al., 2026; Novikov et al., 2025), or focus on single-metric optimization for a target codebase
+(Li et al., 2026d; Liu et al., 2026a; Tang et al., 2026a; Weng et al., 2025); however, they are generally
+limited to optimizing a single scalar metric on a single dataset. Crucially, even verifiability-centric
+systems like ScientistOne (Meng et al., 2026) lack the ability to perform an active analytical expansion.
+Our ScientistTwo addresses these fundamental gaps by conducting systematic experiments on various
+benchmark datasets and incorporating a dynamic peer-review loop, automating the iterative process
+of performing complementary ablation experiments, refining ideas, and revising manuscripts, thus
+producing expert-level papers that meet the rigorous standards of top academic venues.
+
+4
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+def stage(candidate, critic, refine, max_rounds):
+for _ in range(max_rounds):
+verdict, feedback = critic(candidate)
+if verdict == "accept":
+return candidate
+elif verdict == "refine":
+candidate = refine(candidate, feedback)
+else:
+return None
+return None
+
+Listing 1 | Python-style pseudocode for each pipeline stage. At each stage, ScientistTwo evaluates
+candidate artifacts using a critic agent. If accepted, the artifact is returned; if rejected, it is discarded;
+otherwise, it is iteratively refined based on the critic’s feedback up to a maximum number of rounds.
+Table 1 | ScientistTwo overview. At each stage, ScientistTwo generates a candidate using a
+specialized AI agent and employs a corresponding critic agent to decide whether to accept the
+output or invoke a refinement agent to improve and supplement it.
+stage
+
+candidate
+
+critic
+
+refine
+
+Generating Novel Seed Ideas (§ 3.1)
+Finding limitations
+Set of limitations
+Seed idea generation
+Seed ideas
+
+Can guide novel improvement?
+Is it novel?
+
+Add missing limitations
+Add more novel ideas
+
+Evaluating Ideas (§ 3.2)
+Reproduce baseline on subset
+Idea experiment on subset
+Idea experiment on full-set
+
+SOTA baseline result
+Idea, Code, Results
+Idea, Code, Results
+
+Is it better than the reproduced baseline?
+Is it better than the original SOTA result?
+
+Refine idea through engineering
+Refine idea through engineering
+
+Refining Ideas (§ 3.3)
+Idea evolution
+Select best idea
+
+Evolved idea
+Best idea
+
+Idea experiment
+What is the best idea from traces?
+
+Evolve idea from traces
+-
+
+Ablation Studies (§ 3.4)
+Ablation study
+
+Idea, Ablation results
+
+Is the component breakdown clean?
+
+Refine the method
+
+Is review score good enough?
+Does it meet the venue bar?
+
+Run rebuttal experiments
+Refine idea and analyze again
+
+Drafting & Meta-Reviewing (§ 3.5, § 3.6)
+Initial drafting
+Manuscript
+Peer-Review
+Manuscript
+Meta-Review
+Manuscript, Review
+
+3. ScientistTwo: An Expert-Level Autonomous Research Agent
+ScientistTwo is an expert-level autonomous research agent that effectively orchestrates specialized AI
+agents throughout the scientific discovery pipeline. First, ScientistTwo identifies the limitations of the
+human state-of-the-art method regarding a given scientific problem and generates ideas to address
+them, filtering for those with high novelty (§ 3.1). Next, ScientistTwo implements the selected ideas;
+to optimize computational efficiency, it validates the ideas on a benchmark subset before scaling to
+the full dataset (§ 3.2). The agent then refines the ideas based on previous experimental results
+(§ 3.3) and conducts ablation studies to analyze the sources of performance gain (§ 3.4). During
+manuscript drafting (§ 3.5), ScientistTwo dynamically enhances paper quality through an iterative
+review process, using a Review Agent to provide critical feedback and a Rebuttal Agent to conduct
+supplementary experiments. Finally, in the meta-review phase (§ 3.6), a Meta-Review Agent evaluates
+the manuscript’s overall quality and determines whether it meets the submission standards. If further
+improvements are required, ScientistTwo incorporates feedback, updates idea and ablation analyses,
+and iterates through the pipeline until the manuscript is approved for submission. For clarity, we
+abstract all stages (see overview in Table 1) using the Python-style pseudocode in Listing 1.
+
+5
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Scientific
+Problem
+
+Limitation
+Extractor
+
+Limitation
+Verifier
+
+Initial Idea
+Generator
+
+Novelty
+Checker
+
+Idea
+Generator
+
+Seed Ideas
+
+Figure 4 | Generating Novel Seed Ideas. ScientistTwo begins its research by generating novel ideas
+that can address the limitations of the human state-of-the-art (see § 3.1).
+Problem Setup: Problem-Driven Autonomous Discovery. Scientific advancement in AI is inherently
+cumulative: modern progress relies on identifying the limitations of state-of-the-art work and developing methodologies to surpass them. To mirror this realistic research workflow, our goal is to build an
+autonomous research agent A capable of executing continuous research iterations. Given a scientific
+problem G, the framework generates a paper P + paired with a reproducible codebase C + , which
+represents new frontier knowledge on the given problem. Formally, we define this transformation as:
+(P + , C + ) = A (G) ,
+
+where
+
+A = {A1 , A2 , . . . , A 𝑁a }
+
+(1)
+
+where A comprises 𝑁a specialized AI agents, each assigned to distinct phases of the research life
+cycle (e.g., limitation extraction, idea generation, code modification, empirical validation, etc.). In
+addition, P + should identify and resolve key methodological or empirical bottlenecks present in G
+and C + should correctly implement the proposed idea while maintaining execution reproducibility
+and demonstrating measurable performance gains.
+3.1. Generating Novel Seed Ideas: Targeting Limitation Resolution
+Finding Limitations. ScientistTwo initiates the research pipeline by identifying the core limitations
+of the human state-of-the-art method with respect to a given scientific problem G. Specifically, initially,
+the Limitation Extractor extracts a set of limitations from G. Then, the Limitation Verifier verifies
+whether this set is sufficient to guide novel improvements to G. If the Limitation Verifier considers
+the set insufficient, the Limitation Extractor again identifies missing limitations or weaknesses and
+expands the collection. This verification loop repeats until the Limitation Verifier confirms that all
+actionable limitations have been thoroughly extracted or maximum number of iterations is reached.
+Generating Novel Seed Ideas. ScientistTwo first generates an initial idea ℎ0 specifically designed to
+address the identified limitations, and computes its novelty score using the Novelty Checker. Then,
+starting with the initial set of candidates H0 = { ℎ0 }, ScientistTwo leverages the Idea Generator Agent
+to iteratively expand the candidate pool H0 with distinct, higher-novelty ideas. This process continues
+𝑁seed −1
+until a collection of 𝑁seed candidate ideas is gathered. Finally, the seed ideas in H0 = { ℎ𝑖 } 𝑖=0
+are
+𝑁seed −1
+sorted in descending order according to their novelty scores { 𝑠𝑖 } 𝑖=0
+, ensuring that 𝑠𝑖 ≥ 𝑠 𝑗 whenever
+𝑖 < 𝑗. This allows ScientistTwo to prioritize implementing the ideas with the highest originality.
+3.2. Evaluating Ideas: Experimenting from Subset to Full-Set
+Generating Baseline Results on Subset. To establish a reliable reference, ScientistTwo first employs
+a Baseline Coding Agent to reproduce the primary experiments of G on the benchmark subset,
+producing baseline experimental results Ebase alongside a reproducible subset codebase Cbase .
+Evaluating an Idea on the Subset. For a candidate idea ℎ (here, we select only the top- 𝑁0 highest0 −1
+ranked ideas based on { 𝑠𝑖 } 𝑖𝑁=0
+from H0 ), ScientistTwo leverages a Subset Coding Agent to implement
+ℎ
+ℎ
+ℎ by modifying Cbase , producing the resulting logs Esub
+alongside a reproducible codebase Csub
+. Then,
+ℎ
+to evaluate performance, a Subset Critic Agent compares Esub against Ebase and emits a categorical
+decision 𝑑 ℎ with feedback 𝑟 ℎ :
+6
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Full-Set
+Engineer
+
+Subset
+Engineer
+
+Idea
+
+Baseline
+Coder
+
+Subset
+Coder
+
+Subset
+Critic
+
+Full-Set
+Coder
+
+Full-Set
+Critic
+
+Codebase of Idea
+Good or Bad
+Results & Lessons
+
+Figure 5 | Evaluating Ideas. ScientistTwo utilizes ACoder to implement the generated idea through
+subset testing, critic evaluation, engineering refinement loops, and full-set scaling (see § 3.2).
+1. Bad: If performance is substantially inferior to the baseline, ℎ is discarded (𝑑 ℎ = Bad).
+2. Good: If ℎ consistently outperforms the baseline, it is approved for scale-up (𝑑 ℎ = Good).
+3. Engineer: If ℎ shows potential but requires hyperparameter tuning or code adjustments, a Subset
+ℎ
+ℎ
+Engineering Agent refines ℎ and Csub
+guided by strategy 𝑟 ℎ , generating corresponding results Esub
+.
+This refinement loop repeats until 𝑑 ℎ ∈ {Good, Bad} or a budget of 𝑁eng iterations is exhausted. If
+𝑁eng is reached without achieving 𝑑 = Good, ℎ is designated as Bad and pruned—mirroring practical
+research settings where unpromising avenues are abandoned after bounded optimization.
+Scaling Up to the Full-Set. For ideas validated as Good, ScientistTwo scales the evaluation to the
+ℎ
+full benchmark. A Full-Set Coding Agent adapts Csub
+to run across the entire benchmark suite. A
+Full-Set Critic Agent and Full-Set Engineer perform final validation and engineering against the full
+ℎ
+ℎ
+benchmark, producing final execution outputs Efull
+, updated codebase Cfull
+, and terminal decision 𝑑 ℎ .
+Unified Coder Interface. To streamline subsequent rounds of idea improvement, we abstract this
+entire idea experiment pipeline into a single high-level Idea Implementer Agent ACoder . Formally,
+ℎ, E ℎ , C ℎ , 𝑑 ℎ , 𝑟 ℎ = ACoder (G , ℎ) .
+
+(2)
+
+3.3. Refining Ideas: Improving Ideas Using Experimental Results
+In the initial evaluation round (𝑘 = 0), ScientistTwo executes the top- 𝑁0 seed ideas from H0 using
+ACoder , yielding a set of execution traces R 0 = {( ℎ, E ℎ , C ℎ , 𝑑 ℎ , 𝑟 ℎ ) | ℎ ∈ H0 }. To continuously enhance
+idea quality, we propose an evolution strategy that uses these execution traces as feedback.
+Idea Evolution. In refinement round 𝑘 ≥ 1, ScientistTwo aggregates all historic execution traces
+Ð −1
+R 𝑖 to generate a set I𝑘 of 𝑁𝑘 evolved ideas. An Idea Evolver Agent AEvolve analyzes both
+R<𝑘 = 𝑘𝑖=0
+successful results (𝑑 ℎ = Good) and diagnostic failure logs (𝑑 ℎ = Bad) to propose refined hypotheses.
+Exploration and Exploitation. Relying exclusively on AEvolve risks trapping the optimization process
+in local optima centered around early seed ideas. To ensure broad coverage of the solution space,
+ScientistTwo complements the evolved set I𝑘 with 𝑁𝑒 previously unevaluated seed ideas drawn
+from H0 in descending order of novelty score. Formally, the total candidate pool H𝑘 for round 𝑘 is
+I𝑘 ∪ H0( 𝑘 ) ,where H0( 𝑘 ) ⊂ H0 contains the next 𝑁𝑒 highest-ranked unevaluated seed ideas.
+Experimenting Ideas. For each candidate ℎ ∈ H𝑘 , ScientistTwo invokes ACoder to evaluate the idea:
+n
+
+o
+R 𝑘 = ℎ, E ℎ , C ℎ , 𝑑 ℎ , 𝑟 ℎ ℎ, E ℎ , C ℎ , 𝑑 ℎ , 𝑟 ℎ = ACoder (G , ℎ) , ℎ ∈ H𝑘 .
+(3)
+This evolutionary loop iterates until 𝑆 successful ideas (𝑑 ℎ = Good) are collected, or the maximum refinement limit 𝐾 is reached. Formally, idea refinement terminates successfully when
+Í𝑘 Í
+ℎ
+= Good) ≥ 𝑆, where 𝕀(·) is the indicator function. If round 𝐾 is reached with
+ℎ ∈ H𝑖 𝕀( 𝑑
+𝑖=0
+Í Í
+zero successful ideas ( 𝑖𝐾=0 ℎ ∈ H𝑖 𝕀( 𝑑 ℎ = Good) = 0), ScientistTwo terminates the entire process.
+7
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Unevaluated Seed Ideas
+
+Execution Traces
+
+Idea
+Evolver
+
+New Ideas
+
+Implementer
+
+Selector
+
+Best Idea & Results & Code
+
+Update Execution Traces
+
+Figure 6 | Refining Ideas. ScientistTwo improves ideas based on prior experimental results, ultimately
+selecting the best hypothesis for ablation studies and paper drafting (see § 3.3).
+Selecting the Best Idea. Upon discovering at least one successful idea, ScientistTwo selects the optimal
+candidate ℎbest for downstream ablation analysis. A Selector Agent ASelector compares performance
+metrics and execution logs across all validated ideas { ℎ | 𝑑 ℎ = Good} evaluated on the full benchmark:
+
+ 
+ℎbest , Ebest , Cbest = ASelector G , ( ℎ, E ℎ , C ℎ ) 𝑑 ℎ = Good .
+(4)
+3.4. Ablation Studies: Analyzing Source of Gain and Refining Ideas
+Once the optimal candidate idea ℎbest is selected, ScientistTwo conducts systematic component-level
+ablation studies. This phase isolates the explicit sources of empirical gain for scientific interpretation,
+and leverages fine-grained ablation feedback to perform an additional round of idea refinement.
+Ablation Planning and Execution. To evaluate individual components, an Ablation Planner Agent
+automatically formulates a set of 𝑁 𝑝 executable ablation plans { 𝑝1 , . . . , 𝑝𝑁 𝑝 } tailored to ℎbest . For each
+ablation plan 𝑝𝑖 , an Ablation Coding Agent modifies the validated codebase Cbest to execute, yielding
+an ablation outcome 𝑐𝑖 . The aggregated ablation results are collected as Eabl = { 𝑐1 , . . . , 𝑐 𝑁 𝑝 }.
+Refining the Idea via Ablation Insights. Emulating expert human research practices, where removing
+redundant or counterproductive components often yields a better method, ScientistTwo uses Eabl
+to further refine ℎbest . An Ablation Critic Agent AAblCritic inspects the component breakdown to
+determine whether ℎbest is optimal or requires additional modification, generating 𝑑abl , 𝑟abl where
+𝑑abl ∈ {Good, Refine}. If 𝑑abl = Good, ℎbest is finalized and passed to the paper drafting stage. If
+𝑑abl = Refine, ScientistTwo re-engages the Full-Set Engineering Agent AFullEng to produce a refined
+hypothesis ℎnew , updated results Enew , and revised codebase Cnew guided by critique 𝑟abl .
+Robust Verification and Loop. Because structural refinements do not guarantee improved performance, ScientistTwo verifies whether Enew strictly outperforms Ebest . The baseline variables are
+updated—( ℎbest , Ebest , Cbest ) ← ( ℎnew , Enew , Cnew )—if and only if Enew is preferred than Ebest by the
+Result Comparison Agent. When an update occurs, ScientistTwo re-executes the ablation planning
+phase on the updated candidate. This refinement loop repeats for a maximum of 𝑁abl iterations or
+until AAblCrit emits 𝑑abl = Good, ensuring a fully optimized hypothesis prior to manuscript generation.
+3.5. Manuscript Drafting: Simulating the Peer-Review Process
+Initial Drafting. First, an Initial Drafter Agent ADraft (incorporating PaperOrchestra; Song et al.,
+2026) synthesizes the selected idea ℎbest , main benchmark results Ebest , and component ablation
+studies Eabl into a full, conference-formatted manuscript Pnew .
+Enhancing the Draft via Simulated Review-Rebuttal. To rigorously elevate manuscript quality, ScientistTwo simulates an interactive peer-review and rebuttal process. A Peer-Reviewer Agent AReviewer
+(i.e., ScholarPeer; Goyal et al., 2026) critically evaluates Pnew , generating a detailed evaluation
+R new containing identified strengths, weaknesses, targeted questions, and an overall numerical score
+8
+
+Codebase o
+Good or
+Results &
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Best Idea
+Results
+Code
+
+Result
+Compare
+
+Full-Set
+Engineer
+
+Ablation
+Planner
+
+Ablation
+Coder
+
+Draft
+Enhancer
+
+Rebuttal
+Coder
+
+Ablation
+Critic
+
+Initial
+Drafter
+
+Peer
+Reviewer
+
+Rebuttal
+Planner
+
+Result
+Compare
+
+Full-Set
+Engineer
+
+Meta
+Reviewer
+
+Final Paper
+Final Code
+
+Figure 7 | From Ablation Study to Drafting. ScientistTwo conducts ablation studies and simulates
+the peer-review and rebuttal processes. Beyond this, ScientistTwo dynamically refines the idea and
+enhances paper quality using feedback from each stage (see § 3.4, § 3.5, § 3.6).
+𝑠review ∈ [1, 10] based on the standard ICLR grading scale. If the 𝑠review is below the acceptance
+threshold (e.g., 8), ScientistTwo initiates an automated rebuttal stage to address reviewer concerns. A
+Rebuttal Planner Agent ARebPlan analyzes R new to formulate a set of 𝑁𝑡 supplementary experimental
+tasks {𝑡1 , . . . , 𝑡 𝑁𝑡 } designed to resolve reviewer queries. Next, a Rebuttal Coding Agent ARebCoder
+implements and executes each planned task 𝑡𝑖 using codebase Cbest , generating supplementary results
+𝑒𝑖 , yielding the aggregated supplementary experiment results Ereb = { 𝑒1 , . . . , 𝑒 𝑁𝑡 }.
+
+Iterative Enhancement. A Paper Enhancer Agent AEnhancer integrates the R new and supplementary
+findings Ereb into Pnew , revising narrative claims and updating empirical tables and figures. The
+updated manuscript is re-evaluated by AReviewer , updating R new and score 𝑠review . This review-rebuttal
+Ideas
+cycle repeats until 𝑠new ≥ 8 or the maximumNew
+budget
+of 𝑁peer review iterations is reached, producing a
+polished, thoroughly validated final manuscript Pnew .
+3.6. Meta-Reviewing: Final Assessment and Review-Driven Refinement
+To mirror the complete lifecycle of academic publishing, ScientistTwo integrates a Meta-Review Agent
+AMeta . Specifically, AMeta evaluates the revised manuscript Pnew alongside the generated peer review
+R new to make a final publication assessment and generate actionable strategic feedback.
+Meta-Review Decision. Formally, AMeta takes the paper draft and reviewer feedback as inputs to
+produce a decision 𝑑meta and meta-critique 𝑟meta , where 𝑑meta ∈ {Accept, Refine}. If 𝑑meta = Accept,
+Pnew is judged to meet top-tier conference standards. ScientistTwo finalizes the process and exports
+the final improved paper and its codebase as P + ← Pnew and C + ← Cbest .
+Review-Driven Idea Refinement. When 𝑑meta = Refine, indicating that the meta-reviewer identified a
+critical algorithmic or empirical weakness, ScientistTwo initiates a deep idea refinement phase. Using
+meta-critique 𝑟meta as guidance, the Full-Set Engineering Agent AFullEng updates ℎbest to construct a
+revised hypothesis ℎnew , updated results Enew , and modified codebase Cnew .
+Verification and Re-Drafting. To ensure that the meta-review modification yields true scientific progression, ScientistTwo re-evaluates Enew against Ebest using the Result Comparison Agent. If Enew is verified as strictly superior , ScientistTwo updates the core state ( ℎbest , Ebest , Cbest ) ← ( ℎnew , Enew , Cnew ).
+Because the fundamental idea has changed, ScientistTwo re-executes downstream ablation planning,
+ablation execution, manuscript re-drafting, and simulated peer-review cycles. Conversely, if Enew fails
+to outperform the baseline, the refinement is discarded, and ScientistTwo terminates the process
+using the previous best outputs (P + ← Pnew , C + ← Cbest ). This meta-refinement loop repeats for a
+maximum of 𝑁meta iterations or until 𝑑meta = Accept, yielding a rigorously validated final contribution.
+
+9
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Table 2 | Comparison with autonomous research agents. We report the average review ratings,
+standard deviations (1–10 scale), and acceptance rates (%) given by ScholarPeer and Stanford Agentic
+Reviewer. The column “# Papers” represents the number of publicly released AI-generated papers by
+each autonomous research agent used to aggregate performance. Bold indicates the best performance.
+ScholarPeer
+Framework
+
+Stanford Agentic Reviewer
+
+# Papers
+
+Avg. Rating
+
+Accept Rate
+
+Avg. Rating
+
+Accept Rate
+
+7
+6
+3
+4
+2
+3
+21
+86
+
+1.0±0.0
+1.0±0.0
+2.0±1.0
+2.5±1.0
+3.0±0.0
+3.0±0.0
+3.8±1.2
+7.5±1.3
+
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+14.3
+91.9
+
+2.4±0.6
+2.8±1.0
+2.5±0.2
+3.7±0.5
+2.9±0.6
+4.1±0.6
+4.1±0.7
+5.7±0.6
+
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+0.0
+72.1
+
+AI-Researcher
+CycleResearcher
+AI Scientist-v2
+AutoResearchClaw
+Zochi
+DeepScientist
+ScientistOne
+ScientistTwo (Ours)
+
+4. Experiments
+In this section, we empirically validate the effectiveness of ScientistTwo. Specifically, in § 4.1, we
+present quantitative and qualitative comparisons against existing autonomous research agents. In
+§ 4.2, we conduct component-wise ablation studies to evaluate each constituent part of ScientistTwo.
+In § 4.3, we provide a discussion including cost analysis and case studies.
+Common Setup. We evaluate the effectiveness of ScientistTwo on 107 scientific problems drawn from
+top machine learning venues, including ICLR, ICML, and NeurIPS (see Appendix A.1 for details). All experiments are conducted using Gemini 3.6 Flash and Claude Opus 4.8, unless otherwise specified. For
+evaluation, we primarily report review scores from automated AI review agents: ScholarPeer (Goyal
+et al., 2026) and Stanford Agentic Reviewer1 . ScholarPeer serves as an in-distribution evaluation,
+as it is also used to refine the draft quality generated by ScientistTwo. Conversely, Stanford Agentic
+Reviewer serves as a held-out evaluator that was unseen during development by both the baselines
+and our method. Full implementation details and configurations are provided in Appendix A.2.
+4.1. Main Results
+Quantitative Comparison. As shown in Table 2, ScientistTwo achieves a 91.9% acceptance rate under
+ScholarPeer (nearly doubling the review score from ScientistOne’s 3.8 to 7.5). More importantly,
+while all baselines fail to achieve acceptance from the Stanford Agentic Reviewer, ScientistTwo is the
+only agent that produces research where 72.1% of generated papers meet high acceptance standards.
+This result shows that while current autonomous research agents cannot produce expert-level research
+results, ScientistTwo possesses such capabilities.
+Qualitative Comparison. To assess the depth and completeness of the generated manuscripts, we
+compare ScientistTwo against the strongest baseline, ScientistOne. As illustrated in Figure 8, ScientistTwo demonstrates substantially broader experimental coverage and analytical rigor. While
+ScientistOne generates only 4 figures and 2 tables—evaluating a single metric on an isolated benchmark with limited baselines—ScientistTwo produces 9 figures and 12 tables (including the Appendix).
+Furthermore, ScientistTwo reports multi-metric evaluations across diverse datasets and incorporates
+an extensive set of baseline comparisons, reflecting a publication-ready experimental design.
+1 https://paperreview.ai/
+
+10
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+• Round-Robin Placement (C0): A naive baseline that assigns models sequentially across
+available GPUs in a cyclic order, completely ignoring memory capacities and SLO requirements.
+• OpenEvolve (C1): An automated discovery framework based on AlphaEvolve that utilizes
+evolutionary search to find optimal placement configurations [Brown et al., 2025].
+• AdaEvolve: An adaptive, LLM-driven zeroth-order optimization approach that iteratively
+refines placements based on performance feedback [Cemri et al., 2026].
+• EvoX: The current state-of-the-art meta-evolutionary search framework for automated
+discovery, as reported in the benchmark leaderboard.
+Evaluation Metrics For this task, a higher score indicates a superior, more balanced model
+placement.
+4.2
+
+Main Results
+
+The comparative performance of our proposed method against the baselines is summarized in Table 1.
+Our Robust Multi-Heuristic Linearized Target Bisection method achieves a score of 26.2560. This
+performance significantly outperforms the naive Round-robin baseline, which completely fails to
+optimize the objective, yielding a score of 0. Furthermore, our deterministic solver surpasses the
+OpenEvolve framework, which achieves a score of 26.23.
+
+Round-robin placement
+OpenEvolve [Brown et al., 2025]
+Ours (Linearized Target Bisection)
+AdaEvolve [Cemri et al., 2026]
+EvoX
+
+inherently struggle to guarantee tight bin packings, leading to premature memory exhaustion and
+sub-optimal maximum KVPR bounds.
+
+Table 2: Ablation study of algorithmic components and alternative optimization formulations. The
+delta represents the score difference compared to our final best solution.
+Variant
+Score
+Delta vs Best
+
+0.00
+26.23
+26.25
+26.30
+30.52
+
+Final Solution (Linearized Bisection + Local Search)
+Parametric Bisection for Linearized KVPR Packing
+Iterative Dinkelbach-style Reassignment
+Fractional Optimization via Dinkelbach’s Linearization
+Lloyd-Max Iterative Reassignment
+Complementary Workload-Aware Model Pairing
+
+While our method demonstrates strong performance, we note that it is highly competitive with,
+but slightly trailing, AdaEvolve (26.30) and falls short of the unconstrained meta-evolutionary
+search employed by EvoX (30.52). However, this performance delta highlights a crucial trade-off
+between placement quality and computational overhead. Methods like AdaEvolve and EvoX rely on
+heavy, LLM-driven zeroth-order optimization and meta-evolutionary loops, which require substantial
+compute and time to converge.
+
+26.2560
+26.2332
+26.1906
+26.0157
+25.9551
+25.8152
+
+5
+
+-0.0228
+-0.0654
+-0.2403
+-0.3008
+-0.4408
+
+Despite these strong empirical results, our approach has several limitations. First, our solver assumes
+a static, upfront placement of models based on profiled request rates and Service Level Objectives
+(SLOs). In highly dynamic production environments where workload patterns fluctuate unpredictably,
+static placement may eventually lead to suboptimal resource utilization. Unlike systems that employ
+dynamic execution-level chunking [Agrawal et al., 2023] or live migration of KV cache states [He
+et al., 2025], our method does not currently adapt to real-time traffic shifts after the initial placement.
+Second, our formulation assumes a uniform 80GB memory constraint across all GPUs. While this
+reflects standard high-end accelerator deployments, it does not account for heterogeneous clusters
+with mixed memory capacities or complex network topologies, which have been explored in recent
+systems like Helix [Mei et al., 2024] and DisHelis [Zhang et al., 2026]. Finally, our model abstracts
+GPU memory as contiguous pool, relying on the assumption that underlying systems handle
+memory fragmentation effectively through techniques like virtual memory stitching or dynamic
+paging [Prabhu et al., 2024].
+
+Linearization vs. Iterative Reassignment We also explored alternative mathematical approaches
+to handle the fractional KVPR objective. An Iterative Dinkelbach-style Reassignment approach
+achieved a score of 26.1906, while a pure Fractional Optimization via Dinkelbach’s Iterative Linearization scored 26.0157. Both approaches underperformed compared to our target bisection method.
+The fractional nature of the objective W/(M → S) ↑ K transforms perfectly into the linear constraint
+W + K · S ↑ K · M . Bisection over the target K allows the solver to leverage robust, globally-aware
+bin-packing heuristics rather than relying on iterative, gradient-like reassignments that are prone to
+local optima in heavily constrained spaces.
+
+Ablation Studies
+
+To understand the contribution of individual algorithmic design choices, we conducted an extensive
+ablation study. We evaluated several mathematical relaxations and search strategies that were explored
+during the development of our solver. The results of this ablation are detailed in Table 2.
+Impact of Local Search Refinement Our core bisection search relies on sorting heuristics (e.g.,
+First-Fit and Best-Fit descending) to find feasible packings for a target KVPR. While highly effective,
+heuristic bin-packing can occasionally leave small imbalances across GPUs. Removing the postbisection local search refinement drops the score from 26.2560 to 26.2332. The local search phase
+
+Failure of Clustering-Based Heuristics Finally, we tested clustering-inspired heuristics, including
+Lloyd-Max Iterative Reassignment (score: 25.9551) and Complementary Workload-Aware Model
+Pairing (score: 25.8152). These methods attempt to balance the mean KVPR pair complementary
+models prior to placement. However, they consistently failed to tightly pack the 80GB bins compared
+to capacity-linearized bisection. The strictness of the memory constraint dictates that optimizing
+for capacity utilization is a prerequisite for optimizing the fractional objective; clustering methods
+
+7
+
+8
+
+Discussion and Conclusion
+
+In this work, we addressed the critical challenge of minimizing Key-Value Cache Pressure (KVPR)
+in multi-tenant Large Language Model (LLM) serving environments. By formulating the model
+placement task as a strict non-linear fractional bin-packing problem, we introduced a deterministic,
+three-phase algorithmic pipeline comprising greedy initialization, multi-heuristic linearized target
+bisection, and local search refinement. Our approach effectively transforms the non-linear KVPR
+objective into a solvable 1D capacity constraint. Experimental results demonstrate that our method
+achieves a highly competitive KVPR score of 26.2560, outperforming sophisticated meta-evolutionary
+frameworks such as OpenEvolve [Brown et al., 2025] and AdaEvolve [Cemri et al., 2026] while
+maintaining a negligible computational overhead of approximately 0.021 seconds.
+
+systematically evaluates O(1) model moves and swaps from the bottleneck GPU. By incrementally
+updating precomputed state arrays, this refinement irons out residual heuristic imperfections without
+inflating execution time, proving to be a critical "finisher" for the algorithm.
+
+In contrast, our proposed method is entirely deterministic and mathematically grounded in fractional
+bin-packing principles [Alvim et al., 2004]. It achieves a 100% success rate in finding feasible placements with an exceptionally low execution time of approximately 0.021 seconds. By transforming
+the non-linear KVPR objective into a linearized capacity constraint, our solver rapidly explores the
+search space using standard 1D bin-packing heuristics [Fekete and Schepers, 2001], making it highly
+suitable for dynamic, real-time cluster orchestration where millisecond-level scheduling latency is
+required.
+4.3
+
+Figure 4: Ablation study of algorithmic components and search strategies comparing the overall
+objective scores of various optimization formulations. The final proposed method, Linearized Target
+Bisection with Local Search Refinement, achieves the highest score of 26.2560, demonstrating
+its superiority over ternative mathematical relaxations such as Dinkelbach-style and Lloyd-Max
+reassignment. The y-axis is truncated to highlight the fine-grained performance differences between
+the highly optimized variants.
+
+Figure 3: Comparison of normalized KV Cache Pressure (KVPR) scores for the proposed method
+against Round-robin and OpenEvolve baselines across three Prism benchmark sub-tasks. The
+proposed method consistently achieves state-of-the-art performance, demonstrating up to a 1.55x
+improvement over the standard Round-robin baseline.
+
+Table 1: Comparison of model placement strategies on the Prism benchmark. The proposed method
+provides a highly competitive, deterministic alternative to evolutionary search algorithms. Higher
+scores indicate better KVPR minimization.
+Method
+Score
+
+Future research should explore extending our linearized bisection framework to online, dynamic
+serving scenarios. Integrating our placement algorithm with proactive live migration mechanisms
+could allow the system to continuously rebalance KVPR as request rates deviate from initial estimates
+9
+
+(a) Experiment section generated by ScientistOne (Meng et al., 2026)
+Under review as a conference paper at ICLR 2025
+
+Under review as a conference paper at ICLR 2025
+
+Under review as a conference paper at ICLR 2025
+
+324
+325
+
+378
+379
+
+432
+433
+
+326
+327
+328
+329
+330
+331
+
+380
+381
+382
+383
+384
+385
+
+434
+435
+436
+437
+438
+439
+
+332
+333
+334
+335
+336
+337
+
+386
+387
+388
+389
+390
+391
+
+440
+441
+442
+443
+444
+445
+
+338
+339
+340
+341
+342
+343
+344
+345
+346
+347
+348
+349
+350
+351
+352
+353
+354
+
+Figure 3: End-to-end training-loss convergence on the three benchmarks. OFP-S HADOW (red) closely
+matches the trajectories and final loss of exact KKT differentiation, showing that matrix-free, dual-free hypergradients preserve full optimization performance.
+Table 2: End-to-end training-loss convergence (mean ± std over 3 seeds). Final-epoch gaps between OFPS HADOW and exact solvers are → 0.0006. “—” marks solvers not applicable to the conic layer.
+Task / Epoch
+
+FFOCP
+
+LPGD
+
+BPQP
+
+Synthetic DFL QP (train loss = mean(y · y ω ), lower is better)
+Epoch 0
+→0.3844
+→0.3803
+→0.3824
+Epoch 1
+→0.4996
+→0.4992
+→0.4995
+Final
+→0.4998 ± 0.0006 →0.4995 ± 0.0006 →0.4993 ± 0.0007
+
+→0.3797
+→0.4990
+→0.4994 ± 0.0004
+
+→0.2592
+→0.4796
+→0.4986 ± 0.0008
+
+→0.3796
+→0.4995
+→0.4998 ± 0.0006
+
+366
+367
+368
+369
+370
+371
+372
+373
+374
+375
+376
+377
+
+CvxpyLayer
+
+1.3816
+1.2503
+1.1490 ± 0.0047
+
+1.3838
+1.2700
+1.1754 ± 0.0011
+
+1.3786
+1.2528
+1.1488 ± 0.0060
+
+1.3816
+1.2503
+1.1490 ± 0.0046
+
+—
+—
+—
+
+—
+—
+—
+
+—
+—
+—
+
+→0.0617
+→0.0722
+→0.0734 ± 0.0000
+
+Sudoku near-LP (train MSE, lower is better)
+Epoch 0
+1.3817
+1.3820
+Epoch 1
+1.2506
+1.2506
+Final
+1.1490 ± 0.0048
+1.1496 ± 0.0044
+
+SOCP (train loss = mean(y · y ω ), lower is better)
+Epoch 0
+→0.0576
+→0.0575
+Epoch 1
+→0.0709
+→0.0711
+Final
+→0.0725 ± 0.0002 →0.0725 ± 0.0003
+
+QPTH
+
+Table 3: Forward / backward / total execution time per iteration (s/iter). Best in each column in bold.
+Synthetic DFL QP
+
+355
+356
+357
+358
+359
+360
+361
+362
+363
+364
+365
+
+OFP-Shadow (Ours)
+
+Sudoku (near-LP)
+
+Method
+
+Forward
+
+Backward
+
+Total
+
+Forward
+
+Backward
+
+Total
+
+OFP-Shadow (Ours)
+CvxpyLayer (exact)
+QPTH (exact QP)
+FFOCP (paper)
+LPGD (first-order)
+BPQP (black-box)
+
+0.0346
+0.7773
+0.4656
+0.2798
+0.7577
+0.1749
+
+0.1195
+0.1752
+0.0296
+0.4124
+0.1868
+1.1569
+
+0.1541
+0.9524
+0.4952
+0.6922
+0.9446
+1.3319
+
+0.0263
+0.0577
+0.0673
+0.0271
+0.0330
+0.0201
+
+0.0073
+0.0222
+0.0034
+0.0484
+0.0291
+0.0201
+
+0.0336
+0.0800
+0.0706
+0.0755
+0.0621
+0.0402
+
+Latency. By removing secondary solves and KKT factorizations, OFP-S HADOW cuts backward
+time over first-order FFOCP by 3.5↑ on QP (0.1195s vs. 0.4124s) and 6.6↑ on Sudoku (0.0073s
+vs. 0.0484s), while matching or beating exact solvers on total time (Table 3).
+4.2
+
+S CALABILITY IN T IME AND M EMORY
+
+We scale dy ↓ {100, 200, 400, 800, 1600} on the QP benchmark (batch 8), where the matrix-free
+Neumann adjoint is used. Figure 4 and Table 4 show OFP-S HADOW scales sub-cubically (O(d0.64
+))
+y
+versus CvxpyLayer’s O(d1.67
+): at dy =800 it is 5.9↑ faster in the backward pass, and at dy =1600 it
+y
+finishes in 0.35s where CvxpyLayer times out (> 450s). Memory is decisive: CvxpyLayer’s dense
+KKT factorization consumes 29.3 GB at dy =800 (39↑ OFP-S HADOW), while OFP-S HADOW stays
+flat at 721–899 MB.
+4.3
+
+C OMPARISON TO O PEN -S OURCE I MPLICIT-D IFFERENTIATION L AYERS
+
+We further benchmark OFP-S HADOW against two open-source layers that avoid dense KKT factorization: dQP (Magoon et al., 2024) (OSQP forward, sparse QDLDL/SciPy backward) and JaxOpt
+7
+
+392
+393
+394
+395
+396
+397
+398
+399
+400
+401
+402
+403
+404
+405
+406
+407
+408
+
+Figure 4: Scaling with decision dimension dy (QP, batch 8). (A) Backward time (log–log): OFP-S HADOW
+scales sub-cubically, beating CvxpyLayer by 5.9→ at dy =800 and completing dy =1600 where CvxpyLayer
+times out. (B) Peak process RSS (semi-log): OFP-S HADOW stays near 800 MB up to dy =1600, while exact
+KKT differentiation escalates to 29.3 GB at dy =800.
+Table 4: Execution time and peak process RSS memory scaling across decision dimensions dy (batch 8).
+Metric / Method
+
+dy =200
+
+dy =400
+
+dy =800
+
+dy =1600
+
+Backward execution time per iteration (s)
+OFP-Shadow (Ours)
+0.0588
+0.0769
+CvxpyLayer (exact)
+0.0257
+0.0494
+FFOCP (paper)
+0.1149
+0.1694
+BPQP (black-box)
+0.0160
+0.0276
+
+dy =100
+
+0.0932
+0.1710
+0.3784
+0.0579
+
+0.1404
+0.8299
+0.8507
+0.2147
+
+0.3467
+Timeout (>450s)
+4.3847
+1.0324
+
+Peak process RSS memory footprint (MB)
+OFP-Shadow (Ours)
+721.2
+721.7
+CvxpyLayer (exact)
+820.0
+1722.1
+FFOCP (paper)
+742.9
+762.1
+BPQP (black-box)
+720.5
+727.5
+
+728.1
+6801.0
+894.3
+752.2
+
+757.4
+29292.4
+1153.2
+848.2
+
+899.0
+OOM / Timeout
+2362.2
+1205.9
+
+451
+452
+453
+454
+455
+456
+457
+458
+459
+460
+461
+462
+463
+464
+465
+466
+467
+468
+
+415
+416
+417
+418
+419
+
+469
+470
+471
+472
+473
+
+426
+427
+428
+429
+430
+431
+
+Figure 5: QP scaling versus open-source implicit-differentiation baselines (batch 8, 16 CPU threads). (A)
+Backward time (log–log): OFP-S HADOW has the lowest exponent and is 3.2→ faster than dQP at dy =1600,
+where JaxOpt times out. (B) Peak RSS memory: OFP-S HADOW stays flat while dQP and JaxOpt grow with
+dy .
+
+(Blondel et al., 2021) (implicit diff of an OSQP fixed point); both are fully open-source and
+need no commercial license (App. C). On the QP scaling sweep (Fig. 5, Table 5), OFP-S HADOW
+attains the lowest empirical time exponent (O(d0.60
+) vs. dQP’s O(d1.92
+) and JaxOpt’s O(d2.20
+)): at
+y
+y
+y
+dy =1600 its backward pass is 3.2→ faster than dQP and 7.5→ faster in total, while JaxOpt times out
+(> 600s). Memory stays flat (951↑1098 MB) whereas dQP nearly doubles (2042 MB), and task
+quality is identical across all three (QP final loss ↓0.4998 each; Sudoku 1.1490/1.1504/1.1497).
+
+Metric
+
+Method
+
+dy =100
+
+dy =400
+
+dy =800
+
+dy =1600
+
+Exponent p
+
+Backward (s) →
+
+OFP-Shadow (Ours)
+dQP (OSQP, open-source)
+JaxOpt (implicit diff)
+
+0.0594
+0.0053
+0.2963
+
+0.0975
+0.0561
+5.9966
+
+0.1445
+0.2339
+29.2311
+
+0.3511
+1.1399
+Timeout (>600s)
+
+0.60
+1.92
+2.20
+
+Total (s) →
+
+OFP-Shadow (Ours)
+dQP (OSQP, open-source)
+JaxOpt (implicit diff)
+
+0.0774
+0.0270
+0.4222
+
+0.1309
+0.1793
+9.5374
+
+0.1964
+0.6887
+52.7790
+
+0.4418
+3.2997
+Timeout (>600s)
+
+—
+—
+—
+
+Peak RSS (MB) →
+
+OFP-Shadow (Ours)
+dQP (OSQP, open-source)
+JaxOpt (implicit diff)
+
+950.8
+954.1
+1200.2
+
+952.9
+1037.7
+1383.1
+
+985.7
+1305.8
+1899.2
+
+1098.4
+2041.9
+Timeout
+
+Flat
+Scaling
+Scaling
+
+446
+447
+448
+449
+450
+
+409
+410
+411
+412
+413
+414
+
+420
+421
+422
+423
+424
+425
+
+Table 5: QP scaling versus open-source baselines dQP and JaxOpt (batch 8, 16 CPU threads). Empirical time
+exponent p fits t → dpy . Best per column in bold.
+
+474
+475
+476
+477
+478
+479
+480
+481
+482
+483
+484
+485
+
+Figure 6: Real-world P RED O PT benchmarks (3 seeds, batch 32). (A) Normalized regret: OFP-S HADOW
+matches exact CvxpyLayer and beats first-order FFOCP. (B) Backward time per batch: OFP-S HADOW is up to
+12.9↑ faster han FFOCP and 2.6↑ faster than exact CvxpyLayer.
+Table 6: Real-world P RED O PT benchmark results (mean ± std over 3 seeds, batch 32). OFP-S HADOW
+matches exact CvxpyLayer regret with cosine similarity 1.0000 while being markedly faster and lighter. Best
+per row group in bold.
+Benchmark task
+
+Metric
+
+OFP-Shadow (Ours)
+
+CvxpyLayer (exact)
+
+FFOCP (first-order)
+
+Shortest Path
+(5↑5 grid LP)
+
+Normalized regret →
+Backward / batch (s) →
+Peak memory (MB) →
+
+0.1496 ± 0.0566
+0.0779
+880
+
+0.1473 ± 0.0514
+0.0608
+1047
+
+0.1599 ± 0.0470
+0.3088 (4.0↑)
+874
+
+0.6176 ± 0.0124
+0.0267
+870
+
+0.6185 ± 0.0187
+0.0697 (2.6↑)
+2370 (2.7↑)
+
+0.6217 ± 0.0033
+0.3051 (11.4↑)
+863
+
+Normalized regret →
+Backward / batch (s) →
+Peak memory (MB) →
+
+0.0874 ± 0.0006
+0.0223
+948
+
+0.0874 ± 0.0006
+0.0533 (2.4↑)
+1202
+
+0.0874 ± 0.0006
+0.2865 (12.9↑)
+947
+
+Portfolio Opt.
+(Markowitz QP)
+Energy Sched.
+(real 48h prices)
+
+4.4
+
+Normalized regret →
+Backward / batch (s) →
+Peak memory (MB) →
+
+R EAL -W ORLD D ECISION -F OCUSED B ENCHMARKS (P RED O PT )
+
+To move beyond synthetic problems, we evaluate on three standard real-world tasks from the public
+P RED O PT decision-focused-learning suite: Shortest Path (5↑5 grid LP, dy =40), Portfolio Optimization (Markowitz QP, dy =50), and Energy-Cost Scheduling (real 48-hour electricity prices,
+dy =48). Table 6 and Figure 6 show OFP-S HADOW matches the exact CvxpyLayer normalized
+regret on all three tasks (cosine 1.0000 vs. exact hypergradients) while being up to 2.6↑ faster
+than CvxpyLayer and 12.9↑ faster than FFOCP in the backward pass, at a flat memory footprint
+(↓ 948 MB)—so the efficiency gains transfer to real-world DFL pipelines without loss in decision
+quality.
+4.5
+
+A BLATION S TUDIES AND S TABILITY D IAGNOSTICS
+
+Figure 7 summarizes the three most decisive ablations; full tables for all six ablations (temperature
+ω , damping ε, step size ϑ) are in App. B.
+
+8
+
+9
+
+(b) Experiment section generated by ScientistTwo (Ours)
+
+Figure 8 | Qualitative comparison. Side-by-side comparison of the experiment section generated by
+ScientistTwo against the highest-reviewed paper from ScientistOne (Meng et al., 2026).
+Comparison with Human Researchers. We evaluate the research quality produced by ScientistTwo against accepted publications. Specifically, we use ScholarPeer and the Stanford Agentic
+Reviewer to evaluate papers accepted at NeurIPS 2025, ICLR 2026, and ICML 2026 (including
+spotlight presentations), whose problem specifications and codebases serve as benchmark tasks for
+ScientistTwo. As shown in Table 3, ScientistTwo successfully executes research on 86 out of 107
+problems, achieving an 80.4% success rate. Furthermore, papers generated by ScientistTwo surpass
+the average scores of accepted papers at ICLR 2026 and NeurIPS 2025 under both ScholarPeer and
+Stanford Agentic Reviewer. While ScientistTwo does not yet achieve spotlight-level quality, these
+results still demonstrate that it functions as an expert-level research agent capable of producing
+manuscripts that meet the acceptance threshold of top-tier AI venues. Finally, we include comparisons
+with AI-generated papers accepted at Agent4Science 2025—the first venue dedicated to AI-generated
+research—to demonstrate that prior systems were incapable of meeting top conference standards.
+
+11
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Table 3 | Comparison with human-author papers and AI-generated papers. We report the average
+review ratings, standard deviations (1–10 scale), and acceptance rates (%) evaluated by ScholarPeer
+(Goyal et al., 2026) and Stanford Agentic Reviewer. The top section evaluates papers accepted at
+each venue, which serve as inputs for ScientistTwo. The bottom section reports the evaluation of
+papers generated by ScientistTwo using the accepted papers from the corresponding venue. The
+column “# Papers” indicates the number of accepted reference papers evaluated or the number of
+papers successfully generated by ScientistTwo. † denotes AI-generated papers.
+ScholarPeer
+Venue
+
+Stanford Agentic Reviewer
+
+# Papers
+
+Avg. Rating
+
+Accept Rate
+
+Avg. Rating
+
+Accept Rate
+
+4
+5
+38
+64
+
+3.0±0.0
+6.8±1.6
+6.2±1.9
+6.9±1.5
+
+0.0
+60.0
+65.8
+79.7
+
+3.8±0.4
+5.2±0.7
+5.5±0.7
+6.1±0.5
+
+0.0
+60.0
+76.3
+96.9
+
+4/5
+33/38
+49/64
+86/107
+
+7.0±1.2
+7.3±1.7
+7.6±1.0
+7.5±1.3
+
+100.0
+87.9
+93.9
+91.9
+
+5.4±0.2
+5.6±0.7
+5.7±0.6
+5.7±0.6
+
+75.0
+75.8
+69.4
+72.1
+
+Agent4Science 2025 Accepted†
+ICLR 2026 Accepted
+NeurIPS 2025 Accepted
+ICML 2026 Spotlight
+ScientistTwo (Ours)
+ICLR 2026†
+NeurIPS 2025†
+ICML 2026 Spotlight†
+Overall†
+
+Table 4 | Comparison with AutoSOTA. We report the number of tasks successfully done by each
+framework, and performance gain (%) across successful cases. For NeurIPS 2025 and ICLR 2026,
+evaluations use the same set of 33 and 4 input papers, respectively. Bold indicates the best score.
+Overall
+Framework
+AutoSOTA (Li et al., 2026d)
+ScientistTwo (Ours)
+
+NeurIPS 2025
+
+ICLR 2026
+
+# Papers
+
+Med. Gain
+
+Avg. Gain
+
+Med. Gain
+
+Avg. Gain
+
+Med. Gain
+
+Avg. Gain
+
+105
+86
+
+2.7
+7.7
+
+7.5
+25.2
+
+3.7
+7.0
+
+8.5
+13.9
+
+5.0
+2.2
+
+7.2
+3.8
+
+Comparison with AutoSOTA. While AutoSOTA (Li et al., 2026d) operates in a distinct setting, i.e.,
+modifying existing codebases to optimize a single scalar metric, ScientistTwo is designed for end-toend scientific paper generation. For completeness, we provide a comparison based on the performance
+gains reported over human state-of-the-art baselines. To extract these gains systematically, we parse
+the main tables for 10 times using Gemini 3.6 Flash and averaged them. As shown in Table 4,
+ScientistTwo shows superior performance to AutoSOTA in terms of average and median improvement
+across average of all tasks and NeurIPS 2025 tasks, but performance drops slightly in the ICLR 2026
+tasks. We hypothesize that this advantage stems from ScientistTwo proposing novel methodological
+innovations to overcome baseline limitations, whereas AutoSOTA relies primarily on searching within
+the existing hyperparameter and execution space to improve the given method. Appendix B examines
+the five ICLR 2026 papers one by one and supports this account: none of AutoSOTA’s five changes
+introduces a new algorithmic component, and each is a configuration-level edit of at most a few lines.
+4.2. Ablation Studies
+Here, we evaluate on the 49 target problems sourced from ICML 2026 Spotlight papers.
+Effectiveness of Idea Evolution. As shown in Figure 9(a), the relative gain over the human stateof-the-art baseline steadily increases as ScientistTwo proceeds through iterative idea refinement. In
+particular, the magnitude of improvement is most pronounced during the early refinement stages.
+12
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+(a) Idea Improvement
+
+(b) Distribution of Selected Best Ideas
+
+Figure 9 | Ablation on idea improvement. (a) Relative performance gains are largest during the
+initial improvement rounds and steadily diminish in later stages. (b) Top-performing ideas emerge
+early in the refinement process. Across iterations, evolved ideas are selected for the majority of tasks.
+Table 5 | Effectiveness of peer-review simulation. Average review ratings (1–10 scale) and acceptance rates (%) evaluated by ScholarPeer and Stanford Agentic Reviewer. Best score is bolded.
+ScholarPeer
+Framework
+ScientistOne
+ScientistTwo (Variant)
+ScientistTwo (Ours)
+ScientistTwo (Ours)
+
+Stanford Agentic Reviewer
+
+Review Round
+
+Rebuttal Agent
+
+Avg. Rating
+
+Accept Rate
+
+Avg. Rating
+
+Accept Rate
+
+0
+1
+2
+
+✗
+✓
+✓
+
+3.8±1.2
+5.2±2.2
+6.9±1.6
+7.6±1.0
+
+14.3
+46.9
+79.6
+93.9
+
+4.1±0.7
+5.6±0.5
+5.8±0.6
+5.7±0.6
+
+0.0
+49.0
+73.5
+69.4
+
+Balancing Exploration and Exploitation. As shown in Figure 9(b), the majority of the top-performing
+ideas chosen by the Selector Agent are identified in the early stages. This indicates that the initial
+seed ideas generated by ScientistTwo to overcome the limitations of human state-of-the-art methods
+are already well-formed and competitive. Conversely, when seed ideas yield marginal gains or fail,
+the Idea Evolver Agent leverages these experimental traces to evolve them into stronger hypotheses
+that overcome baseline shortcomings. Consequently, as refinement progresses, newly selected best
+ideas are substantially more likely to be drawn from evolved candidates rather than original seed
+ideas (as evidenced by the dominant share of the blue bars after the initial round).
+Effectiveness of the Rebuttal Agent. During the simulated dynamic peer-review phase, ScientistTwo leverages the Rebuttal Agent to conduct supplementary experiments and uses the findings to
+enhance the draft. As shown in Table 5, this rebuttal procedure effectively addresses the weaknesses
+flagged by ScholarPeer. While it is not surprising that ScientistTwo gradually achieves good scores on
+ScholarPeer, as we utilize ScholarPeer reviews, we found that our peer-review simulation framework
+is generalized across Review Agent. Specifically, incorporating ScholarPeer reviews also improves
+acceptance rate from Stanford Agentic Reviewer, with this effect being particularly pronounced in
+the first review round. Furthermore, the first and second rows of Table 5 demonstrate that even
+without the Rebuttal Agent, ScientistTwo produces initial drafts of significantly higher quality than the
+prior state-of-the-art baseline, ScientistOne. This indicates that the preceding autonomous research
+cycle—specifically the holistic benchmark reasoning, idea refinement, and ablation-driven hypothesis
+refinement—is highly effective for drafting a robust manuscript, achieving a nearly 50% acceptance
+rate when evaluated by both ScholarPeer and Stanford Agentic Reviewer.
+13
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Table 6 | Ablation study on review-driven idea refinement. We report the main benchmark results
+generated by ScientistTwo using Kwon et al. (2026) as input. Specifically, the unlearning performance
+on TOFU (forget10 split, Llama-3.2-1B-Instruct). Bold text indicates the best performance.
+Author
+Kwon et al. (2026)
+ScientistTwo (Variant)
+ScientistTwo (Ours)
+
+Method
+
+Meta-Rev.
+
+Overall ↑
+
+Mem. ↑
+
+Util. ↑
+
+Priv. ↑
+
+EM ↓
+
+FQ ↑
+
+Engram
+LFR-Engram
+FCD-Engram
+
+✗
+✓
+
+0.705
+0.897
+0.916
+
+0.922
+0.963
+0.969
+
+0.871
+0.917
+0.926
+
+0.495
+0.824
+0.860
+
+0.004
+0.084
+0.071
+
+-0.551
+-0.014
+-0.001
+
+Table 7 | Integrity Audit results. Evaluation of paper and code integrity following Meng et al. (2026).
+Score Verif. (↑) indicates that every claimed results are reproducible. Spec. Violat. (↓) indicates code
+specification violations or reward hacking issues. Ref. Verif. (↓) checks for hallucinated references.
+Method-Code (↑) measures alignment between paper methodology and code implementation.
+Refinement Agent
+Framework
+ScientistTwo (Variant)
+ScientistTwo (Variant)
+ScientistTwo (Variant)
+ScientistTwo (Ours)
+
+Integrity Audit
+
+Spec.
+Violat.
+
+Ref.
+Verif.
+
+Method
+Code
+
+Score
+Verif.
+
+Spec.
+Violat.
+
+Ref.
+Verif.
+
+Method
+Code
+
+✗
+✓
+✓
+✓
+
+✗
+✗
+✓
+✓
+
+✗
+✗
+✗
+✓
+
+50/50
+49/49
+49/49
+49/49
+
+1/50
+0/49
+0/49
+0/49
+
+19/1840
+19/1817
+0/1814
+0/1814
+
+39/50
+38/49
+38/49
+49/49
+
+Effectiveness of Review-Driven Idea Refinement. In the final stage, ScientistTwo employs the MetaReview Agent to evaluate whether the generated paper meets the acceptance standards of a top-tier
+venue. If the agent indicates that further improvement is required, ScientistTwo refines the underlying
+idea by incorporating the review as feedback. As shown in Table 6, this refinement process enables
+ScientistTwo to generate more effective ideas that advance beyond the current knowledge frontier. For
+instance, prior to review-driven refinement, ScientistTwo already established a new state-of-the-art
+method, LFR-Engram, outperforming the human baseline Engram (Kwon et al., 2026). However,
+the Meta-Review Agent deemed LFR-Engram insufficient to meet expert standards. By leveraging
+the reviewer feedback for refinement, ScientistTwo subsequently synthesized FCD-Engram, which
+consistently outperforms LFR-Engram. This case study demonstrates that review-driven refinement is
+essential for producing more novel, high-impact research ideas.
+CoE Integrity Audit. The CoE Integrity Audit (Meng et al., 2026) is a post-hoc evaluation framework
+that verifies whether claims in a generated paper are supported by its artifacts: code, empirical
+outputs, and bibliography. It comprises four integrity checks: (1) Score verification, which evaluates
+codebase reproducibility by comparing reported scores against those obtained from re-executing the
+repository; (2) Specification compliance, which ensures that solution code adheres strictly to task rules
+without reward hacking; (3) Reference verification, which guarantees that the bibliography contains
+no hallucinated citations; and (4) Method-code alignment, which ensures that the paper faithfully
+and accurately describes the codebase implementation. Following Meng et al. (2026), AI-generated
+papers and their corresponding codebases must be rigorously verifiable across all four dimensions.
+To guarantee these properties, we introduce three dedicated refinement agents alongside careful
+agent prompt design. For score verification, the Coding Agent is prompted during the experimentation phase to output self-contained, reproducible scripts and execution instructions, ensuring full
+reproducibility without requiring additional post-hoc refinement. For specification compliance, we
+introduce a validation filter that uses the Coding Agent to detect and discard rule-violating solutions
+immediately after experimentation. For reference verification, a search-augmented LLM identifies
+14
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Table 8 | Coding Agent Generalizability. We report success rate (SR; %) on 5 tasks sourced from
+ICLR 2026 accepted papers, along with average performance gain (%), review ratings (1–10 scale),
+and acceptance rates (%) evaluated by ScholarPeer and Stanford Agentic Reviewer across successful
+cases. Claude Code and Antigravity are powered by Opus 4.8 and Gemini 3.8 Flash, respectively.
+ScholarPeer
+
+Stanford Agentic Reviewer
+
+Framework
+
+Coding Agent
+
+SR
+
+Avg. Gain
+
+Avg. Rating
+
+Accept Rate
+
+Avg. Rating
+
+Accept Rate
+
+ScientistTwo (Ours)
+ScientistTwo (Ours)
+
+Claude Code
+Antigravity
+
+80.0
+60.0
+
+3.8
+16.7
+
+7.0±1.2
+6.3±1.5
+
+100.0
+66.7
+
+5.4±0.2
+4.8±1.0
+
+75.0
+66.7
+
+(a) Required Time per Task (Days)
+
+(b) Required Time & Cost per Stage
+
+Figure 10 | Computational cost of ScientistTwo. (a) ScientistTwo requires 2.5 days on average to
+improve a single paper. (b) Idea refinement accounts for the majority of overall time and computational
+cost, primarily driven by iterative idea evolution and experimental execution.
+hallucinated citations, enabling the Writer Agent to ground and correct the bibliography using live
+search results. Finally, for method-code alignment, the Coding Agent audits the repository against the
+manuscript to produce an audit report, which the Writer Agent then uses to rectify any discrepancies
+in the method section. As shown in Table 7, ScientistTwo faithfully passes all four audits; removing
+these refinement agents leads to sporadic audit failures, highlighting ScientistTwo’s capability to
+generating reliable and verifiable scientific contributions.2
+Generalizability Across Coding Agents. Throughout our primary experiments, we leverage Claude
+Code with Opus 4.8 whenever coding capabilities are required. To evaluate generalizability across
+agent backends—a core component for testing generated ideas across multiple benchmarks—we
+replace Claude Code with Antigravity powered by Gemini 3.8 Flash, and run ScientistTwo on 5
+tasks sourced from ICLR 2026 accepted papers. As shown in Table 8, ScientistTwo remains capable
+of generating state-of-the-art methods across different coding agents. Furthermore, the codebases
+generated by Antigravity remain fully reproducible, exhibit no specification violations, and faithfully
+align with the designs proposed by ScientistTwo.
+4.3. Discussion
+Cost Analysis. For cost analysis, we analyze on the 33 target problems sourced from NeurIPS 2025
+papers. As shown in Figure 10(a), ScientistTwo requires an average of 2–3 days to complete the
+entire research cycle, demonstrating significantly faster execution compared to human researchers
+and substantially accelerating the exploration of new research directions. Figure 10(b) highlights
+2 ScientistTwo successfully completes an additional task without a refinement agent for specification compliance (see the
+
+first row of Table 7). However, since the corresponding codebase contains reward hacking, it must be filtered.
+
+15
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Table 9 | Iterative Frontier Expansion. Sequential discovery results where ScientistTwo uses its own
+newly discovered state-of-the-art method as context to drive further algorithmic improvements.
+Frontier
+
+Researcher
+
+Method
+
+Human Baseline
+
+Human
+
+Jiang and Gong (2026)
+
+First Iteration
+
+ScientistTwo (Ours)
+
+Second Iteration
+
+ScientistTwo (Ours)
+
+Third Iteration
+
+ScientistTwo (Ours)
+
+↓ Relative Gain: 10.9%
+VD-STrans (Rating: 6.5)
+↓ Relative Gain: 9.6%
+BXT-Transducer (Rating: 5.6)
+↓ Relative Gain: 8.2%
+SBR-Transducer (Rating: 7.1)
+
+Table 10 | Human Reviewers Evaluation. Standalone scores represent mean absolute ratings for
+ScientistTwo on a 1–5 Likert scale (> 3.0 indicates positive endorsement). Comparative scores
+represent relative preference between human-written and ScientistTwo-generated papers on a 1–5
+scale (3.0 = Parity, > 3.0 favors ScientistTwo).
+Focus Aspect
+Introduction (Motivation & Related Works)
+Method (Soundness & Algorithmic Rigor)
+Experiment (Baseline & Benchmark)
+Experiment (Ablations)
+Experiment (Insight & Limitation Analysis)
+Overall (Scientific Maturity & Top-Tier Venue Readiness)
+
+Standalone
+
+Relative to Human
+
+4.2
+4.1
+4.0
+4.3
+4.0
+3.7
+
+3.1 (Human < ScientistTwo)
+2.9 (Human > ScientistTwo)
+3.5 (Human < ScientistTwo)
+3.3 (Human < ScientistTwo)
+3.3 (Human < ScientistTwo)
+3.0 (Human = ScientistTwo)
+
+that the majority of execution time is concentrated in the Idea Refinement, Dynamic Peer-Review,
+and Meta-Review stages. This overhead stems from iterative benchmark evaluation and code execution—traditionally the most time-consuming phase in empirical research. Across the full pipeline,
+ScientistTwo incurs an average cost of $3765, including token usage costs and virtual machine costs
+(Figure 10(b), right). Cost expenditure increases proportionally to execution time, which is primarily
+due to long-term experimentation and the large amount of context and generation requirements.
+Iterative Frontier Expansion. Having demonstrated that ScientistTwo surpasses human-designed
+baselines, a natural follow-up question is whether ScientistTwo can iteratively compound these
+gains—namely, can it use its own newly discovered state-of-the-art solutions as priors to discover
+even better methods? As a positive answer, as summarized in Table 9, ScientistTwo initially discovers
+VD-STrans, achieving a 10.9% improvement over the existing state of the art for incremental Byte Pair
+Encoding (BPE) tokenization (Jiang and Gong, 2026). When VD-STrans is subsequently provided as
+context in the next discovery cycle, ScientistTwo generates BXT-Transducer, yielding an additional
+9.6% relative improvement over VD-STrans. Moreover, in the third iteration, ScientistTwo proposes
+SBR-Transducer, again yielding an additional 8.2% improvement over BXT-Transducer. These results
+demonstrate that ScientistTwo is capable of compounding discovery, sequentially pushing algorithmic
+performance beyond both human baselines and its own solutions.
+Human Evaluation. To evaluate the research quality of manuscripts produced by ScientistTwo, we
+conducted a human expert evaluation across 33 papers generated from NeurIPS-derived problems,
+evaluated by 9 experienced human reviewers. Reviewers first scored each ScientistTwo-generated
+paper standalone on a 1–5 Likert scale across six research dimensions. As shown in Table 10, ScientistTwo consistently received positive endorsements across all evaluated criteria, achieving notable
+
+16
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Figure 11 | Case Study: Main Figure of DynaSpec-RAG developed by ScientistTwo. Overall
+architecture of the DynaSpec-RAG framework for zero-shot time series forecasting.
+Table 11 | Case Study: Main Results of DynaSpec-RAG developed by ScientistTwo. Zero-shot
+long-term forecasting performance (𝑇 = 512, 𝐿 = 64) across seven benchmarks, reported as MSE /
+MAE (lower is better). Best results are in bold, second-best are underlined. “—” indicates datasets
+present in a model’s pretraining corpus for which zero-shot numbers are omitted.
+Method
+
+DynaSpec-RAG
+
+TS-RAG
+
+Chronos-Bolt B
+
+MOMENT
+
+TTM B
+
+Moirai B
+
+TimesFM
+
+Chronos B
+
+ETTh1
+ETTh2
+ETTm1
+ETTm2
+Weather
+Electricity
+Exchange
+
+0.3467 / 0.3627
+0.2399 / 0.2970
+0.2803 / 0.3090
+0.1428 / 0.2219
+0.1397 / 0.1749
+0.1135 / 0.2059
+0.0615 / 0.1704
+
+0.3557 / 0.3624
+0.2451 / 0.2982
+0.2906 / 0.3114
+0.1466 / 0.2231
+0.1454 / 0.1771
+0.1120 / 0.2002
+0.0627 / 0.1718
+
+0.3616 / 0.3650
+0.2517 / 0.2992
+0.3109 / 0.3185
+0.1487 / 0.2236
+0.1525 / 0.1825
+0.1132 / 0.2004
+0.0673 / 0.1780
+
+0.3920 / 0.4110
+0.2742 / 0.3327
+0.3506 / 0.3834
+0.1703 / 0.2579
+0.1801 / 0.2384
+0.1967 / 0.3028
+0.0979 / 0.2059
+
+0.3619 / 0.3710
+0.2531 / 0.3032
+0.3152 / 0.3248
+0.1511 / 0.2405
+0.1543 / 0.1893
+0.1715 / 0.2643
+0.0657 / 0.1725
+
+0.3686 / 0.3835
+0.2547 / 0.3053
+0.5399 / 0.4322
+0.1958 / 0.2687
+0.1711 / 0.1912
+0.1832 / 0.2814
+0.0663 / 0.1720
+
+0.4254 / 0.3825
+0.2894 / 0.3233
+0.3321 / 0.3326
+0.1703 / 0.2552
+—/—
+—/—
+0.0695 / 0.1802
+
+0.4217 / 0.3806
+0.2659 / 0.3136
+0.3935 / 0.3695
+0.1663 / 0.2522
+0.1897 / 0.2107
+0.1460 / 0.2237
+0.0831 / 0.1879
+
+Average
+
+0.1892 / 0.2488
+
+0.1940 / 0.2492
+
+0.2008 / 0.2525
+
+0.2374 / 0.3046
+
+0.2104 / 0.2665
+
+0.2542 / 0.2906
+
+0.2573 / 0.2948
+
+0.2380 / 0.2769
+
+strengths in ablation design. Furthermore, in pairwise comparative assessments against accepted
+human-authored papers, ScientistTwo achieved overall parity and was favored in experimental
+execution—specifically in benchmark breadth. While human researchers retained a slight advantage in methodological rigor, the results demonstrate that ScientistTwo is capable of producing
+publication-grade manuscripts competitive with human-authored papers at top-tier venues.
+Case Study. Prior retrieval augmented forecasting methods (Ning et al., 2025) attempt to improve
+future predictions by fetching similar historical trajectories from external databases, but they treat
+these retrieved curves as single, indivisible blocks. Such approach creates three critical bottlenecks: it
+introduces unnatural jumps right at the boundary where current observations end and the forecast
+begins, it tangles steady long-term trends with erratic short-term ripples, and it frequently degrades
+performance when the retrieved data is noisy or irrelevant. To overcome these issues, ScientistTwo developed DynaSpec-RAG, a lightweight framework that refines forecasts dynamically. DynaSpec-RAG
+resolves boundary jumps by smoothly anchoring retrieved curves to the final known observation,
+
+17
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+uses real-FFT Fourier decomposition to split trajectories into clean macro-trends and seasonal details,
+deploys a fine-grained gating network that evaluates how much to trust each frequency band at every
+individual time step, and introduces a validation safety switch that dials retrieval influence down to
+zero whenever it fails to add value (see Figure 11).
+The novelty of DynaSpec-RAG lies in replacing crude copy-pasting with a surgical, frequency-aware
+filter that actively anticipates and guards against bad data. Rather than assuming all retrieved history
+is helpful, it independently regulates trust across different temporal scales and incorporates an explicit
+do-no-harm safety fallback. This design provides high practical contribution: because it operates
+strictly on the output space of frozen time-series foundation models, it requires no costly backbone
+retraining and introduces only 0.27M trainable parameters. Despite this tiny footprint, it consistently
+surpasses strong baselines across standard benchmarks (see Table 11) and transfers zero-shot to
+completely unseen multi-domain datasets without retraining. For our evaluation of ScientistTwo,
+this case demonstrates that the agent does not simply run shallow trial-and-error experiments; it
+autonomously identifies root failure modes in existing literature and invests mathematically sound,
+parameter-efficient solutions that earn acceptance from competitive peer review. In Appendices C
+and D, we provide extensive qualitative artifacts, including generated ideas and limitations, evaluation
+and ablation reports, Critic Agent feedback, CoE audit reports, and a complete generated paper.
+
+5. Conclusion
+In this paper, we introduce ScientistTwo, an autonomous multi-agent framework designed to advance
+the frontier of scientific discovery without human intervention. By coupling holistic benchmark
+evaluation and ablation-driven hypothesis refinement with a closed-loop peer-review and rebuttal
+engine, ScientistTwo emulates the empirical rigor of expert human researchers. Across an extensive
+evaluation on 107 competitive research challenges from top-tier venues (ICLR, ICML, NeurIPS),
+ScientistTwo successfully advanced 80.4% of target problems, achieving an average relative improvement of 25.2% over human state-of-the-art baselines. Furthermore, the resulting manuscripts and
+codebases consistently met top-tier conference acceptance thresholds while faithfully passing rigorous
+multi-dimensional integrity audits. These results demonstrate that ScientistTwo moves beyond narrow
+metric optimization to generate verifiable, publication-grade scientific contributions.
+Limitations. While ScientistTwo consistently exceeds the acceptance threshold for standard conference publications (surpassing average scores from ICLR 2026 and NeurIPS 2025), it does not yet
+consistently achieve the caliber of spotlight or oral presentations that introduce paradigm-shifting
+conceptual breakthroughs. Future work will focus on expanding multi-agent exploration beyond local
+algorithmic refinements toward discovering fundamentally new theoretical formulations.
+It should also be noted that ScientistTwo costs approximately $3,800 to execute a single task.
+This may be a limiting factor in the widespread use of ScientistTwo by academic laboratories or
+independent researchers. On the other hand, improving the system’s cost-efficiency, such as by
+replacing proprietary models with open-source models, is an interesting direction for future research.
+
+18
+
+

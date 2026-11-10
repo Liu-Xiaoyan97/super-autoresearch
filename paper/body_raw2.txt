@@ -1,0 +1,585 @@
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+References
+K. Abe, M. Sakamoto, K. Ariu, and A. Iwasaki. Asymmetric perturbation in solving bilinear saddle-point
+optimization. In Forty-third International Conference on Machine Learning, 2026.
+A. Arora, Z. Wu, J. Steinhardt, and S. Schwettmann. Language model circuits are sparse in the neuron
+basis. In Forty-third International Conference on Machine Learning, 2026.
+V. Balazadeh, H. Kamkari, V. Thomas, J. Ma, B. Li, J. C. Cresswell, and R. Krishnan. CausalPFN:
+Amortized causal effect estimation via in-context learning. In The Thirty-ninth Annual Conference
+on Neural Information Processing Systems, 2025.
+A. Behnam and B. Wang. Measure-theoretic anti-causal representation learning. In The Thirty-ninth
+Annual Conference on Neural Information Processing Systems, 2025.
+C. Benard. Tree ensemble explainability through the hoeffding functional decomposition and treeHFD
+algorithm. In The Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025.
+U. Bhalla, A. Oesterling, C. M. Verdun, H. Lakkaraju, and F. Calmon. Temporal sparse autoencoders:
+Leveraging the sequential nature of language for interpretability. In The Fourteenth International
+Conference on Learning Representations, 2026.
+L. Butler, A. Agarwal, J. S. Kang, Y. E. Erginbas, B. Yu, and K. Ramchandran. ProxySPEX: Inferenceefficient interpretability via sparse feature interactions in LLMs. In The Thirty-ninth Annual
+Conference on Neural Information Processing Systems, 2025.
+O. Candogan and A. Foussoul. Deep flow networks. In Forty-third International Conference on Machine
+Learning, 2026.
+B. Chen, Z. Zhou, L. Peng, and Z. Wang. Balanced active inference. In The Thirty-ninth Annual
+Conference on Neural Information Processing Systems, 2025a.
+D. Chen, A. Manolache, M. Niepert, and K. Borgwardt. Protein fold classification at scale: Benchmarking and pretraining. In Forty-third International Conference on Machine Learning, 2026a.
+J. Chen, Y. Luo, and L. Pan. Mechanistic data attribution: Tracing the training origins of interpretable
+LLM units. In Forty-third International Conference on Machine Learning, 2026b.
+J. Chen, B. D. Mishra, J. Nam, R. Meng, T. Pfister, and J. Yoon. Mars: Modular agent with reflective
+search for automated ai research. arXiv preprint arXiv:2602.02660, 2026c.
+M. Chen, Z. Cui, X. Liu, J. Xiang, C. Zheng, J. Li, and E. Shlizerman. SAVVY: Spatial awareness via
+audio-visual LLMs through seeing and hearing. In The Thirty-ninth Annual Conference on Neural
+Information Processing Systems, 2025b.
+M. Chen, T. Berrett, T. Damoulas, and M. Caprio. Bulk-calibrated credal ambiguity sets: Fast, tractable
+decision making under out-of-sample contamination. In Forty-third International Conference on
+Machine Learning, 2026d.
+P. Chen, H. Zhao, X. Tang, Y. Wang, and S. Deng. Towards optimal robustness in learning-augmented
+paging. In Forty-third International Conference on Machine Learning, 2026e.
+H. Chi, Q. Wu, Z. Zhou, J. Light, E. Dodwell, and Y. Ma. Unifying and optimizing data values
+for selection via sequential decision-making. In Forty-third International Conference on Machine
+Learning, 2026.
+19
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+S. Choi, S. Mittal, V. Elvira, J. Park, and E. S. Whitammer. Reinforced sequential monte carlo for
+amortised sampling. In Forty-third International Conference on Machine Learning, 2026.
+A. G. Davoodi, N. Rezazadeh, S. P. M. Davoudi, and P. Pezeshkpour. Geometry-aware decoding with
+wasserstein-regularized truncation and mass penalties for large language models. In Forty-third
+International Conference on Machine Learning, 2026.
+J. M. Dorman, E. Gillman, D. C. Rose, J. F. Mair, and J. P. Garrahan. Rare event analysis of large
+language models. In Forty-third International Conference on Machine Learning, 2026.
+Z. Du, J. Zhao, and B. Li. On the difficulty of learning a meta-network for training data selection. In
+Forty-third International Conference on Machine Learning, 2026.
+S. Durasinovic, J. B. Lasserre, and V. Magron. Mixtures closest to a given measure: A semidefinite
+programming approach. In Forty-third International Conference on Machine Learning, 2026.
+A. Eldesokey, A. Cvejić, B. Ghanem, and P. Wonka. Mind-the-glitch: Visual correspondence for
+detecting inconsistencies in subject-driven generation. In The Thirty-ninth Annual Conference on
+Neural Information Processing Systems, 2025.
+F. Erata, O. Paradise, T. Typaldos, T. Antonopoulos, T. Nguyen, S. Goldwasser, and R. Piskac. Learning
+randomized reductions. In Forty-third International Conference on Machine Learning, 2026.
+Y. L. Fay, N. Chopin, and S. Barthelmé. Least squares variational inference. In The Thirty-ninth Annual
+Conference on Neural Information Processing Systems, 2025.
+Y. Feng, J. Li, J. Hu, Y. Zhang, L. Tan, and J. Ji. MDReID: Modality-decoupled learning for any-to-any
+multi-modal object re-identification. In The Thirty-ninth Annual Conference on Neural Information
+Processing Systems, 2025.
+B. Ferrere, N. Bousquet, F. Gamboa, J.-M. Loubes, and J. Muré. Exact functional ANOVA decomposition
+for categorical inputs models. In Forty-third International Conference on Machine Learning, 2026.
+G. Flores, A. H. Smith, J. Fukuyama, and A. C. Wilson. Aligning evaluation with clinical priorities:
+Calibration, label shift, and error costs. In The Thirty-ninth Annual Conference on Neural Information
+Processing Systems, 2025.
+M. Forstenhäusler, D. Külzer, C. Anagnostopoulos, S. A. P. Parambath, and N. Weber. STaRFormer:
+Semi-supervised task-informed representation learning via dynamic attention-based regional masking for sequential data. In The Thirty-ninth Annual Conference on Neural Information Processing
+Systems, 2025.
+J. Fu, Y. Jiang, P. WU, C. Liu, J. T. Zhou, and X. Yang. Rethinking LLM ensembling from the perspective
+of mixture models. In Forty-third International Conference on Machine Learning, 2026.
+Y. Fu, F. Wang, Z. Shao, B. Diao, L. Wu, Z. An, C. Yu, Y. Li, and Y. Xu. On the integration of
+spatial-temporal knowledge: A lightweight approach to atmospheric time series forecasting. In The
+Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025.
+Y. Gan and P. Isola. Neural thickets: Diverse task experts are dense around pretrained weights. In
+Forty-third International Conference on Machine Learning, 2026.
+L. Gao, Z. Jia, Z. Xing, W. Sun, H. Duan, G. Zhai, and X. Min. EEmo-logic: A unified dataset and multistage framework for comprehensive image-evoked emotion assessment. In Forty-third International
+Conference on Machine Learning, 2026.
+20
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Y. Gao, Q. Yan, Y. Leng, and R. Liao. Neural MJD: Neural non-stationary merton jump diffusion for
+time series prediction. In The Thirty-ninth Annual Conference on Neural Information Processing
+Systems, 2025.
+J. Geiping, X. Yang, and G. Su. Efficient parallel samplers for recurrent-depth models and their
+connection to diffusion language models. In Forty-third International Conference on Machine
+Learning, 2026.
+Z. Geng, M. Deng, X. Bai, J. Z. Kolter, and K. He. Mean flows for one-step generative modeling. In
+The Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025.
+P. Goyal, M. Parmar, Y. Song, H. Palangi, T. Pfister, and J. Yoon. Scholarpeer: A context-aware
+multi-agent framework for automated peer review. arXiv preprint arXiv:2601.22638, 2026.
+J. H. Grebe, T. Braun, A. Rohrbach, and M. Rohrbach. GEM: Geometric erasure by contrastive velocity
+matching in rectified flows. In Forty-third International Conference on Machine Learning, 2026.
+P. D. Grontas, A. Terpin, E. C. Balta, R. D’Andrea, and J. Lygeros. Pinet: Optimizing hard-constrained
+neural networks with orthogonal projection layers. In The Fourteenth International Conference on
+Learning Representations, 2026.
+B. Hashemi, K. Pasque, C. Teska, and R. Yoshida. Tropical attention: Neural algorithmic reasoning for
+combinatorial algorithms. In The Thirty-ninth Annual Conference on Neural Information Processing
+Systems, 2025.
+H. He, K. Yi, Y. Ma, Q. Zhang, Z. Niu, and G. Pang. SEMPO: Lightweight foundation models for time
+series forecasting. In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+2025.
+M. Henaff, S. Fujimoto, M. Matthews, and M. Rabbat. Scalable option learning in high-throughput
+environments. In Forty-third International Conference on Machine Learning, 2026.
+G. Heyman and F. Vandeputte. Steer like the LLM: Activation steering that mimics prompting. In
+Forty-third International Conference on Machine Learning, 2026.
+S. Hong, Y. Lin, B. Liu, B. Liu, B. Wu, C. Zhang, D. Li, J. Chen, J. Zhang, J. Wang, et al. Data interpreter:
+An llm agent for data science. In Findings of the Association for Computational Linguistics: ACL 2025,
+2025.
+S. Howard, N. Nüsken, and J. Pidstrigach. Control consistency losses for diffusion bridges. In
+Forty-third International Conference on Machine Learning, 2026.
+Q. Huang, J. Vora, P. Liang, and J. Leskovec. Mlagentbench: Evaluating language agents on machine
+learning experimentation. arXiv preprint arXiv:2310.03302, 2023.
+Y. Huang, J. Luo, Y. Yu, Y. Zhang, F. Lei, Y. Wei, S. He, L. Huang, X. Liu, J. Zhao, et al. Da-code: Agent
+data science code generation benchmark for large language models. In Proceedings of the 2024
+Conference on Empirical Methods in Natural Language Processing, 2024.
+Y. Huang, W. He, and Z.-X. Cui. Thinking in flow: A dissipative stabilization operator for robust
+autoregressive reasoning. In Forty-third International Conference on Machine Learning, 2026.
+P. Jansen, O. Tafjord, M. Radensky, P. Siangliulue, T. Hope, B. Dalvi, B. P. Majumder, D. S. Weld,
+and P. Clark. Codescientist: End-to-end semi-automated scientific discovery with code-based
+experimentation. In Findings of the Association for Computational Linguistics: ACL 2025, 2025.
+21
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+K. Jeon, M. Muehlebach, and M. Tao. Fast non-log-concave sampling under nonconvex equality and
+inequality constraints with landing. In The Thirty-ninth Annual Conference on Neural Information
+Processing Systems, 2025.
+S. Jiang and R. Gong. Incremental BPE tokenization. In Forty-third International Conference on
+Machine Learning, 2026.
+Z. Jiang, D. Schmidt, D. Srikanth, D. Xu, I. Kaplan, D. Jacenko, and Y. Wu. Aide: Ai-driven exploration
+in the space of code. arXiv preprint arXiv:2502.13138, 2025.
+J. Jin, Y. Hu, K. Qiu, Q. Dai, C. Luo, G. Dong, X. Li, T. Zhao, X. Ma, G. Zhang, et al. Toward generalist
+autonomous research via hypothesis-tree refinement. arXiv preprint arXiv:2606.11926, 2026.
+C. Kechris, J. Dan, and D. Atienza. Time series saliency maps: Explaining models across multiple
+domains. In Forty-third International Conference on Machine Learning, 2026.
+W. Kim, S. Hyeon, J. Oh, and J. Do. VALUEFLOW: Toward pluralistic and steerable value-based
+alignment in large language models. In Forty-third International Conference on Machine Learning,
+2026.
+S. Kiyani, S. Noorani, G. J. Pappas, and H. Hassani. When to trust the cheap check: Weak and strong
+verification for reasoning. In Forty-third International Conference on Machine Learning, 2026.
+L. Kreitner, P. Hager, J. Mengedoht, G. Kaissis, D. Rueckert, and M. J. Menten. Efficient numeracy in
+language models through single-token number embeddings. In Forty-third International Conference
+on Machine Learning, 2026.
+J. Kwon, D.-K. Kim, J. Kim, Y. Kim, W. Kook, and M. Cha. AI engram: In search of memory traces in
+artificial intelligence. In Forty-third International Conference on Machine Learning, 2026.
+O. Lev, M. Shenfeld, V. Srinivasan, K. Ligett, and A. C. Wilson. Near-optimal private linear regression
+via iterative hessian mixing. In Forty-third International Conference on Machine Learning, 2026.
+C. Li, Y. Wang, Y. Wang, W. Li, D. Jaeger, and A. Wu. A factorized low-rank RNN framework for
+uncovering independent neural latent dynamics and connectivity. In Forty-third International
+Conference on Machine Learning, 2026a.
+L. Li, Y. Wang, J. Yan, W. Zhang, J. Deng, H. Sun, Z. Han, and Y. Gong. From text to forecasts: Bridging
+modality gap with temporal evolution semantic space. In Forty-third International Conference on
+Machine Learning, 2026b.
+T. Li, Y. Huang, L. Jiang, C. Liu, Q. Xie, W. Du, L. Wang, and K. Wu. FedWMSAM: Fast and flat
+federated learning via weighted momentum and sharpness-aware minimization. In The Thirty-ninth
+Annual Conference on Neural Information Processing Systems, 2025a.
+X. Li, Y. Luo, H. Wang, H. Li, L. Peng, F. Liu, Y. Guo, K. Zhang, and M. Gong. Towards accurate
+time series forecasting via implicit decoding. In The Thirty-ninth Annual Conference on Neural
+Information Processing Systems, 2025b.
+X. Li, D. Liu, and K. Kawaguchi. Initialization is half the battle: Generating diverse images from a
+guidance potential posterior. In Forty-third International Conference on Machine Learning, 2026c.
+Y. Li, D. Choi, J. Chung, N. Kushman, J. Schrittwieser, R. Leblond, T. Eccles, J. Keeling, F. Gimeno,
+A. Dal Lago, et al. Competition-level code generation with alphacode. Science, 2022.
+
+22
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Y. Li, C. Shao, X. Liu, R. Zhao, P. Liu, H. Su, Z. Chen, Q. Yang, A. Xu, Y. Fang, et al. Autosota:
+An end-to-end automated research system for state-of-the-art ai model discovery. arXiv preprint
+arXiv:2604.05550, 2026d.
+A. Liu, B. Feng, B. Xue, B. Wang, B. Wu, C. Lu, C. Zhao, C. Deng, C. Zhang, C. Ruan, et al. Deepseek-v3
+technical report. arXiv preprint arXiv:2412.19437, 2024.
+J. Liu, S. Qiu, M. Li, B. Li, H. Ji, S. Han, X. Ye, P. Xia, Z. Dong, M. Chen, et al. Autoresearchclaw: Selfreinforcing autonomous research with human-ai collaboration. arXiv preprint arXiv:2605.20025,
+2026a.
+J. Liu, X. Zhao, X. Shang, and Z. Shen. Dive into claude code: The design space of today’s and future
+ai agent systems. arXiv preprint arXiv:2604.14228, 2026b.
+S.-Y. Liu and H.-J. Ye. Tabswift: An efficient tabular foundation model with row-wise attention. In
+Forty-third International Conference on Machine Learning, 2026.
+T. Liu, E. Dobriban, and F. Orabona. Online conformal prediction via universal portfolio algorithms.
+In Forty-third International Conference on Machine Learning, 2026c.
+Y. Liu, Y. Zhao, Z. Xie, Q. Ye, J. Jiao, Y. Hu, S. Cao, and Y. Liu. Balancing understanding and generation
+in discrete diffusion models. In Forty-third International Conference on Machine Learning, 2026d.
+Z. Liu, M. Cheng, G. Zhao, J. Yang, Q. Liu, and E. Chen. Improving time series forecasting via
+instance-aware post-hoc revision. In The Thirty-ninth Annual Conference on Neural Information
+Processing Systems, 2025.
+C. Lu, C. Lu, R. T. Lange, J. Foerster, J. Clune, and D. Ha. The ai scientist: Towards fully automated
+open-ended scientific discovery. arXiv preprint arXiv:2408.06292, 2024.
+Y. Lyu, X. Zhang, X. Yi, Y. Zhao, S. Guo, W. Hu, J. Piotrowski, J. Kaliski, J. Urbani, Z. Meng, et al.
+Evoscientist: Towards multi-agent evolving ai scientists for end-to-end scientific discovery. arXiv
+preprint arXiv:2603.08127, 2026.
+Y. Ma, H. Wu, H. Zhou, H. Weng, J. Wang, and M. Long. Physense: Sensor placement optimization for
+accurate physics sensing. In The Thirty-ninth Annual Conference on Neural Information Processing
+Systems, 2025.
+T. Martens, L. Devos, L. Cascioli, W. Meert, H. Blockeel, and J. Davis. OC-space: a unifying perspective
+on verification of tree ensembles. In Forty-third International Conference on Machine Learning, 2026.
+R. Meng, B. D. Mishra, J. Chen, C.-L. Li, P. Goyal, M. Parmar, Y. Song, Y. Song, R. Sinha, P. Ranganathan,
+et al. Scientistone: Towards human-level autonomous research via chain-of-evidence. arXiv preprint
+arXiv:2605.26340, 2026.
+M. Monod, A. Micheli, and S. Bhatt. Neuralsurv: Deep survival analysis with bayesian uncertainty
+quantification. In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+2025.
+A. Muni, V. Taboga, E. Derman, P.-L. Bacon, and E. Delage. Reward redistribution for CVar MDPs
+using a bellman operator on l-infinity. In Forty-third International Conference on Machine Learning,
+2026.
+J. Nam, J. Yoon, J. Chen, J. Shin, S. Arik, and T. Pfister. Mle-star: Machine learning engineering agent
+via search and targeted refinement. Advances in Neural Information Processing Systems, 2026a.
+23
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+J. Nam, J. Yoon, J. Chen, R. Sinha, J. Shin, and T. Pfister. Ds-star: Data science agent for solving diverse
+tasks across heterogeneous formats and open-ended queries. arXiv preprint arXiv:2509.21825,
+2026b.
+Z. Ni, S. Wang, Y. Yue, T. Yu, W. Zhao, Y. Hua, T. Chen, J. Song, C. Yu, B. Zheng, and G. Huang. The
+flexibility trap: Rethinking the value of arbitrary order in diffusion language models. In Forty-third
+International Conference on Machine Learning, 2026.
+K. Ning, Z. Pan, Y. Liu, Y. Jiang, J. Y. Zhang, K. Rasul, A. Schneider, L. Ma, Y. Nevmyvaka, and D. Song.
+TS-RAG: Retrieval-augmented generation based time series foundation models are stronger zeroshot forecaster. In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+2025.
+A. Novikov, N. Vũ, M. Eisenberger, E. Dupont, P.-S. Huang, A. Z. Wagner, S. Shirobokov, B. Kozlovskii,
+F. J. Ruiz, A. Mehrabian, et al. Alphaevolve: A coding agent for scientific and algorithmic discovery.
+arXiv preprint arXiv:2506.13131, 2025.
+J. Ohnemus, M. Fochesato, R. Zuliani, and J. Lygeros. Loss-aware distributionally robust optimization
+via trainable optimal transport ambiguity sets. In Forty-third International Conference on Machine
+Learning, 2026.
+J. J. G. Ortiz, A. Gupta, C. Rinard, and D. Blalock. Flashoptim: Optimizers for memory-efficient
+training. In Forty-third International Conference on Machine Learning, 2026.
+W. Pan, Z. Liu, X. Wang, Y. Haining, and X. Jia. Towards long-horizon interpretability: Efficient
+and faithful multi-token attribution for reasoning LLMs. In Forty-third International Conference on
+Machine Learning, 2026.
+Y. Pan, Z. Cao, C. GU, L. Liu, P. Zhao, Y. Chen, and F. Lin. Multi-task vehicle routing solver via mixture
+of specialized experts under state-decomposable MDP. In The Thirty-ninth Annual Conference on
+Neural Information Processing Systems, 2025.
+J. Park, Y. Choi, and J. Lee. Multi-class support vector machine with differential privacy. In The
+Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025.
+N. Pfaff, T. Cohn, S. Zakharov, R. Cory, and R. Tedrake. Scenesmith: Agentic generation of simulationready indoor scenes. In Forty-third International Conference on Machine Learning, 2026.
+D. Prinster, C. Fannjiang, J. W. Park, K. Cho, A. Liu, S. Saria, and S. D. Stanton. Conformal policy
+control. In Forty-third International Conference on Machine Learning, 2026.
+X. Qiu, S. Gu, P. Wu, J. Hu, Y. Wen, Y. Pan, X. Luo, B. XU, and G. Li. SVL: Empowering spiking neural
+networks for efficient 3d open-world understanding. In Forty-third International Conference on
+Machine Learning, 2026.
+G. Rodionov, R. Garipov, A. Shutova, G. Yakushev, E. Schultheis, V. Egiazarian, A. Sinitsin,
+D. Kuznedelev, and D. Alistarh. Hogwild! inference: Parallel LLM generation via concurrent
+attention. In The Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025.
+B. Sadi, E. Saig, and N. Rosenfeld. Welfare-optimal classification with accuracy auctions. In Forty-third
+International Conference on Machine Learning, 2026.
+F. D. Santis, G. Ciravegna, G. D. Felice, A. Casanova, F. Giannini, M. Diligenti, J. Schneider, D. Giordano,
+M. E. Zarlenga, and P. Barbiero. Mixture of concept bottleneck experts. In Forty-third International
+Conference on Machine Learning, 2026.
+24
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+S. Schmidgall, Y. Su, Z. Wang, X. Sun, J. Wu, X. Yu, J. Liu, M. Moor, Z. Liu, and E. Barsoum. Agent
+laboratory: Using llm agents as research assistants. Findings of the Association for Computational
+Linguistics: EMNLP 2025, 2025.
+F. Schur, N. Pfister, P. Ding, S. Mukherjee, and J. Peters. Many experiments, few repetitions, unpaired
+data, and sparse effects: Is causal inference possible? In Forty-third International Conference on
+Machine Learning, 2026.
+Y. Shen, K. Song, X. Tan, D. Li, W. Lu, and Y. Zhuang. Hugginggpt: Solving ai tasks with chatgpt and
+its friends in hugging face. Advances in Neural Information Processing Systems, 2023.
+A. Singh, A. Fry, A. Perelman, A. Tart, A. Ganesh, A. El-Kishky, A. McLaughlin, A. Low, A. Ostrow,
+A. Ananthram, et al. Openai gpt-5 system card. arXiv preprint arXiv:2601.03267, 2025.
+M. Słupiński and P. Lipinski. RED-HDP-HMM: Observation-dependent durations for bayesian nonparametric sequential models. In Forty-third International Conference on Machine Learning, 2026.
+Y. Song, Y. Song, T. Pfister, and J. Yoon. Paperorchestra: A multi-agent framework for automated ai
+research paper writing. arXiv preprint arXiv:2604.05018, 2026.
+L. Su, M. Zhang, Y. Xiong, T. LIU, S. Zhang, X. Chen, and L. Sun. TG-RAG: A retrieval-augmented
+framework for reasoning guidance in specialized domains. In Forty-third International Conference
+on Machine Learning, 2026.
+F. Tajwar, G. Zeng, Y. Zhou, Y. Song, D. Arora, Y. Jiang, J. Schneider, R. Salakhutdinov, H. Feng, and
+A. Zanette. Maximum likelihood reinforcement learning. In Forty-third International Conference on
+Machine Learning, 2026.
+J. Tang, L. Xia, Z. Li, and C. Huang. Ai-researcher: Autonomous scientific innovation. Advances in
+Neural Information Processing Systems, 2026a.
+L. Tang, Y. Meng, J. Costa, Y. Zhang, M. Ye, and Z. Xi. The value of variance: Mitigating debate collapse
+in multi-agent systems via uncertainty-driven policy optimization. In Forty-third International
+Conference on Machine Learning, 2026b.
+Z. Tang, B. Wang, C. Wen, and J. Teng. Accelerating feature conformal prediction via taylor approximation. In The Thirty-ninth Annual Conference on Neural Information Processing Systems,
+2025.
+G. Team, R. Anil, S. Borgeaud, J.-B. Alayrac, J. Yu, R. Soricut, J. Schalkwyk, A. M. Dai, A. Hauth, K. Millican, et al. Gemini: a family of highly capable multimodal models. arXiv preprint arXiv:2312.11805,
+2023.
+B. Tjanaka, H. Chen, M. C. Fontaine, and S. Nikolaidis. Discount model search for quality diversity
+optimization in high-dimensional measure spaces. In The Fourteenth International Conference on
+Learning Representations, 2026.
+V.-H. Tran, T. Tran, T. Chu, T. Le, and T. M. Nguyen. Tree-sliced entropy partial transport. In The
+Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025.
+G. Wang, Y. Xie, Y. Jiang, A. Mandlekar, C. Xiao, Y. Zhu, L. Fan, and A. Anandkumar. Voyager: An
+open-ended embodied agent with large language models. arXiv preprint arXiv:2305.16291, 2023.
+H. Wang, zhengnan li, Z. Chen, X. Chen, S. He, G. Liu, H. Li, and Z. Lin. Iterative missing data
+imputation with model form adaptation and non-missing feature supervision. In The Thirty-ninth
+Annual Conference on Neural Information Processing Systems, 2025a.
+25
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+J. Wang, W. Tu, and J. Cheng. Hierarchical shortest-path graph kernel network. In The Thirty-ninth
+Annual Conference on Neural Information Processing Systems, 2025b.
+S. Wang, X. Ouyang, T. Xu, Y. Hu, J. Liu, G. Chen, T. Zhang, J. Zheng, K. Yang, X. Ren, D. Liu,
+and L. Zhang. OPUS: Towards efficient and principled data selection in large language model
+pre-training in every iteration. In Forty-third International Conference on Machine Learning, 2026.
+T. Wang and E. Dobriban. Optimal decision-making based on prediction sets. In Forty-third International Conference on Machine Learning, 2026.
+X. Wang, B. Li, Y. Song, F. F. Xu, X. Tang, M. Zhuge, J. Pan, Y. Song, B. Li, J. Singh, et al. Openhands:
+An open platform for ai software developers as generalist agents. In International Conference on
+Learning Representations, 2025c.
+T. Wei, B.-L. Wang, J.-X. Shi, Y.-F. Li, and M.-L. Zhang. X-mahalanobis: Transformer feature mixing
+for reliable OOD detection. In The Thirty-ninth Annual Conference on Neural Information Processing
+Systems, 2025.
+Y. Weng, M. Zhu, Q. Xie, Q. Sun, Z. Lin, S. Liu, and Y. Zhang. Deepscientist: Advancing frontier-pushing
+scientific findings progressively. arXiv preprint arXiv:2509.26603, 2025.
+A. Wróbel, S. Gairola, J. Tabor, B. Schiele, B. M. Zieliński, and D. D. Rymarczyk. DAVE: Distributionaware attribution via vit gradient decomposition. In Forty-third International Conference on Machine
+Learning, 2026.
+F. Wu and S. Silwal. Efficient training-free online routing for high-volume multi-LLM serving. In The
+Thirty-ninth Annual Conference on Neural Information Processing Systems, 2025.
+Q. Wu, G. Bansal, J. Zhang, Y. Wu, B. Li, E. Zhu, L. Jiang, X. Zhang, S. Zhang, J. Liu, et al. Autogen:
+Enabling next-gen llm applications via multi-agent conversations. In First conference on language
+modeling, 2024.
+T. Xie, H. Luo, H. Tang, H. Yiwen, J. K. Liu, Q. Ren, Y. Wang, X. Zhao, R. Yan, B. Su, C. Luo, and
+B. Guo. Controlled LLM training on spectral sphere. In Forty-third International Conference on
+Machine Learning, 2026.
+R. Xu and J. Peng. A comprehensive survey of deep research: Systems, methodologies, and applications.
+arXiv preprint arXiv:2506.12594, 2025.
+Y. Yamada, R. T. Lange, C. Lu, S. Hu, C. Lu, J. Foerster, J. Clune, and D. Ha. The ai scientistv2: Workshop-level automated scientific discovery via agentic tree search. arXiv preprint
+arXiv:2504.08066, 2025.
+J. Yang, C. E. Jimenez, A. Wettig, K. Lieret, S. Yao, K. R. Narasimhan, and O. Press. Swe-agent:
+Agent-computer interfaces enable automated software engineering. In The Thirty-eighth Annual
+Conference on Neural Information Processing Systems, 2024.
+Y. Yang, D. Zhang, Y. Liang, H. Lu, G. Chen, and H. Li. Not all data are good labels: On the selfsupervised labeling for time series forecasting. In The Thirty-ninth Annual Conference on Neural
+Information Processing Systems, 2025.
+S. Yao, J. Zhao, D. Yu, I. Shafran, K. R. Narasimhan, and Y. Cao. React: Synergizing reasoning and
+acting in language models. In NeurIPS 2022 Foundation Models for Decision Making Workshop,
+2022.
+
+26
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+F. X.-F. Ye, X. Li, A. Yu, M.-C. Chang, L. CHU, and D. Wertheimer. Flashsinkhorn: IO-aware entropic
+optimal transport on GPU. In Forty-third International Conference on Machine Learning, 2026.
+G. Yu, J. Wang, C. Yang, J. Qin, A. I. Aviles-Rivero, and S. Wang. Decentralized attention fails
+centralized signals: Rethinking transformers for medical time series. In The Fourteenth International
+Conference on Learning Representations, 2026.
+M. Yuksekgonul, D. Koceja, X. Li, F. Bianchi, J. McCaleb, X. Wang, J. Kautz, Y. Choi, J. Zou, C. Guestrin,
+and Y. Sun. Learning to discover at test time. In Forty-third International Conference on Machine
+Learning, 2026.
+Y. Zeng, Y. Shi, T. Tan, X. Li, Y. Qin, Z. Lu, W. Yang, J.-H. Xue, and Q. Liao. Egotactile: Learning
+grasp pressure for everyday objects from egocentric video. In Forty-third International Conference
+on Machine Learning, 2026.
+S. Zhan, Y. Lai, Z. Liu, L. Hai, S. Li, X. Cai, Z. Lin, W. Huang, and H.-T. Zheng. 3viewsense: Spatial and
+mental perspective reasoning from orthographic views in vision-language models. In Forty-third
+International Conference on Machine Learning, 2026.
+H. Zhang, Y. Li, Z. Wang, Z. Wang, S. Zhang, X. Qu, and Y. Cheng. Characterizing, evaluating, and
+optimizing complex reasoning. In Forty-third International Conference on Machine Learning, 2026.
+K. Zhang, S. Zhang, D. Zhou, and Y. Zhou. Wasserstein transfer learning. In The Thirty-ninth Annual
+Conference on Neural Information Processing Systems, 2025a.
+X. Zhang, Z. He, C. Fu, and C. Xie. IA-GGAD: Zero-shot generalist graph anomaly detection via
+invariant and affinity learning. In The Thirty-ninth Annual Conference on Neural Information
+Processing Systems, 2025b.
+S. Zhao, X. Zhang, W. Li, J. Li, L. zhang, T. Xue, and J. Zhang. Reasoning as representation: Rethinking
+visual reinforcement learning in image quality assessment. In The Fourteenth International Conference
+on Learning Representations, 2026a.
+Z. Zhao, K.-C. Mo, S.-H. Ho, B. Amos, and K. Wang. A fully first-order layer for differentiable
+optimization. In Forty-third International Conference on Machine Learning, 2026b.
+Q. Zhou, E. Aleshina, A. Lovyagin, O. Somov, M. Seleznyov, A. Panchenko, I. Oseledets, E. Tutubalina,
+and I. Y. Tyukin. Harnessing non-adversarial robustness in large language models. In Forty-third
+International Conference on Machine Learning, 2026.
+Y. Zhou, J. Wu, Z. Ren, Z. Yao, W. Lu, K. Peng, Q. Zheng, C. Song, W. Ouyang, and C. Gou. CSBrain:
+A cross-scale spatiotemporal brain foundation model for EEG decoding. In The Thirty-ninth Annual
+Conference on Neural Information Processing Systems, 2025.
+W. Zhu, J. Wang, B. Gao, Y. Jia, H. Tan, Y.-Q. Zhang, W.-Y. Ma, and Y. Lan. AANet: Virtual screening
+under structural uncertainty via alignment and aggregation. In The Thirty-ninth Annual Conference
+on Neural Information Processing Systems, 2025a.
+Z. Zhu, Y. QI, H. Ma, W. Lu, and J. Feng. Stochastic forward-forward learning through representational
+dimensionality compression. In The Thirty-ninth Annual Conference on Neural Information Processing
+Systems, 2025b.
+
+27
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+A. Experiment Details
+A.1. Benchmark
+NeurIPS 2025 Papers. We utilize 38 papers accepted at NeurIPS 2025. Specifically, these papers are
+drawn from benchmarks used in AutoSOTA (Li et al., 2026d). We provide the full list of papers below.
+Table 12 | NeurIPS 2025 Papers. We utilize 38 accepted papers.
+Title
+SAVVY: Spatial Awareness via Audio-Visual LLMs through Seeing and Hearing (Chen et al., 2025b)
+PhySense: Sensor Placement Optimization for Accurate Physics Sensing (Ma et al., 2025)
+Hogwild! Inference: Parallel LLM Generation via Concurrent Attention (Rodionov et al., 2025)
+On the Integration of Spatial-Temporal Knowledge: A Lightweight Approach to Atmospheric Time Series Forecasting (Fu et al., 2025)
+CausalPFN: Amortized Causal Effect Estimation via In-Context Learning (Balazadeh et al., 2025)
+Accelerating Feature Conformal Prediction via Taylor Approximation (Tang et al., 2025)
+Multi-Task Vehicle Routing Solver via Mixture of Specialized Experts under State-Decomposable MDP (Pan et al., 2025)
+Stochastic Forward-Forward Learning through Representational Dimensionality Compression (Zhu et al., 2025b)
+Tree Ensemble Explainability through the Hoeffding Functional Decomposition and TreeHFD Algorithm (Benard, 2025)
+X-Mahalanobis: Transformer Feature Mixing for Reliable OOD Detection (Wei et al., 2025)
+Iterative Missing Data Imputation with Model Form Adaptation and Non-Missing Feature Supervision (Wang et al., 2025a)
+Neural MJD: Neural Non-Stationary Merton Jump Diffusion for Time Series Prediction (Gao et al., 2025)
+Mind-the-Glitch: Visual Correspondence for Detecting Inconsistencies in Subject-Driven Generation (Eldesokey et al., 2025)
+Tree-Sliced Entropy Partial Transport (Tran et al., 2025)
+Balanced Active Inference (Chen et al., 2025a)
+Wasserstein Transfer Learning (Zhang et al., 2025a)
+Fast Non-Log-Concave Sampling under Nonconvex Equality and Inequality Constraints with Landing (Jeon et al., 2025)
+Efficient Training-Free Online Routing for High-Volume Multi-LLM Serving (Wu and Silwal, 2025)
+Multi-Class Support Vector Machine with Differential Privacy (Park et al., 2025)
+FedWMSAM: Fast and Flat Federated Learning via Weighted Momentum and Sharpness-Aware Minimization (Li et al., 2025a)
+MDReID: Modality-Decoupled Learning for Any-to-Any Multi-Modal Object Re-Identification (Feng et al., 2025)
+Aligning Evaluation with Clinical Priorities: Calibration, Label Shift, and Error Costs (Flores et al., 2025)
+Measure-Theoretic Anti-Causal Representation Learning (Behnam and Wang, 2025)
+STaRFormer: Semi-Supervised Task-Informed Representation Learning via Dynamic Attention-Based Regional Masking for Sequential Data (Forstenhäusler et al., 2025)
+Improving Time Series Forecasting via Instance-aware Post-hoc Revision (Liu et al., 2025)
+Tropical Attention: Neural Algorithmic Reasoning for Combinatorial Algorithms (Hashemi et al., 2025)
+AANet: Virtual Screening under Structural Uncertainty via Alignment and Aggregation (Zhu et al., 2025a)
+NeuralSurv: Deep Survival Analysis with Bayesian Uncertainty Quantification (Monod et al., 2025)
+TS-RAG: Retrieval-Augmented Generation based Time Series Foundation Models are Stronger Zero-Shot Forecaster (Ning et al., 2025)
+SEMPO: Lightweight Foundation Models for Time Series Forecasting (He et al., 2025)
+IA-GGAD: Zero-shot Generalist Graph Anomaly Detection via Invariant and Affinity Learning (Zhang et al., 2025b)
+Mean Flows for One-step Generative Modeling (Geng et al., 2025)
+ProxySPEX: Inference-Efficient Interpretability via Sparse Feature Interactions in LLMs (Butler et al., 2025)
+Not All Data are Good Labels: On the Self-supervised Labeling for Time Series Forecasting (Yang et al., 2025)
+Towards Accurate Time Series Forecasting via Implicit Decoding (Li et al., 2025b)
+Least squares variational inference (Fay et al., 2025)
+CSBrain: A Cross-scale Spatiotemporal Brain Foundation Model for EEG Decoding (Zhou et al., 2025)
+Hierarchical Shortest-Path Graph Kernel Network (Wang et al., 2025b)
+
+ICLR 2026 Papers. We utilize 5 papers accepted at ICLR 2026. Specifically, these papers are drawn
+from benchmakrs used in AutoSOTA (Li et al., 2026d). We provide the full list of papers below.
+Table 13 | ICLR 2026 Papers. We utilize 5 accepted papers.
+Title
+Temporal Sparse Autoencoders: Leveraging the Sequential Nature of Language for Interpretability (Bhalla et al., 2026)
+Pinet: Optimizing hard-constrained neural networks with orthogonal projection layers (Grontas et al., 2026)
+Discount Model Search for Quality Diversity Optimization in High-Dimensional Measure Spaces (Tjanaka et al., 2026)
+Reasoning as Representation: Rethinking Visual Reinforcement Learning in Image Quality Assessment (Zhao et al., 2026a)
+Decentralized Attention Fails Centralized Signals: Rethinking Transformers for Medical Time Series (Yu et al., 2026)
+
+ICML 2026 Spotlight Papers. We utilize 64 papers accepted as spotlight presentations at ICML 2026.
+Specifically, these 64 papers were selected from among all spotlight papers by strictly adhering to
+AutoSOTA’s filtering process (e.g., verifying reproducibility). We provide the full list of papers below.
+
+28
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+Table 14 | ICML 2026 Spotlight Papers. We utilize 64 papers accepted as spotlight presentations.
+Title
+A Fully First-Order Layer for Differentiable Optimization (Zhao et al., 2026b)
+Mixture of Concept Bottleneck Experts (Santis et al., 2026)
+Mechanistic Data Attribution: Tracing the Training Origins of Interpretable LLM Units (Chen et al., 2026b)
+Loss-Aware Distributionally Robust Optimization via Trainable Optimal Transport Ambiguity Sets (Ohnemus et al., 2026)
+SceneSmith: Agentic Generation of Simulation-Ready Indoor Scenes (Pfaff et al., 2026)
+Reward Redistribution for CVaR MDPs using a Bellman Operator on L-infinity (Muni et al., 2026)
+Incremental BPE Tokenization (Jiang and Gong, 2026)
+Towards Optimal Robustness in Learning-Augmented Paging (Chen et al., 2026e)
+Many Experiments, Few Repetitions, Unpaired Data, and Sparse Effects: Is Causal Inference Possible? (Schur et al., 2026)
+AI Engram: In Search of Memory Traces in Artificial Intelligence (Kwon et al., 2026)
+OC-space: a Unifying Perspective on Verification of Tree Ensembles (Martens et al., 2026)
+RED-HDP-HMM: Observation-Dependent Durations for Bayesian Nonparametric Sequential Models (Słupiński and Lipinski, 2026)
+Optimal Decision-Making Based on Prediction Sets (Wang and Dobriban, 2026)
+Protein Fold Classification at Scale: Benchmarking and Pretraining (Chen et al., 2026a)
+Geometry-Aware Decoding with Wasserstein-Regularized Truncation and Mass Penalties for Large Language Models (Davoodi et al., 2026)
+Conformal Policy Control (Prinster et al., 2026)
+Towards Long-Horizon Interpretability: Efficient and Faithful Multi-Token Attribution for Reasoning LLMs (Pan et al., 2026)
+Rare Event Analysis of Large Language Models (Dorman et al., 2026)
+When to Trust the Cheap Check: Weak and Strong Verification for Reasoning (Kiyani et al., 2026)
+Harnessing Non-Adversarial Robustness in Large Language Models (Zhou et al., 2026)
+DAVE: Distribution-Aware Attribution via ViT Gradient Decomposition (Wróbel et al., 2026)
+Balancing Understanding and Generation in Discrete Diffusion Models (Liu et al., 2026d)
+Exact Functional ANOVA Decomposition for Categorical Inputs Models (Ferrere et al., 2026)
+Asymmetric Perturbation in Solving Bilinear Saddle-Point Optimization (Abe et al., 2026)
+Control Consistency Losses for Diffusion Bridges (Howard et al., 2026)
+Deep Flow Networks (Candogan and Foussoul, 2026)
+A Factorized Low-Rank RNN Framework for Uncovering Independent Neural Latent Dynamics and Connectivity (Li et al., 2026a)
+FlashSinkhorn: IO-Aware Entropic Optimal Transport on GPU (Ye et al., 2026)
+Near-Optimal Private Linear Regression via Iterative Hessian Mixing (Lev et al., 2026)
+Rethinking LLM Ensembling from the Perspective of Mixture Models (Fu et al., 2026)
+Controlled LLM Training on Spectral Sphere (Xie et al., 2026)
+TG-RAG: A Retrieval-Augmented Framework for Reasoning Guidance in Specialized Domains (Su et al., 2026)
+Time series saliency maps: Explaining models across multiple domains (Kechris et al., 2026)
+Online Conformal Prediction via Universal Portfolio Algorithms (Liu et al., 2026c)
+Characterizing, Evaluating, and Optimizing Complex Reasoning (Zhang et al., 2026)
+The Value of Variance: Mitigating Debate Collapse in Multi-Agent Systems via Uncertainty-Driven Policy Optimization (Tang et al., 2026b)
+EEmo-Logic: A Unified Dataset and Multi-Stage Framework for Comprehensive Image-Evoked Emotion Assessment (Gao et al., 2026)
+From Text to Forecasts: Bridging Modality Gap with Temporal Evolution Semantic Space (Li et al., 2026b)
+3ViewSense: Spatial and Mental Perspective Reasoning from Orthographic Views in Vision-Language Models (Zhan et al., 2026)
+Efficient numeracy in language models through single-token number embeddings (Kreitner et al., 2026)
+EgoTactile: Learning Grasp Pressure for Everyday Objects from Egocentric Video (Zeng et al., 2026)
+Learning to Discover at Test Time (Yuksekgonul et al., 2026)
+OPUS: Towards Efficient and Principled Data Selection in Large Language Model Pre-training in Every Iteration (Wang et al., 2026)
+GEM: Geometric Erasure by Contrastive Velocity Matching in Rectified Flows (Grebe et al., 2026)
+Steer Like the LLM: Activation Steering that Mimics Prompting (Heyman and Vandeputte, 2026)
+The Flexibility Trap: Rethinking the Value of Arbitrary Order in Diffusion Language Models (Ni et al., 2026)
+Scalable Option Learning in High-Throughput Environments (Henaff et al., 2026)
+On the Difficulty of Learning a Meta-network for Training Data Selection (Du et al., 2026)
+Reinforced Sequential Monte Carlo for Amortised Sampling (Choi et al., 2026)
+Language Model Circuits Are Sparse in the Neuron Basis (Arora et al., 2026)
+Unifying and Optimizing Data Values for Selection via Sequential Decision-Making (Chi et al., 2026)
+Neural Thickets: Diverse Task Experts Are Dense Around Pretrained Weights (Gan and Isola, 2026)
+Initialization is Half the Battle: Generating Diverse Images from a Guidance Potential Posterior (Li et al., 2026c)
+FlashOptim: Optimizers for Memory-Efficient Training (Ortiz et al., 2026)
+Bulk-Calibrated Credal Ambiguity Sets: Fast, Tractable Decision Making under Out-of-Sample Contamination (Chen et al., 2026d)
+Maximum Likelihood Reinforcement Learning (Tajwar et al., 2026)
+Learning Randomized Reductions (Erata et al., 2026)
+SVL: Empowering Spiking Neural Networks for Efficient 3D Open-World Understanding (Qiu et al., 2026)
+TabSwift: An Efficient Tabular Foundation Model with Row-Wise Attention (Liu and Ye, 2026)
+Thinking in Flow: A Dissipative Stabilization Operator for Robust Autoregressive Reasoning (Huang et al., 2026)
+VALUEFLOW: Toward Pluralistic and Steerable Value-based Alignment in Large Language Models (Kim et al., 2026)
+Mixtures Closest To A Given Measure: A Semidefinite Programming Approach (Durasinovic et al., 2026)
+Welfare-Optimal Classification with Accuracy Auctions (Sadi et al., 2026)
+Efficient Parallel Samplers for Recurrent-Depth Models and Their Connection to Diffusion Language Models (Geiping et al., 2026)
+
+29
+
+ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI
+
+A.2. Configuration
+Unless otherwise specified, we employ Gemini 3.6 Flash for all agents, except for the Idea Experiment
+Coding Agent, the Ablation Study Agent, the Rebuttal Agent, and the Draft Enhancer, which use
+Claude Code with Opus 4.8. To evaluate novelty, ScientistTwo retrieves two reference papers via
+Google Search. We extract limitations for a maximum of 16 rounds. In each idea experimentation
+round, we evaluate two candidates: one selected from the seed ideas and the other an evolved idea.
+We run this experimentation loop for up to four rounds, terminating early once four successful ideas
+are obtained. If the Idea Critic Agent flags an idea for engineering refinement, we apply engineering
+techniques for at most two rounds. Similarly, when the Ablation Critic Agent recommends refinement
+based on ablation results, we refine the idea at most once. Finally, the peer-review simulation runs
+for at most two rounds and terminates early if the ScholarPeer review score reaches 8, with reviewbased refinement conducted at most once. We use the ICLR 2025 format for drafting, following the
+PaperOrchestra.
+
+B. Detailed Comparison with AutoSOTA
+Table 15 | Aggregate differences over the five papers. The two systems apply different acceptance
+rules: AutoSOTA halts as soon as a pre-registered numerical target is cleared (e.g. after a single iteration
+on DMSQD (Tjanaka et al., 2026)), whereas ScientistTwo has no target metric and additionally
+requires the gain to be attributable to the proposed mechanism in ablation.
+
+Papers with a reported gain
+Typical change
+New algorithmic component
+Modifies the evaluation protocol
+Evaluated on the full benchmark
+Component-level attribution
+Produces a reviewable paper
+
+AutoSOTA
+
+ScientistTwo
+
+5/5
+config
+0/5
+1/5
+0/5
+none
+no
+
+4/5
+new modules
+4/4
+forbidden (audit)
+4/4
+5–6 ablations per paper
+yes
+
+We run ScientistTwo on the same five ICLR 2026 submissions (Table 13) that AutoSOTA reports. The
+two systems are built for different objectives. AutoSOTA is an end-to-end, metric-driven optimizer:
+starting from a raw paper, it locates the repository, reconstructs a runnable baseline, and distills the
+paper’s headline result into a single numerical target, then proposes and benchmarks edits until that
+target is cleared. It does construct a multi-dimensional rubric, but the optimization loop is driven
+by that one result-match number. In contrast, ScientistTwo operates without predefined numerical targets—it must independently diagnose research limitations, formulate a novel methodology,
+implement and ablate the proposed approach, and produce a complete scientific manuscript.
+Table 15 summarizes the quantitative differences, while Table 16 provides a qualitative comparison
+of the modifications introduced by each system. Because each system measures against its own
+reproduced baseline on different hardware, the two Δ columns are not a head-to-head on a common
+metric; they characterize the nature and scope of each change.
+What gets optimized. For these ICLR2026 papers, every AutoSOTA improvement is a configuration
+change inside an existing code path: solver iterations and float precision (Grontas et al., 2026),
+emitter count (Tjanaka et al., 2026), model width and optimizer (Yu et al., 2026), a threshold in
+the evaluation harness (Bhalla et al., 2026), and the mixing weights of three already-implemented
+pooling paths (Zhao et al., 2026a). No new algorithmic component appears in any of the five, and the
+30
+
+

@@ -1,0 +1,62 @@
+{
+  "id": "meta-refine",
+  "statement": "Improve frozen-encoder OOD detection through geometric alignment and calibrated safety gating. Use experiment-backed meta-review feedback to refine the method, adopting only strict empirical improvements.",
+  "domain": "OOD detection",
+  "subfield": "calibrated geometric alignment",
+  "datasets": [
+    "cifar10",
+    "cifar100",
+    "imagenet-r"
+  ],
+  "subset_datasets": [
+    "cifar10"
+  ],
+  "metrics": [
+    {
+      "name": "auroc",
+      "direction": "max",
+      "tolerance": 0.002,
+      "bounds": [
+        0.0,
+        1.0
+      ]
+    }
+  ],
+  "reported_metrics": {
+    "auroc": 0.8721
+  },
+  "constraints": [
+    "Keep the encoder frozen",
+    "Use identical benchmark datasets"
+  ],
+  "directions": [
+    {
+      "id": "geometric-alignment",
+      "title": "geometric alignment",
+      "description": "Improve class-conditional covariance geometry with a reproducible alignment mechanism.",
+      "keywords": [
+        "Procrustes",
+        "alignment"
+      ],
+      "weight": 1.0,
+      "must_include": false
+    },
+    {
+      "id": "safety-gating",
+      "title": "calibrated safety gating",
+      "description": "Calibrate a no-harm fallback to the frozen detector and test the gate using ablations.",
+      "keywords": [
+        "gate",
+        "calibration",
+        "fallback"
+      ],
+      "weight": 0.8,
+      "must_include": true
+    }
+  ],
+  "forbidden": [
+    "retraining the encoder"
+  ],
+  "venue": "ICLR",
+  "audience_note": "Offline simulated meta-review fixture; measured improvement remains the only adoption gate."
+}
