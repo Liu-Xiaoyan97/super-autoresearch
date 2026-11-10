@@ -142,7 +142,7 @@ Rules:
 | G1 | Guidance is **injected into generation only** (§3.1 idea gen, §3.3 evolver, §3.4 planner, §3.5 framing). It never touches a critic's arithmetic. |
 | G2 | `NoveltyChecker` emits `domain_fit ∈ [0,1]` alongside `novelty_score`; ranking is `novelty_score + guidance_weight * domain_fit` (paper: novelty only, so `guidance_weight=0` reproduces the paper). |
 | G3 | Ideas with `domain_fit < min_domain_fit` are dropped when directions exist. |
-| G4 | `must_include: true` + `strict_directions: true` ⇒ an idea that touches none of the hard directions is rejected at seed time, regardless of novelty. |
+| G4 | `must_include: true` + `strict_directions: true` (`--strict-directions`) ⇒ an idea that touches none of the hard directions is rejected at seed time, regardless of novelty; if nothing survives, the run aborts with `no_eligible_seeds` rather than exporting an untested incumbent. |
 | G5 | Guidance must be **auditable**: every `Idea` records `direction_ids`, and the manuscript must state which direction it advances. |
 | G6 | The offline `SimulatedRunner` includes a deterministic `domain_fit` term in its metric model, so guided vs. unguided runs are observably different in tests. |
 

@@ -106,7 +106,7 @@ RepoRef C_full ──run(FULL)──► Evidence(E_full) ──► FullSetCritic
 | ≥ `success_target` Good ideas | proceed to select | `_idea_search` |
 | 0 Good after `max_refine_rounds` | `aborted=True`, reason `no_good_ideas` | raises `_ScientificAbort` |
 | baseline execution failed | `aborted=True`, `baseline_failed` | `_baseline` |
-| 0 eligible seeds after guidance filtering | `aborted=True`, `no_eligible_seeds` | `_seed_ideas` |
+| 0 eligible seeds after guidance filtering | `aborted=True`, `no_eligible_seeds` | `_seed_ideas` + abort set in `run()` |
 | seed pool short but non-empty | `seeds.partial:N`, **continues** | `_seed_ideas` |
 | ablation `REFINE` and no strict improvement | keep incumbent, continue to drafting | `_ablations` |
 | review ≥ 8 or `max_peer_rounds` | stop rebuttal loop | `_draft_and_review` |

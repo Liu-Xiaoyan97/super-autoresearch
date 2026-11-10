@@ -41,6 +41,9 @@ strategy. `types.Problem` therefore carries a first-class steering layer:
 }
 ```
 
+`must_include` is a *soft* weight by default; pass `--strict-directions` to make it a hard gate
+(SPEC G4). A hard gate that filters every seed aborts the run with `no_eligible_seeds`.
+
 Design constraints that keep this honest (see `docs/SPEC.md` §2b):
 
 * guidance enters **generation only** — never a critic's arithmetic;

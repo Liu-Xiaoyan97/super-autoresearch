@@ -135,6 +135,8 @@ async def _run(args: argparse.Namespace) -> int:
         overrides["max_refine_rounds"] = args.max_refine_rounds
     if args.max_review_refinements is not None:
         overrides["max_review_refinements"] = args.max_review_refinements
+    if args.strict_directions:
+        overrides["strict_directions"] = True
     config = ScientistTwoConfig(**overrides)
     provider_name = "mock" if args.mock else args.provider
     options: dict[str, Any] = {}
@@ -212,6 +214,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     run.add_argument("--runner", default="simulated", choices=["simulated", "subprocess"],
                      help="simulated = deterministic offline model; subprocess = execute the repo")
     run.add_argument("--max-refine-rounds", type=int)
+    run.add_argument("--strict-directions", action="store_true",
+                     help="treat Problem.directions[].must_include as a hard gate (SPEC G4)")
     run.add_argument("--max-review-refinements", type=int,
                      help="cap on review-driven enhancements (§3.5, A.2: at most once)")
     for name in ("inspect", "replay"):

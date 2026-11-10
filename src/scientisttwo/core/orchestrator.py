@@ -141,9 +141,12 @@ class Orchestrator:
             await self._ablations()
             await self._draft_and_review()
             await self._meta_review()
+        # A dead end is an abort; a *scientific* loss (non-improving refinement,
+        # exhausted budgets) only means "export the incumbent". Anything that leaves
+        # nothing testable belongs in the abort set (SPEC §4 termination table).
         except (_ScientificAbort, BudgetExceeded) as exc:
             self.state.aborted = isinstance(exc, BudgetExceeded) or str(exc) in {
-                "no_good_ideas", "baseline_failed",
+                "no_good_ideas", "no_eligible_seeds", "baseline_failed", "limitations_exhausted",
             }
             if self.state.aborted:
                 self.state.abort_reason = str(exc)
