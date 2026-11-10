@@ -330,7 +330,7 @@ exit non-zero on mismatch.
 
 ## 8. Definition of done (v0)
 
-- [x] `pytest` green offline — 97 tests, no network, no API key.
+- [x] `pytest` green offline — 103 tests, no network, no API key.
 - [x] `python -m scientisttwo.cli run examples/ood_frozen_encoder.json --mock` completes §3.1→§3.6 and
       prints the decision path + review scores.
 - [x] Abort path (`0 Good after K rounds`) covered: `examples/abort_case.json`, exit code 2.

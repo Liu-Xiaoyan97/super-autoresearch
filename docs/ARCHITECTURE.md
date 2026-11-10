@@ -147,6 +147,8 @@ This asymmetry is deliberate: a model may **block** a promotion, never **cause**
 | Bounded metrics | headroom-proportional gain × `HEADROOM_GAIN`, never a hard ceiling | `runtime/workspace.py` |
 | Ablation contribution | deterministic 2–11% drop; rare dead component (~5%) | `agents/coding.py` |
 | Budget charging | only the agent that calls `workspace.run` charges | `agents/coding.py` |
+| Engineering rounds | two per **idea**, shared by the subset and full-set loops (A.2 literal) | `config.engineering_budget_scope` |
+| Review budget across meta rounds | `max_peer_rounds` / `max_review_refinements` reset per new draft | `core/orchestrator.py` |
 | Manuscript claims | dropped when unsupported (never resurrected) | `agents/writing.py` |
 | Integrity alignment | 0 if the deterministic check finds no textual support | `agents/integrity.py` |
 
