@@ -255,6 +255,8 @@ p.4; Figure 7 and the meta-review prose are on p.9; A.2 is on p.30.
 | Meta `Refine` exhausted / not strictly better | keep incumbent, export with `accepted=False` (paper: "termination using the previous best outputs") |
 | "consistently outperforms" / "substantially inferior" have no numeric definition | `subset_margin` + `is_strictly_better` tolerances, both configurable |
 | Reviewer score scale (integer vs real) | real-valued in `[1, 10]`; threshold inclusive (`>= 8`) |
+| A.2's "review-based refinement conducted at most once" — per run, or per manuscript? | **per peer-review cycle**: each §3.6 meta-refine produces a new draft, so the §3.5 budgets (`max_peer_rounds`, `max_review_refinements`) reset for it. Aggregate enhancements are bounded by `(max_meta_rounds+1) * max_review_refinements` |
+| Metadata says `Accept` but the review score is below the venue bar | never claim acceptance: export with `accepted=False`, reason `peer_review_below_threshold` (I7) |
 
 ---
 
