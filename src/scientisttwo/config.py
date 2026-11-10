@@ -74,13 +74,13 @@ class ScientistTwoConfig(BaseModel):
     n_explore: int = Field(default=1, ge=0)  # [PAPER] A.2 ("one selected from the seed ideas")
 
     # ------------------------------------------- §3.4 ablations
-    n_ablation_plans: int = Field(default=5, ge=1)  # [PAPER] §B ("5-6 ablations per paper")
+    n_ablation_plans: int = Field(default=5, ge=1)  # [INFERENCE] §B reports "5-6 ablations per paper"; N_p itself is never stated
     max_ablation_rounds: int = Field(default=1, ge=0)  # [PAPER] A.2
 
     # ------------------------------------------- §3.5 drafting & review
     review_threshold: float = Field(default=8.0, ge=0)  # [PAPER] A.2
     review_scale_max: float = 10.0  # [PAPER] §3.5 (ICLR 1-10)
-    max_peer_rounds: int = Field(default=2, ge=0)  # [PAPER] A.2
+    max_peer_rounds: int = Field(default=2, ge=0)  # [PAPER] A.2 (Table 5 shows >2 rounds; A.2 wins)
     max_review_refinements: int = Field(default=1, ge=0)  # [PAPER] A.2
     venue_format: str = "iclr2025"  # [PAPER] A.2
     required_sections: list[str] = Field(

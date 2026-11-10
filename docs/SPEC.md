@@ -232,11 +232,26 @@ From §3 and Appendix A.2 (page 30):
 | `max_peer_rounds` | 2 | "peer-review simulation runs for at most two rounds" |
 | `max_review_refinements` | 1 | "review-based refinement conducted at most once" |
 | `novelty_refs` | 2 | "retrieves two reference papers" |
-| `n_ablation_plans` N_p | 5 | §B "5–6 ablations per paper" (lower bound) |
+| `n_ablation_plans` N_p | 5 | [INFERENCE] from §B Table 15 ("5–6 ablations per paper"); the paper never states N_p |
 | `venue_format` | ICLR 2025 | A.2 |
 
 Unspecified in the paper (our choice, documented in `config.py`): `N_seed = 8`, `N0 = 2`,
-`N_k = 1`, `N_e = 1`, `N_meta = 2`.
+`N_k = 1`, `N_e = 1`, `N_meta = 2`, `N_t = 1 + len(review.questions)`.
+
+**Citation note:** Listing 1 and Table 1 are on **p.5** (the stage abstraction); Figure 3 is on
+p.4; Figure 7 and the meta-review prose are on p.9; A.2 is on p.30.
+
+### 6b. Paper ambiguities and how we pin them
+
+| Ambiguity | Resolution |
+|---|---|
+| §3.3 writes `R0` over all of `H0` but the prose evaluates only top-`N0` | round 0 evaluates **exactly** top-`n0`; unevaluated seeds stay available for exploration |
+| `N_p`, `N_t`, numeric `N_meta` never stated | `[INFERENCE]`/`[CHOICE]` defaults above, all overridable |
+| A.2 caps peer review at 2 rounds, but Table 5 numbers rounds beyond 2 | config value is authoritative (`max_peer_rounds=2`); the table is treated as a variant setting |
+| Ablation `Refine` exhausted without improvement | keep incumbent, continue to drafting (no abort) |
+| Meta `Refine` exhausted / not strictly better | keep incumbent, export with `accepted=False` (paper: "termination using the previous best outputs") |
+| "consistently outperforms" / "substantially inferior" have no numeric definition | `subset_margin` + `is_strictly_better` tolerances, both configurable |
+| Reviewer score scale (integer vs real) | real-valued in `[1, 10]`; threshold inclusive (`>= 8`) |
 
 ---
 
