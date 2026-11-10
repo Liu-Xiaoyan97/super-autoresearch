@@ -329,6 +329,9 @@ scientisttwo inspect <run_id>
 scientisttwo replay <run_id>
 ```
 
+`run` flags: `--runner {simulated,subprocess}`, `--strict-directions`,
+`--max-refine-rounds N`, `--max-review-refinements N`, `--script <json>`, `--provider`.
+
 `run` prints a one-screen summary: limitations found, seeds, per-round `id → decision`, chosen
 `h_best`, ablation verdict, review scores per round, meta decision, and artifact paths.
 `replay` must reproduce the same `decision_path` from `traces.jsonl` alone (no model calls) and
@@ -338,7 +341,7 @@ exit non-zero on mismatch.
 
 ## 8. Definition of done (v0)
 
-- [x] `pytest` green offline — 103 tests, no network, no API key.
+- [x] `pytest` green offline — 122 tests, no network, no API key.
 - [x] `python -m scientisttwo.cli run examples/ood_frozen_encoder.json --mock` completes §3.1→§3.6 and
       prints the decision path + review scores.
 - [x] Abort path (`0 Good after K rounds`) covered: `examples/abort_case.json`, exit code 2.
