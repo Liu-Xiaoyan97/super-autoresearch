@@ -58,5 +58,5 @@
     "retraining the encoder"
   ],
   "venue": "ICLR",
-  "audience_note": "Offline simulated meta-review fixture; measured improvement remains the only adoption gate."
+  "audience_note": "Synthetic fixture for the \u00a73.6 path. Run it WITH --script examples/mock_script.json to see a meta refinement that is strictly better and therefore adopted; without the script the offline provider produces a losing refinement, which the system correctly declines to adopt (meta.keep)."
 }

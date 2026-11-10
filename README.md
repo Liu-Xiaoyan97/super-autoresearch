@@ -121,7 +121,7 @@ Consequently, in this repo:
 | Artifact | What it is |
 |---|---|
 | `examples/ood_frozen_encoder.json` | a **synthetic** fixture that borrows Procrustes-DS's task framing (OOD detection vs. a frozen encoder); its metrics are placeholders, not the paper's numbers |
-| `examples/meta_refine.json` + `examples/mock_script.json` | a **synthetic continuation** used to exercise §3.5 rebuttal and §3.6 meta-refinement, which the paper illustrates only via TABHARMONY |
+| `examples/meta_refine.json` + `examples/mock_script.json` | a **synthetic continuation** used to exercise §3.5 rebuttal and §3.6 meta-refinement, which the paper illustrates only via TABHARMONY. Pair them: `run examples/meta_refine.json --mock --script examples/mock_script.json`. Without the script the offline refinement does not measure better, so the system declines it (`meta.keep`) — both outcomes are pinned in `tests/test_meta_refinement.py` |
 | `examples/abort_case.json` | synthetic dead-end used to test the "0 Good after K rounds" abort |
 
 No fixture claims to reproduce a published run, and `final.json` always records
