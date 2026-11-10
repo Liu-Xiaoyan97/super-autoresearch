@@ -50,7 +50,14 @@ def test_scripted_refinement_is_adopted_when_it_does_measure_better(tmp_path: Pa
     assert code == 0
     adopted = [token for token in path if token.startswith("adopt.meta:")]
     assert adopted, f"a strictly better refinement must replace the incumbent, got {path[-6:]}"
+    # §3.6 re-runs the downstream §3.4 + §3.5 chain on the adopted hypothesis.
+    assert path.index("adopt.meta:" + adopted[0].split(":", 1)[1]) < path.index("ablation.good")
     # The adopted hypothesis is the scripted one, and the paper is re-drafted from it.
     assert state["best_idea"] is not None
     assert state["manuscript"]["round"] >= 1, "a meta adoption must re-draft the manuscript"
+    # An earlier revision exported the incumbent here despite a clean accept; the full
+    # gate must now genuinely accept: improved + meta accept + clean integrity.
+    assert state["meta_review"]["decision"] == "accept"
+    assert state["review"]["score"] >= 8.0
+    assert path[-1] == "run.accept"
     assert state["export_reason"] != "meta_refinement_not_strictly_better"
