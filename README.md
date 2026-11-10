@@ -57,7 +57,7 @@ Design constraints that keep this honest (see `docs/SPEC.md` §2b):
 cd "/Users/liuxiaoyan/workspace/RSI "
 export PYTHONPATH=src
 
-python3 -m scientisttwo.cli run examples/procrustes_ds.json --mock
+python3 -m scientisttwo.cli run examples/ood_frozen_encoder.json --mock
 python3 -m scientisttwo.cli inspect <run_id>
 python3 -m scientisttwo.cli replay  <run_id>     # rebuilds decisions from traces.jsonl, no model calls
 python3 -m pytest -q                             # fully offline suite
@@ -95,6 +95,30 @@ offline execution used by the tests.
 1. `docs/SPEC.md` — the contract: invariants, state machine, frozen models, offline determinism rules.
 2. `docs/analysis/*.md` — section-by-section extraction from the paper ([PAPER] vs [INFERENCE]).
 3. `docs/ARCHITECTURE.md` — module ↔ agent ↔ paper-section map of the code as built.
+
+## Fidelity: what the case study actually shows
+
+The paper's worked example is **Procrustes-DS** (Appendix C). Its own cross-reference states:
+
+> "For an example of a rebuttal report obtained through a simulated peer-review process, since
+> **Procrustes-DS did not undergo this process**, the example of TABHARMONY is presented" — p.33
+
+So the observed artifact chain for Procrustes-DS is: limitations → proposal → experiments →
+ablations → critic feedback → reproduction/spec audits, plus a reviewer score (8.0 ScholarPeer /
+6.5 Stanford, p.5). **No rebuttal round is shown for it.** The rebuttal/rebuttal-report artifacts
+come from a *different* task (TABHARMONY).
+
+Consequently, in this repo:
+
+| Artifact | What it is |
+|---|---|
+| `examples/ood_frozen_encoder.json` | a **synthetic** fixture that borrows Procrustes-DS's task framing (OOD detection vs. a frozen encoder); its metrics are placeholders, not the paper's numbers |
+| `examples/meta_refine.json` + `examples/mock_script.json` | a **synthetic continuation** used to exercise §3.5 rebuttal and §3.6 meta-refinement, which the paper illustrates only via TABHARMONY |
+| `examples/abort_case.json` | synthetic dead-end used to test the "0 Good after K rounds" abort |
+
+No fixture claims to reproduce a published run, and `final.json` always records
+`runner: simulated` plus `accepted: false` unless every gate (review ≥ 8, meta `Accept`, clean
+integrity audit) genuinely passes.
 
 ## Fidelity notes
 

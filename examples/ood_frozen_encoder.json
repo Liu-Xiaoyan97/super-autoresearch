@@ -1,5 +1,5 @@
 {
-  "id": "procrustes-ds",
+  "id": "ood-frozen-encoder",
   "statement": "Improve out-of-distribution detection for a frozen encoder using a reproducible geometric alignment method. Evaluate the subset before the full three-dataset benchmark.",
   "domain": "OOD detection",
   "subfield": "frozen-encoder geometric alignment",
@@ -24,7 +24,7 @@
     }
   ],
   "reported_metrics": {
-    "auroc": 0.8721
+    "auroc": 0.87
   },
   "constraints": [
     "Keep the encoder frozen",
@@ -48,5 +48,5 @@
     "retraining the encoder"
   ],
   "venue": "ICLR",
-  "audience_note": "Offline simulation fixture, not an empirical scientific result."
+  "audience_note": "Synthetic offline fixture for mechanism testing. The task framing (OOD detection against a frozen encoder) is borrowed from the paper's Procrustes-DS case study, but the numbers are placeholders and this is NOT a reproduction of that run."
 }

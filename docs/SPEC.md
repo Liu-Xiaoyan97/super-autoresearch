@@ -290,21 +290,25 @@ A fixture is a plain serialized `Problem` (see `types.Problem`), e.g.:
 
 ```json
 {
-  "id": "procrustes-ds",
+  "id": "ood-frozen-encoder",
   "statement": "Improve out-of-distribution detection for a frozen encoder.",
   "domain": "OOD detection",
   "source_paper": "X-Mahalanobis (Wei et al., 2025)",
   "datasets": ["cifar10", "cifar100", "imagenet-r"],
   "subset_datasets": ["cifar10"],
   "metrics": [{"name": "auroc", "direction": "max", "tolerance": 0.002}],
-  "reported_metrics": {"auroc": 0.8721},
+  "reported_metrics": {"auroc": 0.87},
   "directions": [{"id": "d1", "title": "geometric alignment", "weight": 1.0}],
   "forbidden": ["retraining the encoder"]
 }
 ```
 
-Required fixtures: `examples/procrustes_ds.json` (happy path), `examples/abort_case.json`
+Required fixtures: `examples/ood_frozen_encoder.json` (happy path), `examples/abort_case.json`
 (0 Good ideas ⇒ abort), `examples/meta_refine.json` (meta-review Refine that improves the metric).
+
+**These fixtures are synthetic.** The task framing of the first one mirrors the paper's
+Procrustes-DS case study, but its numbers are placeholders and it is *not* a reproduction of that
+run. See README §"Fidelity: what the case study actually shows".
 
 ### 7.4 CLI
 
@@ -324,7 +328,7 @@ exit non-zero on mismatch.
 ## 8. Definition of done (v0)
 
 - [x] `pytest` green offline — 97 tests, no network, no API key.
-- [x] `python -m scientisttwo.cli run examples/procrustes_ds.json --mock` completes §3.1→§3.6 and
+- [x] `python -m scientisttwo.cli run examples/ood_frozen_encoder.json --mock` completes §3.1→§3.6 and
       prints the decision path + review scores.
 - [x] Abort path (`0 Good after K rounds`) covered: `examples/abort_case.json`, exit code 2.
 - [x] Meta-review `Refine` that improves E updates the state (`adopt.meta:*`) — scripted fixture test.

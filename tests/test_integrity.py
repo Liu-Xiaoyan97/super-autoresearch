@@ -125,8 +125,8 @@ def test_reference_auditor_flags_unknown_citations(tmp_path: Path) -> None:
     known = ["X-Mahalanobis: out-of-distribution detection with mahalanobis distance"]
     assert auditor.unknown_refs([], known) == []
     assert auditor.unknown_refs(["X-Mahalanobis (Wei et al., 2025)"], known) == []
-    bad = auditor.unknown_refs(["Procrustes-DS: a miraculous method (Doe et al., 2049)"], known)
-    assert bad == ["Procrustes-DS: a miraculous method (Doe et al., 2049)"]
+    bad = auditor.unknown_refs(["Imaginary-DS: a miraculous method (Doe et al., 2049)"], known)
+    assert bad == ["Imaginary-DS: a miraculous method (Doe et al., 2049)"]
 
     manuscript = Manuscript(
         id="m1",

@@ -58,7 +58,7 @@ def _load_run(root: Path) -> tuple[dict[str, Any], list[dict[str, Any]], FinalAr
 def test_happy_path_runs_all_stages(
     tmp_path: Path, fixture_path: FixturePath, run_cli: CLI, request: pytest.FixtureRequest,
 ) -> None:
-    root, stdout = _run_fixture("procrustes_ds", tmp_path / "runs", fixture_path, run_cli, request)
+    root, stdout = _run_fixture("ood_frozen_encoder", tmp_path / "runs", fixture_path, run_cli, request)
     state, records, final = _load_run(root)
     assert not final.aborted
     assert state["decision_path"]
@@ -103,7 +103,7 @@ def test_replay_and_inspect_round_trip_without_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     out = tmp_path / "runs"
-    root, _ = _run_fixture("procrustes_ds", out, fixture_path, run_cli, request)
+    root, _ = _run_fixture("ood_frozen_encoder", out, fixture_path, run_cli, request)
     state, records, _ = _load_run(root)
     assert reconstruct_decision_path(records) == state["decision_path"]
 
@@ -168,7 +168,7 @@ def test_transition_record_compatibility() -> None:
     ]) == ["first", "second"]
 
 
-@pytest.mark.parametrize("name", ["procrustes_ds", "abort_case", "meta_refine"])
+@pytest.mark.parametrize("name", ["ood_frozen_encoder", "abort_case", "meta_refine"])
 def test_fixtures_are_plain_valid_problems(name: str, fixture_path: FixturePath) -> None:
     problem = Problem.model_validate(json.loads(fixture_path(name).read_text(encoding="utf-8")))
     assert problem.id and problem.statement and problem.metrics
