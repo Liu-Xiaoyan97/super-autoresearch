@@ -17,28 +17,12 @@ CLI = Callable[[Sequence[str]], tuple[int, str, str]]
 FixturePath = Callable[[str], Path]
 
 
-def _guard_external_failure(
-    code: int, stderr: str, request: pytest.FixtureRequest,
-) -> None:
-    """Parallel implementations may still be stubs; preserve exact traceback."""
-    if code != 1:
-        return
-    frames = re.findall(r'File "([^"]+)"', stderr)
-    origin = frames[-1] if frames else ""
-    if "NotImplementedError" in stderr:
-        request.node.add_marker(pytest.mark.skipif(True, reason=stderr))
-        pytest.skip(stderr)
-    if any(part in origin for part in ("/scientisttwo/agents/", "/scientisttwo/core/", "/scientisttwo/runtime/")):
-        request.node.add_marker(pytest.mark.xfail(reason=stderr))
-        pytest.xfail(stderr)
-
-
 def _run_fixture(
     name: str, out: Path, fixture_path: FixturePath, run_cli: CLI,
     request: pytest.FixtureRequest, *, expected: int = 0,
 ) -> tuple[Path, str]:
     code, stdout, stderr = run_cli(["run", str(fixture_path(name)), "--mock", "--out", str(out)])
-    _guard_external_failure(code, stderr, request)
+
     assert code == expected, f"stdout:\n{stdout}\nstderr:\n{stderr}"
     roots = [path for path in out.iterdir() if path.is_dir()]
     assert len(roots) == 1
@@ -137,7 +121,6 @@ def test_scripted_meta_refinement_adopts_measured_improvement(
         "run", str(fixture_path("meta_refine")), "--mock", "--script", str(fixture_path("mock_script")),
         "--out", str(out),
     ])
-    _guard_external_failure(code, stderr, request)
     assert code == 0, stdout + stderr
     root = next(out.iterdir())
     state, records, final = _load_run(root)
