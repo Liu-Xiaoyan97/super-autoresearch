@@ -170,3 +170,9 @@ contract could not express something; each one also states the workaround.
 * **New agent** → subclass `BaseAgent` (unique `NAME`, `task`, `role`), add it to
   `AgentBundle`, and wire it in `Orchestrator` — the mock provider synthesizes its outputs
   automatically for offline runs.
+* **One context per problem.** `AgentContext` holds a single `Problem`, and
+  `ctx.scratch["baseline"] / ["baseline_full"]` are deliberately unqualified keys. Reusing a
+  context for a *different* problem would reuse that problem's reproduced baselines. The CLI
+  and every test build a fresh context per run; keep it that way (or key the scratch entries
+  yourself). `Orchestrator` does not clear `scratch`, so that explicit injection — the pattern
+  `tests/test_baseline_reference.py` uses — keeps working.
