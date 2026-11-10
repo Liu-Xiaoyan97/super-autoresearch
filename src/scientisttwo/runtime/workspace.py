@@ -316,5 +316,12 @@ class FileWorkspace(Workspace):
         assert self.runner is not None
         result = await self.runner.run(req)
         enriched = WorkspaceExperimentResult(**result.model_dump(exclude={"context"}), context={"repo": repo})
-        self.store.write_json(f"experiments/{repo.label}-{scope.value}.json", {"request": req, "result": enriched})
+        # Two log layers, deliberately distinguishable by prefix: the runner writes
+        # one *measurement* record per executed benchmark, the workspace writes the
+        # *provenance* record (which RepoRef produced it). Counts must therefore be
+        # equal and neither may be mistaken for duplicate execution.
+        self.store.write_json(
+            f"experiments/provenance-{repo.label}-{scope.value}.json",
+            {"request": req, "result": enriched},
+        )
         return enriched

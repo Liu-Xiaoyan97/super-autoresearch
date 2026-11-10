@@ -90,3 +90,22 @@ def test_budget_scales_with_the_refinement_limit(tmp_path: Path) -> None:
     assert wide_executed["count"] == wide.experiments
     assert tight_executed["count"] == tight.experiments
     assert tight.experiments <= wide.experiments
+
+
+def test_log_layers_are_distinguishable_and_match_charges(tmp_path: Path) -> None:
+    """One measurement record and one provenance record per executed benchmark.
+
+    Without the distinct prefixes these two layers look like duplicate executions
+    (44 files for 22 experiments), which is exactly how an accounting bug would
+    present itself.
+    """
+
+    _, budget, _, executed = _run(tmp_path)
+
+    files = sorted(path.name for path in (tmp_path / "artifacts" / "experiments").glob("*.json"))
+    measurements = [name for name in files if name.startswith("simulated-")]
+    provenance = [name for name in files if name.startswith("provenance-")]
+
+    assert len(measurements) == executed["count"] == budget.experiments
+    assert len(provenance) == budget.experiments
+    assert len(set(measurements) & set(provenance)) == 0, "the two log layers must not share names"
