@@ -124,8 +124,9 @@ class InitialIdeaGenerator(BaseAgent):
     async def generate(self, limitations: list[Limitation]) -> Idea:
         """Generate h0 targeting a diagnosed weakness (§3.1, SPEC G1)."""
 
-        # CONTRACT-GAP: Idea has required fields, unlike the default-constructible
-        # output-schema contract. Use the defaultable IdeaBatch envelope instead.
+        # Idea has required fields, so it is returned inside the defaultable
+        # IdeaBatch envelope (SPEC §4: envelopes default-construct, domain models
+        # may require fields).
         batch = await self.ask(
             IdeaBatch,
             user=(

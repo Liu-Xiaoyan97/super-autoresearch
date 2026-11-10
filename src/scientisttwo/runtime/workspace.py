@@ -8,16 +8,25 @@ Two runners exist (invariant: identical interface):
 
 The simulated metric model is part of the contract because tests assert on it:
 
-    gain      = U(hash(idea.mechanism) % 1000) * 0.5 - 0.10          # [-0.10, 0.40)
+    gain      = U(crc32(idea.mechanism) % 1000) * 0.5 - 0.10          # [-0.10, 0.40)
     gain     += guidance_weight * domain_fit * 0.2                    # [EXTENSION] G6
-    gain     += U(hash(idea.id) % 97) * 0.02 - 0.01                   # run noise
-    subset   = gain * 1.15 + U(hash(idea.id + "sub") % 53) * 0.02 - 0.01
-    metric   = baseline[metric] * (1 + scope_gain) * direction
+    gain     += U(crc32(idea.id) % 97) * 0.02 - 0.01                  # run noise
+    subset    = gain * 1.15 + U(crc32(idea.id + "sub") % 53) * 0.02 - 0.01
 
-so ``gain > 0`` is a "Good" idea and the ordering of ideas is stable across runs.
-``hash`` means CRC32, and ``U(k % n)`` means ``(k % n) / n``. The
-primary metric uses the literal keys above; subsequent metrics suffix their
-noise keys with ``:<metric name>`` for independent deterministic perturbations.
+    bounded metric   (bounds set):  value = start + gain * span * HEADROOM_GAIN
+    unbounded metric:               value = baseline * (1 + gain)
+
+where for ``direction="max"`` ``span = high - start`` and for ``direction="min"``
+``span = start - low``, so ``gain > 0`` always means "better". Improvements consume
+*remaining headroom* rather than a fixed relative step: a bounded metric such as
+AUROC can never saturate, so two strong ideas keep their ordering instead of both
+clamping to the ceiling.
+
+The gain range is calibrated to the paper's reported 80.4% improvement rate
+(86/107), so an offline run has a realistic success/failure mix instead of either
+constant success or constant abort. ``U(n)`` means ``(k % n) / n`` for the CRC32
+``k``. The primary metric uses the literal keys above; subsequent metrics suffix
+their noise keys with ``:<metric name>`` for independent deterministic perturbations.
 """
 
 from __future__ import annotations
@@ -150,12 +159,9 @@ class SimulatedRunner(Runner):
                     gain = gain * 1.15 + _unit(idea.id + "sub" + suffix, 53) * 0.02 - 0.01
             spec = self.problem.metric(name)
             direction = -1 if spec is not None and spec.direction == "min" else 1
-            # CONTRACT-GAP: the docstring's trailing '* direction' would negate
-            # minimization baselines; direction instead signs the relative gain.
-            # Improvements consume *remaining headroom* rather than a fixed
-            # relative step, so bounded metrics (AUROC in (0,1)) can never
-            # saturate: two ideas that would both exceed the ceiling keep their
-            # ordering, which the empirical gates (I2) depend on.
+            # `direction` signs the gain, never multiplies the baseline (that
+            # would negate minimization baselines). Bounded metrics move through the
+            # remaining headroom, which keeps "strictly better" meaningful (I2).
             bounds = getattr(spec, "bounds", None)
             if bounds:
                 low, high = float(bounds[0]), float(bounds[1])
@@ -228,12 +234,6 @@ class SubprocessRunner(Runner):
                 status="failed", stdout=stdout, stderr=f"{stderr}\n{type(exc).__name__}: {exc}".strip(),
                 log_path=log_path, wall_time_s=time.monotonic() - started,
             )
-
-
-class WorkspaceExperimentResult(ExperimentResult):
-    # CONTRACT-GAP: ExperimentResult has no provenance/context field. A subtype
-    # retains the abstract return contract and serializes RepoRef without Evidence.
-    context: dict[str, RepoRef] = Field(default_factory=dict)
 
 
 class FileWorkspace(Workspace):
@@ -315,7 +315,11 @@ class FileWorkspace(Workspace):
         )
         assert self.runner is not None
         result = await self.runner.run(req)
-        enriched = WorkspaceExperimentResult(**result.model_dump(exclude={"context"}), context={"repo": repo})
+        # Provenance lives in Evidence.code (the RepoRef) and in the provenance
+        # record written below; ExperimentResult carries measurements only, so the
+        # frozen model needs no extra field and nothing is silently dropped on a
+        # state.json round-trip.
+        enriched = result
         # Two log layers, deliberately distinguishable by prefix: the runner writes
         # one *measurement* record per executed benchmark, the workspace writes the
         # *provenance* record (which RepoRef produced it). Counts must therefore be

@@ -88,8 +88,9 @@ class MockLLMProvider(LLMProvider):
             if isinstance(scripted, BaseModel):
                 scripted = scripted.model_dump(mode="json")
             return schema.model_validate(scripted)
-        # CONTRACT-GAP: domain schemas contain required fields despite SPEC §4's
-        # default-constructibility rule. Populate those fields recursively too.
+        # Top-level schemas are default-constructible envelopes; their *nested*
+        # domain models (Idea, Claim, ...) have required fields, so those are
+        # populated recursively too (SPEC §4).
         material = json.dumps([self.seed, req.task, req.meta], sort_keys=True, default=str)
         digest = zlib.crc32(material.encode("utf-8"))
         rng = random.Random(digest)

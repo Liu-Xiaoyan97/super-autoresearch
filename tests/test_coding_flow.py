@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 import zlib
 
@@ -248,7 +249,13 @@ def test_workspace_snapshots_provenance_and_auxiliary_coders(tmp_path: Path) -> 
         assert (Path(changed.path) / "patch.txt").read_text() == "component intervention\n"
         assert "+component intervention" in await workspace.diff(original, changed)
         result = await workspace.run(changed, Scope.FULL, idea=idea())
-        assert result.context["repo"] == changed
+        # Provenance is the write-only-once record on disk (plus Evidence.code), not a
+        # field on ExperimentResult: measurements stay independent of traceability.
+        provenance = tmp_path / "artifacts" / "experiments" / f"provenance-{changed.label}-full.json"
+        assert provenance.exists()
+        record = json.loads(provenance.read_text(encoding="utf-8"))
+        assert record["request"]["repo"]["label"] == changed.label
+        assert record["result"]["metrics"] == result.metrics
         best = Evidence(idea_id="h", scope=Scope.FULL, code=changed, metrics=result.metrics)
         plan = AblationPlan(id="a", component="spectral", description="Remove spectral constraint")
         ablation = await AblationCoder(ctx).run_plan(idea(), plan, best=best)
