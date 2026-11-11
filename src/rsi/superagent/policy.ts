@@ -191,6 +191,24 @@ class RsiPolicy implements Policy {
   }
 }
 
+/** Highest-permission profile: accept inferred work, every SOP rule auto. */
+export function permissivePolicySettings(
+  settings: PolicySettings = defaultPolicySettings(),
+): PolicySettings {
+  return defaultPolicySettings({
+    ...settings,
+    paused: false,
+    acceptMode: "auto",
+    rules: settings.rules.map((rule) => ({ ...rule, level: "auto", enabled: true })),
+    sources: Object.fromEntries(
+      Object.entries(settings.sources).map(([name, source]) => [
+        name,
+        { ...source, enabled: true, observed: true },
+      ]),
+    ),
+  });
+}
+
 export function makePolicy(settings: PolicySettings = defaultPolicySettings()): Policy {
   return new RsiPolicy(settings.version ? settings : defaultPolicySettings(settings));
 }

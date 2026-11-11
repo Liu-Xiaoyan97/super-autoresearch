@@ -14,6 +14,7 @@ import { latestAssignment, latestReport, ticketStage } from "./model.ts";
 import type { RunStatus, SuperagentRuntime } from "./runtime.ts";
 import { ticketCard } from "./runtime.ts";
 import { policySection } from "./prompts.ts";
+import { permissivePolicySettings } from "./policy.ts";
 
 export interface SuperagentHost {
   runtime(): SuperagentRuntime;
@@ -62,6 +63,11 @@ export const SUPERAGENT_PARAMS = {
     },
     paused: { type: "boolean", description: "policy: pause or resume dispatch, evaluations and replies." },
     show_rules: { type: "boolean", description: "policy: include the generated policy section." },
+    allow: {
+      type: "boolean",
+      description:
+        "policy: grant the highest permission profile (accept auto; every SOP rule auto, including experiments).",
+    },
   },
   required: ["action"],
 };
@@ -161,6 +167,15 @@ export async function superagentAction(host: SuperagentHost, params: Record<stri
       }
       case "policy": {
         let settings = host.policy();
+        if (params.allow === true) {
+          settings = permissivePolicySettings(settings);
+          const applied = host.applyPolicy(settings);
+          settings = host.policy();
+          return text(
+            `policy ${settings.version}: highest permission (auto, all SOP rules auto) (live runs: ${applied.length})`,
+            { policy: settings, applied },
+          );
+        }
         if (params.mode !== undefined || params.paused !== undefined) {
           settings = {
             ...settings,
