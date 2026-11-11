@@ -84,6 +84,8 @@ export interface RunStatus {
   root: string;
   /** The run ticket id, the id a person uses to inspect or stop the run. */
   run_ticket_id?: string;
+  /** Previous run id when this run is a resumed attempt. */
+  resumed_from?: string;
   title: string;
   state: string;
   ended?: { outcome: TicketOutcome; at: string; reason?: string };
@@ -131,9 +133,11 @@ export class RunSession {
     this.root = options.spec.root;
     this.worker = options.workerFactory({ spec: options.spec, cwd: options.cwd, signal: this.controller.signal });
     let engineRef: Engine | null = null;
+    const resumedFrom = str(options.spec.options.resumed_from) || undefined;
     this.driver = new SopDriver({
       spec: options.spec,
       cwd: options.cwd,
+      resumeFrom: resumedFrom,
       engine: () => {
         if (!engineRef) throw new Error("engine is not ready");
         return engineRef;
@@ -201,11 +205,12 @@ class SopDriver implements RunDriver {
   private readonly opts: {
     spec: RunSpec;
     cwd: string;
+    resumeFrom?: string;
     engine: () => Engine;
     worker: TaskWorker;
   };
 
-  constructor(opts: { spec: RunSpec; cwd: string; engine: () => Engine; worker: TaskWorker }) {
+  constructor(opts: { spec: RunSpec; cwd: string; resumeFrom?: string; engine: () => Engine; worker: TaskWorker }) {
     this.opts = opts;
   }
 
@@ -258,6 +263,7 @@ class SopDriver implements RunDriver {
         cwd: this.opts.cwd,
         outDir: spec.out,
         runId: path.basename(spec.root),
+        resumeFrom: this.opts.resumeFrom,
         seed: spec.seed,
         runner: spec.runner,
         mock: spec.mode === "mock",
@@ -300,6 +306,8 @@ export class SuperagentRuntime {
   readonly cwd: string;
   readonly out: string;
   private readonly sessions = new Map<string, RunSession>();
+  private readonly runOuts = new Map<string, string>();
+  private readonly retired = new Map<string, RunStatus>();
   private readonly byTrigger = new Map<string, string>();
   private readonly workerFactory: WorkerFactory;
   private policy: PolicySettings;
@@ -340,6 +348,7 @@ export class SuperagentRuntime {
     fs.mkdirSync(root, { recursive: true });
     const session = this.openSession(spec, params);
     this.sessions.set(runId, session);
+    this.runOuts.set(runId, out);
     this.byTrigger.set(triggerKey, runId);
     return { session, duplicate: false };
   }
@@ -483,13 +492,72 @@ export class SuperagentRuntime {
     return out.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   }
 
+  /** The original spec of a run, live or from its durable snapshot. */
+  runSpec(runId: string): RunSpec | undefined {
+    const live = this.sessions.get(runId);
+    if (live) return live.spec;
+    const base = this.runOuts.get(runId) ?? this.out;
+    const snapshot = readSnapshot(storeDir(path.join(base, runId)));
+    return snapshot?.tickets.find((ticket) => ticket.kind === "run")?.run;
+  }
+
+  /** Create a new attempt that resumes a previous ended/failed run. */
+  resume(runId: string): RunSession {
+    const live = this.sessions.get(runId);
+    const spec = live?.spec ?? this.runSpec(runId);
+    if (!spec) throw new Error(`no run spec found for ${runId}`);
+    const oldStatus = live?.status();
+    const ended = oldStatus?.ended ?? this.status(runId)?.ended;
+    if (live) {
+      if (!ended) throw new Error(`run ${runId} is still live; wait for it to end`);
+      this.retired.set(runId, oldStatus!);
+      this.sessions.delete(runId);
+      live.close();
+    }
+    const outDir = spec.out;
+    const root = spec.root || path.join(outDir, runId);
+    const finalFile = path.join(root, "final.json");
+    let aborted = false;
+    try {
+      const final = JSON.parse(fs.readFileSync(finalFile, "utf8")) as { aborted?: boolean };
+      aborted = final.aborted === true;
+    } catch {
+      /* no final artifact; the run may have failed before export */
+    }
+    if (!aborted && ended?.outcome !== "failed" && ended?.outcome !== "dropped") {
+      throw new Error(`run ${runId} ended ${ended?.outcome ?? "without a final state"}; only aborted/failed runs can resume`);
+    }
+    let index = 1;
+    let newId = `${runId}-r${index}`;
+    while (fs.existsSync(path.join(outDir, newId))) {
+      index += 1;
+      newId = `${runId}-r${index}`;
+    }
+    const newRoot = path.join(outDir, newId);
+    fs.mkdirSync(newRoot, { recursive: true });
+    const resumedSpec: RunSpec = {
+      ...spec,
+      root: newRoot,
+      options: {
+        ...spec.options,
+        resumed_from: runId,
+        title: `${str(spec.options.title) || runId} (resume ${index})`,
+      },
+    };
+    const session = this.openSession(resumedSpec, { problem: spec.problem });
+    this.sessions.set(newId, session);
+    this.runOuts.set(newId, outDir);
+    return session;
+  }
+
   status(runId: string): RunStatus | undefined {
     const live = this.sessions.get(runId);
     if (live) return live.status();
-    const dir = path.join(this.out, runId, "superagent");
+    const base = this.runOuts.get(runId) ?? this.out;
+    const dir = path.join(base, runId, "superagent");
     const snapshot = readSnapshot(dir);
-    if (!snapshot) return undefined;
-    return statusOfSnapshot(snapshot, runId, path.join(this.out, runId));
+    if (!snapshot) return this.retired.get(runId);
+    return statusOfSnapshot(snapshot, runId, path.join(base, runId));
   }
 
   /** Change the policy for new runs and every live one. */
@@ -531,6 +599,7 @@ export function statusOfSnapshot(snapshot: Snapshot, runId: string, root: string
     run_id: runId,
     root,
     run_ticket_id: run?.id,
+    resumed_from: str(run?.run?.options.resumed_from) || undefined,
     title: run?.title ?? runId,
     state: run ? ticketStage(run) : "unknown",
     ended: run?.ended ? { outcome: run.ended.outcome, at: run.ended.at, reason: run.ended.reason } : undefined,
@@ -551,6 +620,7 @@ export function statusOf(engine: Engine, runId: string): RunStatus {
     run_id: runId,
     root: run?.run?.root ?? "",
     run_ticket_id: run?.id,
+    resumed_from: str(run?.run?.options.resumed_from) || undefined,
     title: run?.title ?? runId,
     state: run ? ticketStage(run) : "unknown",
     ended: run?.ended ? { outcome: run.ended.outcome, at: run.ended.at, reason: run.ended.reason } : undefined,

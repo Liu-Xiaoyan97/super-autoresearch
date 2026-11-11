@@ -30,11 +30,11 @@
     "gpu_ids": "0",
     "env": {
       "HF_DATASETS_CACHE": "/home/sl/coral-e2-C512L21H2720-1b-bf16only-20261109-1020/eval/hf-official-wikitext/datasets",
-      "RSI_DFM_TRAIN_DATA": "/home/sl/SlimPajama-10B",
+      "RSI_DFM_TRAIN_DATA": "/home/sl/SlimPajama-10B/train",
       "RSI_DFM_BASE_MODEL": "/home/sl/mamba/checkpoints",
       "RSI_DFM_TOKENIZER": "/home/sl/mamba/checkpoints",
       "RSI_DFM_BACKEND": "native",
-      "RSI_DFM_TRAIN_STEPS": "38000",
+      "RSI_DFM_TRAIN_STEPS": "3815",
       "RSI_DFM_OFFLINE": "1",
       "RSI_DFM_DEVICE": "cuda",
       "RSI_DFM_TRAIN_BATCH_SIZE": "32",

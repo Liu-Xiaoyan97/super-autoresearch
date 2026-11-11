@@ -142,9 +142,11 @@ something. Task-level progress stays internal — it is in
 Dispatch is idempotent per session and request; a second identical call returns
 the existing run. `retry` starts a new assignment on the same ticket; for a run
 ticket that means re-running the SOP in the same directory. `stop` is a person's
-stop and withdraws the mandate. A run that ended in an earlier process is
-read-only: the SOP has no mid-loop checkpoint, so pretending to resume would
-manufacture a result. Starting it again creates a new run, at a new directory.
+stop and withdraws the mandate. A run that ended remains immutable. An
+aborted or failed run can be continued with `resume`: a new `-rN` attempt
+restores the persisted state/traces, records `resumed_from`, and keeps the old
+ticket as the audit record. A partially completed stage is rerun; this is not
+automatic mid-turn replay.
 
 ## Durability and recovery
 
@@ -182,8 +184,9 @@ change, so editing prompt text never freezes a stale rule.
   benchmark result, a review note, a schedule. A deployment that needs GitHub or
   Feishu adds a Source; the domain does not change.
 - **No panel.** The foreground agent and `/rsi` read the same state.
-- **No automatic mid-run resume.** A run is one SOP turn; a restart is honest
-  about what it lost.
+- **No automatic mid-turn replay.** A run is one SOP turn. A manual `resume`
+  restores persisted stage state into a new attempt; it does not replay an
+  unfinished worker turn.
 - **No second authority layer.** The numeric gates remain the only path to an
   incumbent, and policy only decides who may spend or export.
 

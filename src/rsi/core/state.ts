@@ -1,7 +1,7 @@
 /** Mutable research state: the single source of truth for one run (I8). */
 
 import type { Config } from "../config.ts";
-import { canonical } from "../json.ts";
+import { asArray, asRecord, canonical } from "../json.ts";
 import type {
   AblationResult,
   Evidence,
@@ -24,6 +24,8 @@ export class ResearchState {
   seeds: Idea[] = [];
 
   baseline: Evidence | null = null;
+  /** Full-set baseline, persisted so a resumed run does not rerun it. */
+  baselineFull: Evidence | null = null;
   traces: Trace[] = [];
   round = 0;
   evaluatedIds = new Set<string>();
@@ -51,6 +53,36 @@ export class ResearchState {
   constructor(problem: Problem, config: Config) {
     this.problem = problem;
     this.config = config;
+  }
+
+  /** Restore the mutable state fields from a previous run's state.json. */
+  static fromDict(problem: Problem, config: Config, raw: unknown): ResearchState {
+    const item = asRecord(raw) ?? {};
+    const state = new ResearchState(problem, config);
+    state.limitations = asArray(item.limitations) as Limitation[];
+    state.seeds = asArray(item.seeds) as Idea[];
+    state.baseline = (item.baseline ?? null) as Evidence | null;
+    state.baselineFull = (item.baseline_full ?? null) as Evidence | null;
+    state.traces = asArray(item.traces) as Trace[];
+    state.round = Number(item.round ?? 0) || 0;
+    state.evaluatedIds = new Set(asArray(item.evaluated_ids).map(String));
+    state.bestIdea = (item.best_idea ?? null) as Idea | null;
+    state.bestEvidence = (item.best_evidence ?? null) as Evidence | null;
+    state.bestCode = (item.best_code ?? null) as ResearchState["bestCode"];
+    state.ablations = asArray(item.ablations) as AblationResult[];
+    state.ablationRound = Number(item.ablation_round ?? 0) || 0;
+    state.manuscript = (item.manuscript ?? null) as Manuscript | null;
+    state.review = (item.review ?? null) as Review | null;
+    state.metaReview = (item.meta_review ?? null) as MetaReview | null;
+    state.peerRound = Number(item.peer_round ?? 0) || 0;
+    state.reviewRefinements = Number(item.review_refinements ?? 0) || 0;
+    state.metaRound = Number(item.meta_round ?? 0) || 0;
+    state.rebuttals = asArray(item.rebuttals) as Evidence[];
+    state.decisionPath = asArray(item.decision_path).map(String);
+    state.aborted = item.aborted === true;
+    state.abortReason = String(item.abort_reason ?? "");
+    state.exportReason = String(item.export_reason ?? "");
+    return state;
   }
 
   goodTraces(): Trace[] {
@@ -98,6 +130,7 @@ export class ResearchState {
       limitations: this.limitations,
       seeds: this.seeds,
       baseline: this.baseline,
+      baseline_full: this.baselineFull,
       traces: this.traces,
       round: this.round,
       evaluated_ids: [...this.evaluatedIds].sort(),

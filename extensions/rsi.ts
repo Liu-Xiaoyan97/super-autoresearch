@@ -535,7 +535,7 @@ export default function rsiExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("rsi", {
-    description: "RSI superagent: run | status | tickets | ticket | events | policy | answer | note | retry | stop | inspect | replay | list | models | help",
+    description: "RSI superagent: run | status | resume | tickets | ticket | events | policy | answer | note | retry | stop | inspect | replay | list | models | help",
     async handler(rawArgs, ctx) {
       const args = parseCommandArgs(rawArgs ?? "");
       const sub = args.positional[0] ?? "help";
@@ -557,6 +557,7 @@ export default function rsiExtension(pi: ExtensionAPI): void {
             "/rsi run <problem.json> [--mock] [--inline] [--wait] [--seed 7] [--out runs] [--provider opencode-go] [--model ID]",
             "         [--runner simulated|subprocess] [--thinking low] [--max-refine-rounds N] [--max-llm-calls N] [--max-wall-time-s N]",
             "/rsi status [run_id]        protocol state of a run, or all runs",
+            "/rsi resume <run_id>        start a new attempt from an aborted/failed run",
             "/rsi tickets <run_id>       task tickets of a run",
             "/rsi ticket <run_id> <id>   one ticket with its reports",
             "/rsi events <run_id>        domain events",
@@ -589,6 +590,16 @@ export default function rsiExtension(pi: ExtensionAPI): void {
       if (sub === "status") {
         const runId = args.positional[1];
         await superagent("status", runId ? { run_id: runId } : {});
+        return;
+      }
+
+      if (sub === "resume") {
+        const runId = args.positional[1];
+        if (!runId) {
+          ctx.ui.notify("usage: /rsi resume <run_id>", "warning");
+          return;
+        }
+        await superagent("resume", { run_id: runId });
         return;
       }
 

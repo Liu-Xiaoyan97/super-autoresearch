@@ -19,7 +19,7 @@ project is generated with the separate `rsi-adapter` skill.
 | Tool | Purpose |
 |---|---|
 | `rsi_research` | Accept one request as a superagent run; returns a run and ticket id immediately (`wait: true` blocks) and the SOP runs as task tickets |
-| `rsi_superagent` | `status`, `tickets`, `ticket`, `events`, `policy`, `answer`, `note`, `retry`, `stop`, `attach` |
+| `rsi_superagent` | `status`, `resume`, `tickets`, `ticket`, `events`, `policy`, `answer`, `note`, `retry`, `stop`, `attach` |
 | `rsi_inspect` | Summarize a run: incumbent, decision path, review/meta, artifact paths, or protocol status while it runs |
 | `rsi_replay` | Rebuild the decision path from traces only (no model, no workspace) and compare |
 | `/rsi` | Human command: `run`, `status`, `tickets`, `ticket`, `events`, `policy`, `answer`, `note`, `retry`, `stop`, `wait`, `inspect`, `replay`, `list`, `models`, `help` |
@@ -131,8 +131,9 @@ rsi_superagent action=policy paused=true|false
   person's explicit request authorizes work.
 - Never claim acceptance as scientific validation. `final.json` records an
   internal gate, not peer review.
-- Never claim you resumed a run that ended in an earlier process. It is
-  read-only; a new run creates a new directory.
+- A run that ended stays immutable. `rsi_superagent action=resume run_id=…`
+  creates a new `-rN` attempt with `resumed_from` lineage; it never reopens the
+  old ticket.
 
 ## Minimal problem JSON
 
@@ -215,8 +216,9 @@ the user asks whether a run is reproducible.
   `provider`/`model` explicitly.
 - A run stalls in `limits.*`: the limitation stage is still refining; raise the
   call budget or inspect the provider response in `traces.jsonl`.
-- A run from an earlier process is read-only: the SOP has no mid-loop
-  checkpoint, so `rsi_superagent` refuses to resume it. Start a new run.
+- A run from an earlier process is read-only. To continue an aborted/failed
+  run, use `rsi_superagent action=resume run_id=…`; the original ticket stays
+  ended and the new attempt records `resumed_from`.
 - A run reports `sop.spend` or `sop.experiment` needs a person: it was started by
   a schedule or an automated trigger, or the request was not explicit. Set the
   policy or ask the person, do not bypass the rule.

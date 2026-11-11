@@ -18,8 +18,8 @@ test("the external dfm-ssm fixture keeps GPU and runner wiring explicit", () => 
   assert.equal(problem.metrics[0].name, "word_ppl");
   assert.equal(problem.metrics[0].direction, "min");
   assert.equal(problem.remote?.gpu_ids, "0");
-  assert.equal(problem.remote?.env.RSI_DFM_TRAIN_STEPS, "38000");
-  assert.equal(problem.remote?.env.RSI_DFM_TRAIN_DATA, "/home/sl/SlimPajama-10B");
+  assert.equal(problem.remote?.env.RSI_DFM_TRAIN_STEPS, "3815");
+  assert.equal(problem.remote?.env.RSI_DFM_TRAIN_DATA, "/home/sl/SlimPajama-10B/train");
   assert.equal(problem.remote?.env.RSI_DFM_TOKENIZER, "/home/sl/mamba/checkpoints");
   assert.match(problem.remote?.env.RSI_DFM_TRAIN_LAUNCHER ?? "", /accelerate launch/);
   assert.deepEqual(problem.experiment_command?.slice(0, 2), ["{python}", "bench/rsi_dfm_train_eval.py"]);

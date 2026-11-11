@@ -25,6 +25,7 @@ export interface SuperagentHost {
 
 export const SUPERAGENT_ACTIONS = [
   "status",
+  "resume",
   "tickets",
   "ticket",
   "events",
@@ -45,7 +46,7 @@ export const SUPERAGENT_PARAMS = {
       type: "string",
       enum: [...SUPERAGENT_ACTIONS],
       description:
-        "status = runs or one run; tickets = task tickets of a run; ticket = one ticket with its reports; " +
+        "status = runs or one run; resume = start a new attempt from an aborted/failed run; tickets = task tickets of a run; ticket = one ticket with its reports; " +
         "events = domain events; policy = read or set accept mode/pause; answer = answer an open question; " +
         "note = fact for a ticket (no authority); retry = retry a failed or blocked ticket; stop = a person's stop; " +
         "attach = subscribe a ticket to an already recorded trigger.",
@@ -105,6 +106,7 @@ export function formatStatus(status: RunStatus): string {
   return [
     `run ${status.run_id}: ${status.state}${status.mode ? ` · ${status.mode}` : ""}${status.runner ? `/${status.runner}` : ""}`,
     `root: ${status.root}`,
+    ...(status.resumed_from ? [`resumed from: ${status.resumed_from}`] : []),
     ...(status.run_ticket_id ? [`run ticket: ${status.run_ticket_id}`] : []),
     stages,
     ...ticketLines,
@@ -157,6 +159,14 @@ export async function superagentAction(host: SuperagentHost, params: Record<stri
         const status = runtime.status(runId);
         if (!status) return text(`no run ${runId}`, { run_id: runId }, true);
         return text(formatStatus(status), { status });
+      }
+      case "resume": {
+        const parent = needRun();
+        const session = runtime.resume(parent);
+        return text(
+          `resumed ${parent} as ${session.runId} (run ticket ${session.ticketId}, parent ${parent})`,
+          { run_id: session.runId, parent_run_id: parent, ticket_id: session.ticketId },
+        );
       }
       case "tickets": {
         const status = runtime.status(needRun());

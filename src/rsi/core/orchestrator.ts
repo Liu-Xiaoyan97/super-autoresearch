@@ -156,23 +156,32 @@ export class Orchestrator {
   readonly state: ResearchState;
   private specReports = new Map<string, IntegrityReport>();
 
-  constructor(ctx: AgentContext, agents?: AgentBundle) {
+  constructor(ctx: AgentContext, agents?: AgentBundle, state?: ResearchState) {
     this.ctx = ctx;
     this.agents = agents ?? buildAgents(ctx);
-    this.state = new ResearchState(ctx.problem, ctx.config);
+    this.state = state ?? new ResearchState(ctx.problem, ctx.config);
   }
 
-  async run(): Promise<FinalArtifacts> {
+  async run(opts: { resume?: boolean } = {}): Promise<FinalArtifacts> {
+    const resume = opts.resume === true;
+    if (resume) {
+      this.state.aborted = false;
+      this.state.abortReason = "";
+      this.state.exportReason = "";
+      this.ctx.scratch.baseline = this.state.baseline;
+      this.ctx.scratch.baseline_full = this.state.baselineFull;
+    }
     try {
       this.ctx.budget.check();
-      await this.limitations();
-      await this.seedIdeas();
+      const limitsDone = this.state.decisionPath.some((token) => token.startsWith("limits.ok"));
+      if (!resume || !limitsDone) await this.limitations();
+      if (!resume || !this.state.seeds.length) await this.seedIdeas();
       await this.baseline();
       await this.ideaSearch();
-      await this.select();
-      await this.ablations();
-      await this.draftAndReview();
-      await this.metaReview();
+      if (!resume || !this.state.bestIdea) await this.select();
+      if (!resume || !this.state.ablations.length) await this.ablations();
+      if (!resume || !this.state.manuscript || !this.state.review) await this.draftAndReview();
+      if (!resume || !this.state.metaReview) await this.metaReview();
     } catch (error) {
       if (error instanceof BudgetExceeded) {
         this.state.aborted = true;
@@ -264,19 +273,38 @@ export class Orchestrator {
   private async baseline(): Promise<void> {
     progress(this.ctx, "§3.2 reproducing the baseline");
     this.ctx.budget.check();
-    if (!this.state.baseline) {
+    const baselineOk =
+      !!this.state.baseline &&
+      evidenceOk(this.state.baseline) &&
+      Object.keys(this.state.baseline.metrics).length > 0;
+    if (!baselineOk) {
+      // A previous attempt may have recorded a failed baseline. Rerun it from
+      // the same base commit instead of trusting empty metrics.
+      this.state.baseline = null;
+      this.state.baselineFull = null;
       this.state.baseline = await this.agents.baselineCoder.reproduce({ scope: "subset" });
     }
-    if (!("baseline_full" in this.ctx.scratch)) {
+    const fullOk =
+      !!this.state.baselineFull &&
+      evidenceOk(this.state.baselineFull) &&
+      Object.keys(this.state.baselineFull.metrics).length > 0;
+    if (!fullOk) {
       const full = await this.agents.baselineCoder.reproduce({ scope: "full" });
+      this.state.baselineFull = full;
       this.ctx.scratch.baseline_full = full;
-      this.transition("stage.baseline", "baseline.full.ok", { metrics: full.metrics });
+      this.transition("stage.baseline", evidenceOk(full) ? "baseline.full.ok" : "baseline.full.bad", {
+        metrics: full.metrics,
+      });
+    } else {
+      this.ctx.scratch.baseline_full = this.state.baselineFull;
     }
-    this.ctx.scratch.baseline = this.state.baseline;
-    this.transition("stage.baseline", evidenceOk(this.state.baseline) ? "baseline.ok" : "baseline.bad", {
-      metrics: this.state.baseline.metrics,
+    const baseline = this.state.baseline;
+    if (!baseline) throw new ScientificAbort("baseline_failed");
+    this.ctx.scratch.baseline = baseline;
+    this.transition("stage.baseline", evidenceOk(baseline) ? "baseline.ok" : "baseline.bad", {
+      metrics: baseline.metrics,
     });
-    if (!evidenceOk(this.state.baseline) || !Object.keys(this.state.baseline.metrics).length) {
+    if (!evidenceOk(baseline) || !Object.keys(baseline.metrics).length) {
       throw new ScientificAbort("baseline_failed");
     }
   }

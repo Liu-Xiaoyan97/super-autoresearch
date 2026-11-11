@@ -6,6 +6,7 @@ import path from "node:path";
 import type { Config } from "./config.ts";
 import { defaultConfig, modelRoute } from "./config.ts";
 import { Orchestrator } from "./core/orchestrator.ts";
+import { ResearchState } from "./core/state.ts";
 import { asRecord, num, numRecord, str, strArray, stringRecord } from "./json.ts";
 import { LLMProvider } from "./providers/base.ts";
 import { MockLLMProvider, type MockScript, loadMockScript } from "./providers/mock.ts";
@@ -29,6 +30,8 @@ export interface RunOptions {
   runId?: string;
   seed?: number;
   runner?: "simulated" | "subprocess";
+  /** Resume a previous run id in the same out dir, preserving its state/traces. */
+  resumeFrom?: string;
   /** Offline deterministic provider. */
   mock?: boolean;
   mockScript?: MockScript | null;
@@ -218,6 +221,29 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
   const root = path.join(outDir, runId);
   fs.mkdirSync(root, { recursive: true });
 
+  let resumedState: ResearchState | undefined;
+  if (opts.resumeFrom) {
+    const previousId = assertRunId(opts.resumeFrom);
+    const previousRoot = path.join(outDir, previousId);
+    if (path.resolve(previousRoot) === path.resolve(root)) {
+      throw new Error("resumeFrom must refer to a different run directory");
+    }
+    const previousState = path.join(previousRoot, "state.json");
+    if (!fs.existsSync(previousState)) {
+      throw new Error(`state.json not found for resume source: ${previousRoot}`);
+    }
+    fs.copyFileSync(previousState, path.join(root, "state.json"));
+    const previousTraces = path.join(previousRoot, "traces.jsonl");
+    if (fs.existsSync(previousTraces)) {
+      fs.copyFileSync(previousTraces, path.join(root, "traces.jsonl"));
+    }
+    resumedState = ResearchState.fromDict(
+      problem,
+      config,
+      JSON.parse(fs.readFileSync(previousState, "utf8")),
+    );
+  }
+
   const store = new ArtifactStore(root);
   const traces = new TraceStore(path.join(root, "traces.jsonl"));
   const budget = new Budget({
@@ -248,8 +274,8 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
   };
 
   try {
-    const orchestrator = new Orchestrator(ctx);
-    const final = await orchestrator.run();
+    const orchestrator = new Orchestrator(ctx, undefined, resumedState);
+    const final = await orchestrator.run({ resume: Boolean(resumedState) });
     const state = orchestrator.stateDict();
     fs.writeFileSync(path.join(root, "state.json"), JSON.stringify(state, null, 2), "utf8");
     fs.writeFileSync(path.join(root, "final.json"), JSON.stringify(final, null, 2), "utf8");

@@ -31,10 +31,10 @@ incumbent 的条件，是相对于**复现基线**的严格更优测量。论文
 | 入口 | 作用 |
 |---|---|
 | `rsi_research` 工具 | 接受一次研究请求；立即返回 run id 与 ticket id，SOP 在后台 task ticket 中运行（`wait: true` 才阻塞） |
-| `rsi_superagent` 工具 | `status`、`tickets`、`ticket`、`events`、`policy`、`answer`、`note`、`retry`、`stop`、`attach` |
+| `rsi_superagent` 工具 | `status`、`resume`、`tickets`、`ticket`、`events`、`policy`、`answer`、`note`、`retry`、`stop`、`attach` |
 | `rsi_inspect` 工具 | 汇总一次 run；运行中则返回协议状态，不把完整 state 灌进上下文 |
 | `rsi_replay` 工具 | 只用 traces 重建决策路径；不调用模型、不访问 workspace |
-| `/rsi` 命令 | `run`、`status`、`tickets`、`ticket`、`events`、`policy`、`answer`、`note`、`retry`、`stop`、`wait`、`inspect`、`replay`、`list`、`models`、`help` |
+| `/rsi` 命令 | `run`、`status`、`resume`、`tickets`、`ticket`、`events`、`policy`、`answer`、`note`、`retry`、`stop`、`wait`、`inspect`、`replay`、`list`、`models`、`help` |
 | `rsi-research` skill | RSI 总入口：运行、检查、replay、排错，以及 superagent 接单/转述/回答/策略 |
 | `rsi-adapter` skill | 根据 `examples/*.json` 为目标项目生成 benchmark adapter |
 | `/rsi-research` prompt | 一次性“派工 → 等待报告 → inspect → replay →（可选）真实运行”工作流 |

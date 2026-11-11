@@ -262,3 +262,36 @@ test("a Pi worker without a structured report fails instead of silently returnin
   } as unknown as Ticket;
   await assert.rejects(() => worker.run(ticket, new AbortController().signal), /valid JSON/);
 });
+
+test("an aborted run resumes as a new attempt and keeps the original ticket", async () => {
+  const out = tempDir("rsi-superagent-resume-");
+  const runtime = new SuperagentRuntime({
+    cwd: repoRoot,
+    inMemory: true,
+    workerFactory: () => new InlineWorker(new MockLLMProvider(null, 7)),
+  });
+  const { session } = runtime.dispatch({
+    problem: fixture("abort_case"),
+    out,
+    mode: "mock",
+    agents: "inline",
+    seed: 7,
+    title: "abort run",
+    sessionId: "resume-test",
+  });
+  const first = await session.done;
+  assert.ok(first, "the first attempt must finish");
+  assert.equal(first!.final.aborted, true);
+  const parentId = session.runId;
+  const oldStatus = runtime.status(parentId);
+  assert.ok(oldStatus?.ended);
+
+  const resumed = runtime.resume(parentId);
+  assert.equal(resumed.runId, `${parentId}-r1`);
+  assert.equal(resumed.spec.options.resumed_from, parentId);
+  const second = await resumed.done;
+  assert.ok(second, "the resumed attempt must finish");
+  assert.equal(runtime.status(parentId)?.ended?.outcome, oldStatus!.ended!.outcome);
+  assert.equal(runtime.status(resumed.runId)?.resumed_from, parentId);
+  runtime.closeAll();
+});
