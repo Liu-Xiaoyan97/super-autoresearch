@@ -1,0 +1,249 @@
+#!/usr/bin/env python3
+"""RSI benchmark adapter for @@PROBLEM_ID@@.
+
+This adapter belongs to the target project, not to RSI core. It is invoked in
+one candidate worktree and must write one JSON metric report.
+
+Contract:
+  python run_experiment.py --repo REPO --scope subset|full|ablation|rebuttal --out OUT
+
+The scaffold's train/evaluate/parse_metrics functions are TODOs. Wire them to
+the target project's real entrypoints before running a real experiment.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shlex
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+PROBLEM_ID = @@PROBLEM_ID@@
+SLUG = @@SLUG@@
+ENV_PREFIX = @@ENV_PREFIX@@
+METRICS = @@METRICS@@
+SCOPES = @@SCOPES@@
+DEFAULT_REPO = @@DEFAULT_REPO@@
+EXPERIMENT_COMMAND = @@EXPERIMENT_COMMAND@@
+
+
+def env_str(name: str, default: str = "") -> str:
+    return os.environ.get(f"{ENV_PREFIX}_{name}", default)
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(f"{ENV_PREFIX}_{name}", default))
+    except (TypeError, ValueError):
+        return default
+
+
+def env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(f"{ENV_PREFIX}_{name}", default))
+    except (TypeError, ValueError):
+        return default
+
+
+def fail(out: Path, message: str) -> int:
+    """Always leave a machine-readable failure report."""
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(
+            {"metrics": {}, "status": "failed", "error": message},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    print(message, file=sys.stderr)
+    return 1
+
+
+def run(
+    argv: list[str],
+    cwd: Path,
+    env: dict[str, str],
+    timeout: float | None,
+) -> subprocess.CompletedProcess:
+    print("+", shlex.join(argv), flush=True)
+    return subprocess.run(
+        argv,
+        cwd=str(cwd),
+        env=env,
+        timeout=timeout,
+        capture_output=True,
+        text=True,
+    )
+
+
+def tail(text: str, limit: int = 4000) -> str:
+    return text[-limit:] if len(text) > limit else text
+
+
+def train(
+    repo: Path,
+    scope: str,
+    work: Path,
+    env: dict[str, str],
+    args: argparse.Namespace,
+) -> Path:
+    """TODO: run the target's training entrypoint and return a checkpoint.
+
+    Typical implementation:
+      command = env_str("TRAIN_CMD")
+      if not command:
+          raise RuntimeError("set RSI_<PROJECT>_TRAIN_CMD or pass --checkpoint")
+      argv = shlex.split(command) + ["--data", env_str("TRAIN_DATA"), ...]
+      completed = run(argv, repo, env, args.timeout or None)
+      if completed.returncode != 0:
+          raise RuntimeError("training failed:\\n" + tail(completed.stdout + completed.stderr))
+      return work / "checkpoint"
+
+    Do not fabricate a checkpoint, skip training silently, or return a path that
+    was never produced by this command.
+    """
+    raise NotImplementedError(
+        "wire the target project's training entrypoint in train(); "
+        "set the RSI_<PROJECT>_* env vars and derive the checkpoint path"
+    )
+
+
+def evaluate(
+    repo: Path,
+    checkpoint: Path,
+    scope: str,
+    work: Path,
+    env: dict[str, str],
+    args: argparse.Namespace,
+) -> Path:
+    """TODO: run the target's evaluation entrypoint and return its raw output.
+
+    The returned file must be the target's own metric artifact. Do not
+    re-implement the benchmark here. Keep the tokenizer, split, context length,
+    and task name identical across subset/full/ablation.
+    """
+    raise NotImplementedError(
+        "wire the target project's evaluation entrypoint in evaluate(); "
+        "return the raw JSON/log path used by parse_metrics()"
+    )
+
+
+def parse_metrics(raw: Path) -> dict[str, float]:
+    """TODO: map the target's raw output to the exact metric names below."""
+    data = json.loads(raw.read_text())
+    values: dict[str, float] = {}
+
+    # Example only: replace the key path with the target's real metric.
+    # value = data["results"]["<task>"]["<metric>"]
+    # values["<metric-name>"] = float(value)
+    #
+    # The adapter must report every name in METRICS and no substitutes.
+    _ = data
+    return values
+
+
+def validate_metrics(values: dict[str, float]) -> dict[str, float]:
+    expected = {metric["name"]: metric for metric in METRICS}
+    missing = sorted(set(expected) - set(values))
+    extra = sorted(set(values) - set(expected))
+    if missing:
+        raise ValueError(f"metric output is missing {missing}")
+    if extra:
+        raise ValueError(f"metric output has unexpected keys {extra}")
+    clean: dict[str, float] = {}
+    for name, raw_value in values.items():
+        value = float(raw_value)
+        if not (value == value and abs(value) != float("inf")):
+            raise ValueError(f"metric {name} is not finite: {raw_value!r}")
+        bounds = expected[name].get("bounds")
+        if bounds is not None and not (bounds[0] <= value <= bounds[1]):
+            raise ValueError(
+                f"metric {name}={value} is outside bounds {bounds}; "
+                "do not clamp it to pass a gate"
+            )
+        clean[name] = value
+    return clean
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repo", default=DEFAULT_REPO or None)
+    parser.add_argument("--scope", choices=SCOPES, default="subset")
+    parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--checkpoint",
+        default=env_str("CHECKPOINT") or None,
+        help="existing checkpoint; skips training",
+    )
+    parser.add_argument("--seed", type=int, default=env_int("SEED", 7))
+    parser.add_argument("--device", default=env_str("DEVICE", "cuda"))
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=env_float("TIMEOUT", 0),
+        help="per-subprocess timeout seconds; 0 = no adapter-level timeout",
+    )
+    args = parser.parse_args()
+
+    out = Path(args.out).expanduser().resolve()
+    started = time.time()
+    try:
+        repo = Path(args.repo or os.getcwd()).expanduser().resolve()
+        if not repo.is_dir():
+            raise FileNotFoundError(f"target repository not found: {repo}")
+        work = out.parent / f"rsi-{SLUG}-{args.scope}"
+        work.mkdir(parents=True, exist_ok=True)
+
+        env = dict(os.environ)
+        env.setdefault("TOKENIZERS_PARALLELISM", "false")
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = str(repo) + (
+            os.pathsep + existing_pythonpath if existing_pythonpath else ""
+        )
+        if env_str("OFFLINE", "0") == "1":
+            env.setdefault("HF_HUB_OFFLINE", "1")
+            env.setdefault("TRANSFORMERS_OFFLINE", "1")
+            env.setdefault("HF_DATASETS_OFFLINE", "1")
+
+        if args.checkpoint:
+            checkpoint = Path(args.checkpoint).expanduser().resolve()
+            if not checkpoint.exists():
+                raise FileNotFoundError(f"checkpoint not found: {checkpoint}")
+        else:
+            checkpoint = train(repo, args.scope, work, env, args)
+
+        raw_metrics = evaluate(repo, checkpoint, args.scope, work, env, args)
+        metrics = validate_metrics(parse_metrics(raw_metrics))
+
+        report = {
+            "metrics": metrics,
+            "status": "ok",
+            "details": {
+                "problem": PROBLEM_ID,
+                "scope": args.scope,
+                "seed": args.seed,
+                "repo": str(repo),
+                "checkpoint": str(checkpoint),
+                "raw_metrics": str(raw_metrics),
+                "wall_time_s": round(time.time() - started, 3),
+            },
+        }
+        out.parent.mkdir(parents=True, exist_ok=True)
+        tmp = out.with_suffix(out.suffix + ".tmp")
+        tmp.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        tmp.replace(out)
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return 0
+    except subprocess.TimeoutExpired as exc:
+        return fail(out, f"target command timed out after {exc.timeout}s")
+    except Exception as exc:  # noqa: BLE001 - failure is data
+        return fail(out, f"{type(exc).__name__}: {exc}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

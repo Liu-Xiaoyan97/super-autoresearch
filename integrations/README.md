@@ -13,7 +13,22 @@ Everything under `integrations/` is a **separate adapter layer**:
 - A `Problem` only describes the generic contract: `repo`, `repo_ref`, and
   `experiment_command` with `{scope}`, `{out}`, `{repo}`, `{commit}`.
 
-To integrate another project, add:
+To generate a new adapter from a Problem fixture, use the `rsi-adapter` skill:
+
+```bash
+python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
+  --problem examples/<project>.json \
+  --repo /path/to/target \
+  --name <project> \
+  --out integrations/<project>
+```
+
+It writes a contract-compliant skeleton, `README.md`, `setup.sh`, and
+`adapter.json`. Fill the `train` / `evaluate` / `parse_metrics` TODOs before a
+real run; the scaffold intentionally fails closed rather than fabricating a
+metric.
+
+To integrate another project manually, add:
 
 1. a git repository containing the project;
 2. a benchmark command that writes `{"metrics": {...}}` to `--out`;
