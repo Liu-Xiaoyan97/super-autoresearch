@@ -211,16 +211,16 @@ python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
 
 针对真实 Mamba + DFM 仓库的 fixture 在 `examples/dfm_ssm_external.json`。目标项目
 是独立 git 仓库，不放在本仓库的 `vendor/` 下；容器通过 `RSI_TARGET_REPO` 指向挂载
-路径，例如 `/repos/dfm-ssm`。准备：
+路径，例如 `/repos/mamba`。准备：
 
 ```bash
-# 宿主机独立仓库：/Users/liuxiaoyan/workspace/dfm-ssm
+# 宿主机独立仓库：/Users/liuxiaoyan/workspace/mamba
 # container/.env 中：
 #   RSI_EXTERNAL_ROOT=/Users/liuxiaoyan/workspace
-#   RSI_TARGET_REPO=/repos/dfm-ssm
+#   RSI_TARGET_REPO=/repos/mamba
 
 # 可选：把 adapter 安装到目标仓库的 rsi-bench 分支
-DFM_SSM_DIR=/Users/liuxiaoyan/workspace/dfm-ssm ./scripts/setup-dfm-ssm.sh
+TARGET_REPO=/Users/liuxiaoyan/workspace/mamba ./integrations/dfm_ssm/setup.sh
 ```
 
 脚本在目标仓库内创建/更新 `rsi-bench` 分支，放入
@@ -248,7 +248,7 @@ workspace 在目标仓库的 **git worktree** 上执行 `git apply`，并把候�
 - 容器：`pi-agent-rsi`，Pi 自动加载 `/workspace/RSI` 与 `npm:pi-web-search`
 - 远程：SSH 别名 `8818`，用户 `sl`，GPU 0（A800 80GB）
 - 容器 SSH：`/root/.ssh/config`，通过 `socat` + `host.docker.internal:7890` 出网
-- 目标仓库：宿主机 `/Users/liuxiaoyan/workspace/dfm-ssm`，容器内 `/repos/dfm-ssm` 的 `rsi-bench` 分支
+- 目标仓库：宿主机 `/Users/liuxiaoyan/workspace/mamba`，容器内 `/repos/mamba` 的 `rsi-bench` 分支
 - benchmark：`bench/rsi_dfm_train_eval.py` + `bench/dfm_lm_eval.py`
 - 指标：lm-eval `wikitext` 的 `word_perplexity`（`word_ppl`，越低越好）
 - 服务器资产：`/home/sl/mamba/checkpoints`、`/home/sl/SlimPajama-10B`、wikitext 缓存（见 fixture `remote.env`）
@@ -414,8 +414,8 @@ CLI 不经过 superagent 的 `person` 门，适合先验证远程链路。
 待优化项目不需要放在本仓库的 `vendor/` 下。推荐做法：
 
 ```text
-宿主机：/Users/liuxiaoyan/workspace/dfm-ssm     （独立 git 仓库）
-容器：  /repos/dfm-ssm                           （compose 挂载）
+宿主机：/Users/liuxiaoyan/workspace/mamba     （独立 git 仓库）
+容器：  /repos/mamba                           （compose 挂载）
 服务器：/home/sl/projects/dfm-ssm-<run_id>       （rsync 目标）
 ```
 
@@ -424,13 +424,13 @@ CLI 不经过 superagent 的 `person` 门，适合先验证远程链路。
 ```dotenv
 # container/.env（gitignored）
 RSI_EXTERNAL_ROOT=/Users/liuxiaoyan/workspace
-RSI_TARGET_REPO=/repos/dfm-ssm
+RSI_TARGET_REPO=/repos/mamba
 ```
 
 compose 把宿主 `RSI_EXTERNAL_ROOT` 挂到容器 `/repos`。fixture 使用：
 
 ```jsonc
-"repo": "${RSI_TARGET_REPO}",       // 容器内 /repos/dfm-ssm
+"repo": "${RSI_TARGET_REPO}",       // 容器内 /repos/mamba
 "remote": {
   "worktree": "/home/sl/projects/dfm-ssm-{run_id}",
   "out": "/home/sl/projects/dfm-ssm-{run_id}/out"
@@ -451,7 +451,7 @@ compose 把宿主 `RSI_EXTERNAL_ROOT` 挂到容器 `/repos`。fixture 使用：
 示例 fixture：`examples/dfm_ssm_external.json`。准备外部仓库：
 
 ```bash
-DFM_SSM_DIR=/Users/liuxiaoyan/workspace/dfm-ssm ./scripts/setup-dfm-ssm.sh
+TARGET_REPO=/Users/liuxiaoyan/workspace/mamba ./integrations/dfm_ssm/setup.sh
 ```
 
 注意：**当前正在运行的容器**是在这套 compose 配置之前创建的，没有 `/repos`
@@ -639,8 +639,7 @@ tests/                     node:test 套件（离线、无网络）
 tests/fixtures/            合成 fixture（不进入 examples/）
 container/                 Dockerfile、compose、Kiri 辅助脚本、pi-home 配置
 examples/                  真实外部项目 fixture + mock script
-integrations/dfm_ssm/      dfm-ssm 的 train + lm-eval 适配器（可选，不属于核心）
-scripts/                   仓库准备脚本
+integrations/dfm_ssm/      mamba/DFM 的 train + lm-eval 适配器（可选，不属于核心）
 docs/                      SPEC、ARCHITECTURE、PROVIDER、CONTAINER、论文分析
 ```
 

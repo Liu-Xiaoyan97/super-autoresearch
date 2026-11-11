@@ -67,13 +67,13 @@ worktree 的快照，然后执行 benchmark。服务器不需要联网，也不�
 
 ```dotenv
 RSI_EXTERNAL_ROOT=/Users/liuxiaoyan/workspace
-RSI_TARGET_REPO=/repos/dfm-ssm
+RSI_TARGET_REPO=/repos/mamba
 ```
 
 compose 把宿主机 `RSI_EXTERNAL_ROOT` 挂载到容器 `/repos`。fixture：
 
 ```jsonc
-"repo": "/repos/dfm-ssm",
+"repo": "/repos/mamba",
 "remote": {
   "worktree": "/home/sl/projects/dfm-ssm-{run_id}",
   "out": "/home/sl/projects/dfm-ssm-{run_id}/out"
@@ -149,7 +149,7 @@ RSI 只做 `rsync` + `ssh`，不会在服务器上 `pip install` 或 `git clone`
    - `bench/rsi_dfm_train_eval.py`
    - `bench/dfm_lm_eval.py`
 
-   由 `./scripts/setup-dfm-ssm.sh` 自动完成。
+   由 `./integrations/dfm_ssm/setup.sh` 自动完成。
 
 2. 配置 `examples/dfm_ssm_external.json` 的 `remote.host`、`remote.python`、
    `gpu_ids`、`env` 中的本地模型/数据路径。

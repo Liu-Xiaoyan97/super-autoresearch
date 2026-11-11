@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """lm-eval wrapper for DFM-Mamba checkpoints (wikitext word perplexity).
 
-Copied by scripts/setup-dfm-ssm.sh into the target repository's `rsi-bench` ref
-as `bench/dfm_lm_eval.py`. It is not part of the RSI extension.
+Installed by integrations/dfm_ssm/setup.sh into the target repository's
+`rsi-bench` ref as `bench/dfm_lm_eval.py`. It is not part of the RSI extension.
 
 Usage (normally invoked by bench/rsi_dfm_train_eval.py):
 

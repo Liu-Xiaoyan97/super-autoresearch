@@ -145,7 +145,7 @@ Set the host workspace and container mount in `container/.env`:
 
 ```dotenv
 RSI_EXTERNAL_ROOT=/Users/liuxiaoyan/workspace
-RSI_TARGET_REPO=/repos/dfm-ssm
+RSI_TARGET_REPO=/repos/mamba
 ```
 
 compose mounts `RSI_EXTERNAL_ROOT` at `/repos`. A fixture can then use
@@ -189,8 +189,8 @@ Prepare the real optimization target on the host (the container sees it through
 the bind mount):
 
 ```bash
-./scripts/setup-dfm-ssm.sh
-python3 integrations/dfm_ssm/run_experiment.py --repo vendor/dfm-ssm \
+./integrations/dfm_ssm/setup.sh
+python3 integrations/dfm_ssm/run_experiment.py --repo /repos/mamba \
   --scope subset --out /tmp/dfm-report.json
 ```
 
@@ -205,8 +205,8 @@ branches in the target repository; the worktree path is only a checkout. To
 inspect a candidate, use the `commit` recorded in `state.json` / `final.json`:
 
 ```bash
-git -C vendor/dfm-ssm show <commit>:path/to/file
-git -C vendor/dfm-ssm log --oneline --all --grep '^rsi:'
+git -C /repos/mamba show <commit>:path/to/file
+git -C /repos/mamba log --oneline --all --grep '^rsi:'
 ```
 
 Removing `runs/` does not delete candidate commits. Clean stale worktree entries

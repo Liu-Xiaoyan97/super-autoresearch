@@ -1,0 +1,33 @@
+{
+  "problem": "dfm-ssm-external-wikitext-ppl",
+  "source_fixture": "/workspace/RSI/examples/dfm_ssm_external.json",
+  "slug": "dfm",
+  "env_prefix": "RSI_DFM",
+  "target_repo": "/repos/mamba",
+  "adapter_path": "bench/rsi_dfm_train_eval.py",
+  "metrics": [
+    {
+      "name": "word_ppl",
+      "direction": "min",
+      "tolerance": 1.0,
+      "weight": 1.0,
+      "bounds": null
+    }
+  ],
+  "scopes": [
+    "subset",
+    "full",
+    "ablation",
+    "rebuttal"
+  ],
+  "experiment_command": [
+    "{python}",
+    "bench/rsi_dfm_train_eval.py",
+    "--repo",
+    "{repo}",
+    "--scope",
+    "{scope}",
+    "--out",
+    "{out}"
+  ]
+}

@@ -7,7 +7,7 @@ RSI 的所有研究问题配置都在 **Problem JSON fixture** 里。扩展本�
 |---|---|---|
 | 指标 | `metrics` | `{"name":"mse","direction":"min","tolerance":0.01}` |
 | 研究方向 | `domain`、`subfield`、`directions`、`forbidden`、`constraints` | 见下方完整示例 |
-| 研究代码路径 | `repo`、`repo_ref`、`experiment_command` | `/repos/dfm-ssm`、`rsi-bench`、`bench/rsi_dfm_train_eval.py` |
+| 研究代码路径 | `repo`、`repo_ref`、`experiment_command` | `/repos/mamba`、`rsi-bench`、`bench/rsi_dfm_train_eval.py` |
 | 远程 GPU / 路径映射 | `remote` | `host`、`worktree`、`out`、`python`、`setup`、`gpu_ids` |
 
 最完整的真实示例：`examples/dfm_ssm_external.json`。合成示例：
@@ -24,7 +24,7 @@ RSI 的所有研究问题配置都在 **Problem JSON fixture** 里。扩展本�
   "source_paper": "Mamba-3 (arXiv:2603.15569) with the DFM-Mamba path",
 
   // ── 研究代码路径（外部 git 仓库）────────────────────────────
-  "repo": "/repos/dfm-ssm",        // 外部 git 仓库（compose 挂载）
+  "repo": "/repos/mamba",        // 外部 git 仓库（compose 挂载）
   "repo_ref": "rsi-bench",         // 基线分支 / tag / commit；默认 HEAD
   "experiment_command": [          // 只放调用与占位符；参数放 remote.env
     "{python}", "bench/rsi_dfm_train_eval.py",
@@ -157,8 +157,8 @@ node src/rsi/cli.ts run examples/my_problem.json --mock --strict-directions
 ## 研究代码路径与 benchmark 契约
 
 - `repo`：必须是**外部 git 仓库**的路径（绝对路径，或相对当前 cwd）。
-  推荐把宿主工作区挂到容器 `/repos`，然后写 `/repos/dfm-ssm`；也可以继续用
-  `/workspace/RSI/vendor/dfm-ssm`。git 提交/分支发生在该仓库，不在 RSI 仓库。
+  推荐把宿主工作区挂到容器 `/repos`，然后写 `/repos/mamba`；也可以继续用
+  `/repos/mamba`。git 提交/分支发生在该仓库，不在 RSI 仓库。
 - `repo_ref`：基线 ref；默认 `HEAD`。dfm 使用 `rsi-bench`，因为 benchmark
   脚本在目标仓库的那个分支上。
 - `remote.worktree` / `remote.out`：本地项目路径到服务器路径的映射模板，支持
@@ -185,10 +185,10 @@ node src/rsi/cli.ts run examples/my_problem.json --mock --strict-directions
 dfm-ssm 的准备：
 
 ```bash
-./scripts/setup-dfm-ssm.sh
+./integrations/dfm_ssm/setup.sh
 ```
 
-它克隆 `vendor/dfm-ssm`，并在目标仓库创建 `rsi-bench` 分支，放入
+它把 `integrations/dfm_ssm/run_experiment.py` 和 `dfm_lm_eval.py` 装到目标仓库的 `rsi-bench` 分支，放入
 `bench/rsi_dfm_train_eval.py` 和 `bench/dfm_lm_eval.py`。
 
 ## 远程 GPU 服务器
@@ -236,5 +236,5 @@ runs/<run_id>/
 | 方向过滤/排序 | `src/rsi/agents/ideas.ts` |
 | critic 门 | `src/rsi/agents/critics.ts` |
 | benchmark 执行/占位符 | `src/rsi/runtime/workspace.ts` |
-| 具体项目的 benchmark | 目标仓库（例如 `vendor/dfm-ssm/bench/rsi_dfm_train_eval.py`） |
+| 具体项目的 benchmark | 目标仓库（例如 `/repos/mamba/bench/rsi_dfm_train_eval.py`） |
 | 远程 GPU / rsync / SSH | `Problem.remote` + `src/rsi/runtime/workspace.ts`；见 `docs/REMOTE.md` |

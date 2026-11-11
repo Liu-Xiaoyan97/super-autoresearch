@@ -144,5 +144,5 @@
     "changing the tokenizer or evaluation split"
   ],
   "venue": "ICLR",
-  "audience_note": "External-repository variant: the target project lives outside this repository and is mounted at /repos/dfm-ssm in the container. Candidate code is committed in that git repository; only its worktree is rsynced to the GPU server."
+  "audience_note": "External-repository variant: the target project lives outside this repository and is mounted at /repos/mamba in the container. Candidate code is committed in that git repository; only its worktree is rsynced to the GPU server."
 }

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Train a DFM-Mamba checkpoint and evaluate wikitext word perplexity.
 
-This adapter belongs to the target project, not to RSI core. It is copied by
-scripts/setup-dfm-ssm.sh into the target repository's `rsi-bench` ref as
-`bench/rsi_dfm_train_eval.py`.
+This adapter belongs to the target project, not to RSI core. The scaffold was
+generated from examples/dfm_ssm_external.json by the rsi-adapter skill and
+filled with the mamba/DFM target entrypoints. setup.sh installs it into the
+target repository's `rsi-bench` ref as `bench/rsi_dfm_train_eval.py`.
 
 Protocol:
   1. optional training via scripts/finetune_dfm.py
@@ -124,7 +125,7 @@ def parse_word_ppl(path: Path) -> tuple[float | None, dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", help="dfm-ssm checkout (default: snapshot root or vendor/dfm-ssm)")
+    parser.add_argument("--repo", help="mamba/DFM checkout (default: current directory or snapshot root)")
     parser.add_argument("--scope", choices=sorted(SCOPE_TRAIN_STEPS), default="subset")
     parser.add_argument("--out", required=True)
     parser.add_argument("--device", default=os.environ.get("RSI_DFM_DEVICE", "cuda"),
@@ -165,7 +166,7 @@ def main() -> int:
     out = Path(args.out).expanduser().resolve()
     repo = find_repo(args.repo)
     if not (repo / "mamba_ssm").is_dir():
-        return fail(out, f"dfm-ssm checkout not found at {repo}; run scripts/setup-dfm-ssm.sh")
+        return fail(out, f"dfm-ssm checkout not found at {repo}; run integrations/dfm_ssm/setup.sh")
 
     env = dict(os.environ)
     env.setdefault("TOKENIZERS_PARALLELISM", "false")

@@ -63,7 +63,7 @@ no_proxy = os.environ.get(
 remote_host = os.environ.get("RSI_REMOTE_HOST", "").strip()
 superagent_policy = os.environ.get("RSI_SUPERAGENT_POLICY", "yolo").strip() or "yolo"
 external_root = os.environ.get("RSI_EXTERNAL_ROOT", "").strip()
-target_repo = os.environ.get("RSI_TARGET_REPO", "/repos/dfm-ssm").strip() or "/repos/dfm-ssm"
+target_repo = os.environ.get("RSI_TARGET_REPO", "/repos/mamba").strip() or "/repos/mamba"
 
 with open(out_path, "w", encoding="utf-8") as handle:
     handle.write(
