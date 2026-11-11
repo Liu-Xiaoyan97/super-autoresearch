@@ -60,6 +60,7 @@ https_proxy = container_proxy(
 no_proxy = os.environ.get(
     "CONTAINER_NO_PROXY", "localhost,127.0.0.1,.local,host.kiri.internal"
 )
+remote_host = os.environ.get("RSI_REMOTE_HOST", "").strip()
 
 with open(out_path, "w", encoding="utf-8") as handle:
     handle.write(
@@ -70,6 +71,7 @@ with open(out_path, "w", encoding="utf-8") as handle:
         f"CONTAINER_HTTP_PROXY={http_proxy}\n"
         f"CONTAINER_HTTPS_PROXY={https_proxy}\n"
         f"CONTAINER_NO_PROXY={no_proxy}\n"
+        f"RSI_REMOTE_HOST={remote_host}\n"
     )
 os.chmod(out_path, stat.S_IRUSR | stat.S_IWUSR)
 print(f"wrote {out_path} (mode 600)")

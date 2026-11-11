@@ -42,7 +42,7 @@ worktree 的快照，然后执行 benchmark。服务器不需要联网，也不�
 
 | 字段 | 作用 |
 |---|---|
-| `host` | SSH 目标；留空时读 `RSI_REMOTE_HOST` |
+| `host` | SSH 目标；留空时读容器环境 `RSI_REMOTE_HOST` |
 | `dir` | 远程基础目录；每次 run 使用 `<dir>/rsi/<run_id>/` |
 | `python` | 远程 Python；`experiment_command` 中用 `{python}` |
 | `ssh_args` | 额外 SSH 参数（端口、跳板机、BatchMode） |
@@ -54,6 +54,19 @@ worktree 的快照，然后执行 benchmark。服务器不需要联网，也不�
 
 默认还会排除：`.git`、`runs`、`patches`、`__pycache__`、`.pytest_cache`、
 `node_modules`、`.venv*`、`*.pyc`。
+
+## 容器内设置 SSH 目标
+
+如果不想把内网主机名写进公开 fixture，用环境变量：
+
+```bash
+export RSI_REMOTE_HOST=user@gpu-node
+./container/up.sh creds
+./container/up.sh down && ./container/up.sh run
+```
+
+`creds` 会把 `RSI_REMOTE_HOST` 写进 `container/.env`，compose 再传入容器。
+fixture 里保持 `"host": ""` 即可。
 
 ## GPU 选择
 
