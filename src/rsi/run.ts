@@ -251,7 +251,13 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
     maxExperiments: config.maxExperiments,
     maxWallTimeS: config.maxWallTimeS,
   });
-  const workspace = new GitWorkspace(problem, config, root);
+  const workspace = new GitWorkspace(
+    problem,
+    config,
+    root,
+    undefined,
+    resumedState?.baseline?.code?.repo,
+  );
   const provider =
     opts.provider ??
     (opts.mock

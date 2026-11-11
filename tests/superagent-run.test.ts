@@ -283,6 +283,7 @@ test("an aborted run resumes as a new attempt and keeps the original ticket", as
   assert.ok(first, "the first attempt must finish");
   assert.equal(first!.final.aborted, true);
   const parentId = session.runId;
+  await until(() => runtime.status(parentId)?.ended !== undefined);
   const oldStatus = runtime.status(parentId);
   assert.ok(oldStatus?.ended);
 

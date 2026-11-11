@@ -662,6 +662,7 @@ export class GitWorkspace implements Workspace {
   readonly root: string;
   readonly store: ArtifactStore;
   readonly runner: Runner;
+  private readonly sourceOverride: string | undefined;
 
   private source = "";
   private baseCommit = "";
@@ -670,10 +671,11 @@ export class GitWorkspace implements Workspace {
   private branchPrefix = "";
   private initialized = false;
 
-  constructor(problem: Problem, config: Config, root: string, runner?: Runner) {
+  constructor(problem: Problem, config: Config, root: string, runner?: Runner, sourceOverride?: string) {
     this.problem = problem;
     this.config = config;
     this.root = root;
+    this.sourceOverride = sourceOverride;
     this.store = new ArtifactStore(root);
     this.runner =
       runner ??
@@ -708,6 +710,11 @@ export class GitWorkspace implements Workspace {
       this.source = top.stdout.trim();
       const ref = this.problem.repo_ref || "HEAD";
       this.baseCommit = git(this.source, ["rev-parse", ref]).stdout.trim();
+    } else if (this.sourceOverride && fs.existsSync(path.join(this.sourceOverride, ".git"))) {
+      // A resumed synthetic run reuses the previous repository so the commits
+      // recorded in state.json are still reachable.
+      this.source = this.sourceOverride;
+      this.baseCommit = git(this.source, ["rev-parse", this.problem.repo_ref || "HEAD"]).stdout.trim();
     } else {
       this.source = path.join(this.root, "synthetic");
       if (!fs.existsSync(path.join(this.source, ".git"))) {
