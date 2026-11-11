@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import rsiExtension from "../extensions/rsi.ts";
-import { repoRoot, tempDir } from "./helpers.ts";
+import { fixture, repoRoot, tempDir } from "./helpers.ts";
 
 function fakeApi(messages: Array<{ message: any; options: any }> = []) {
   const tools = new Map<string, any>();
@@ -56,7 +56,7 @@ test("rsi_research and rsi_inspect work through the extension tool surface", asy
   const ctx = fakeContext(out);
   const research = await tools.get("rsi_research").execute(
     "call-1",
-    { problem: "examples/ood_frozen_encoder.json", mode: "mock", out, seed: 7, wait: true },
+    { problem: fixture("ood_frozen_encoder"), mode: "mock", out, seed: 7, wait: true },
     undefined,
     undefined,
     ctx,
@@ -115,7 +115,7 @@ test("a dispatched run reports to the foreground session without blocking", asyn
   const ctx = fakeContext(out);
   const dispatched = await tools.get("rsi_research").execute(
     "call-dispatch",
-    { problem: "examples/ood_frozen_encoder.json", mode: "mock", out, seed: 11 },
+    { problem: fixture("ood_frozen_encoder"), mode: "mock", out, seed: 11 },
     undefined,
     undefined,
     ctx,

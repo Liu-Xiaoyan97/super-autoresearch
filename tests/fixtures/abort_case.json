@@ -1,0 +1,35 @@
+{
+  "id": "abort-case",
+  "statement": "Search for an OOD detector whose improvement exceeds a deliberately impossible relative noise tolerance. Abort when no idea is empirically Good.",
+  "domain": "OOD detection",
+  "datasets": [
+    "cifar10",
+    "cifar100",
+    "imagenet-r"
+  ],
+  "subset_datasets": [
+    "cifar10"
+  ],
+  "metrics": [
+    {
+      "name": "auroc",
+      "direction": "max",
+      "tolerance": 5.0,
+      "bounds": [
+        0.0,
+        1.0
+      ]
+    }
+  ],
+  "reported_metrics": {
+    "auroc": 0.8721
+  },
+  "constraints": [
+    "Keep the encoder frozen"
+  ],
+  "directions": [],
+  "forbidden": [
+    "retraining the encoder"
+  ],
+  "audience_note": "The tolerance exceeds every possible simulated gain; no idea should pass."
+}

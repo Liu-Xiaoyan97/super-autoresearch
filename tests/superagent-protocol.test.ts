@@ -47,7 +47,7 @@ class FakeExecutor implements Executor {
 }
 
 const SPEC: RunSpec = {
-  problem: "examples/ood_frozen_encoder.json",
+  problem: "tests/fixtures/ood_frozen_encoder.json",
   out: "/tmp/rsi-superagent-test",
   root: "/tmp/rsi-superagent-test/run-1",
   seed: 7,

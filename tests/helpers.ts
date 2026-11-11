@@ -13,8 +13,13 @@ import { loadProblem, runResearch, type RunOptions } from "../src/rsi/run.ts";
 export const repoRoot = path.resolve(import.meta.dirname, "..");
 
 export function fixture(name: string): string {
-  const file = path.join(repoRoot, "examples", name.endsWith(".json") ? name : `${name}.json`);
-  if (!fs.existsSync(file)) throw new Error(`missing fixture ${file}`);
+  const base = name.endsWith(".json") ? name.slice(0, -5) : name;
+  const candidates = [
+    path.join(repoRoot, "tests", "fixtures", `${base}.json`),
+    path.join(repoRoot, "examples", `${base}.json`),
+  ];
+  const file = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!file) throw new Error(`missing fixture ${name}`);
   return file;
 }
 

@@ -19,7 +19,7 @@ import { superagentAction } from "../src/rsi/superagent/tools.ts";
 import { fixture, repoRoot, tempDir } from "./helpers.ts";
 
 const SPEC: RunSpec = {
-  problem: "examples/ood_frozen_encoder.json",
+  problem: fixture("ood_frozen_encoder"),
   out: "/tmp/rsi-superagent-provider",
   root: "/tmp/rsi-superagent-provider/run-1",
   seed: 7,

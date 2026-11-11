@@ -1,0 +1,52 @@
+{
+  "id": "ood-frozen-encoder",
+  "statement": "Improve out-of-distribution detection for a frozen encoder using a reproducible geometric alignment method. Evaluate the subset before the full three-dataset benchmark.",
+  "domain": "OOD detection",
+  "subfield": "frozen-encoder geometric alignment",
+  "source_paper": "X-Mahalanobis (Wei et al., 2025)",
+  "datasets": [
+    "cifar10",
+    "cifar100",
+    "imagenet-r"
+  ],
+  "subset_datasets": [
+    "cifar10"
+  ],
+  "metrics": [
+    {
+      "name": "auroc",
+      "direction": "max",
+      "tolerance": 0.002,
+      "bounds": [
+        0.0,
+        1.0
+      ]
+    }
+  ],
+  "reported_metrics": {
+    "auroc": 0.87
+  },
+  "constraints": [
+    "Keep the encoder frozen",
+    "Use no extra training data"
+  ],
+  "directions": [
+    {
+      "id": "geometric-alignment",
+      "title": "geometric alignment",
+      "description": "Align class-conditional feature geometry without retraining the encoder.",
+      "keywords": [
+        "Procrustes",
+        "covariance",
+        "alignment"
+      ],
+      "weight": 1.0,
+      "must_include": false
+    }
+  ],
+  "forbidden": [
+    "retraining the encoder"
+  ],
+  "venue": "ICLR",
+  "audience_note": "Synthetic offline fixture for mechanism testing. The task framing (OOD detection against a frozen encoder) is borrowed from the paper's Procrustes-DS case study, but the numbers are placeholders and this is NOT a reproduction of that run."
+}
