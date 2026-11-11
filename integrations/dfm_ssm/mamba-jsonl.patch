@@ -1,0 +1,159 @@
+diff --git a/mamba_ssm/utils/dfm_data.py b/mamba_ssm/utils/dfm_data.py
+index 278ce98..60fc016 100644
+--- a/mamba_ssm/utils/dfm_data.py
++++ b/mamba_ssm/utils/dfm_data.py
+@@ -1,6 +1,7 @@
+ """JSONL/SFT data and deterministic training loaders for token-space DFM."""
+ 
+ import json
++from pathlib import Path
+ 
+ import torch
+ from torch.utils.data import DataLoader, Dataset
+@@ -8,36 +9,63 @@ from torch.utils.data import DataLoader, Dataset
+ from mamba_ssm.utils.pile_data import PileParquetDataset
+ 
+ 
++def _jsonl_files(path):
++    """Accept one JSONL file or a directory of ``*.jsonl`` shards."""
++    resolved = Path(path).expanduser()
++    if resolved.is_dir():
++        files = sorted(resolved.rglob("*.jsonl"))
++        if not files:
++            raise ValueError(f"No .jsonl files found under {resolved}")
++        return files
++    if resolved.suffix.lower() != ".jsonl":
++        raise ValueError(f"JSONL data must be a .jsonl file or a directory of .jsonl files: {resolved}")
++    return [resolved]
++
++
++def resolve_data_format(path, data_format):
++    """Resolve auto by path shape: JSONL dir/file vs Pile parquet dir/file."""
++    if data_format not in ("auto", "jsonl", "pile-parquet"):
++        raise ValueError("data_format must be auto, jsonl or pile-parquet")
++    if data_format != "auto":
++        return data_format
++    resolved = Path(path).expanduser()
++    if resolved.is_dir():
++        return "jsonl" if any(resolved.rglob("*.jsonl")) else "pile-parquet"
++    return "pile-parquet" if resolved.suffix.lower() == ".parquet" else "jsonl"
++
++
+ class DFMTextDataset(Dataset):
+     """Read {text} or {prompt,response}; append EOS and preserve target boundaries.
+ 
+-    This in-memory loader is for small JSONL datasets. Pile uses the separate
+-    bounded-memory Parquet stream. Right padding is excluded from loss/context.
++    This in-memory loader is for small JSONL datasets, including a directory of
++    JSONL shards. Pile uses the separate bounded-memory Parquet stream. Right
++    padding is excluded from loss/context.
+     """
+ 
+     def __init__(self, path, tokenizer, max_length=512):
+         if max_length < 2 or tokenizer.eos_token_id is None:
+             raise ValueError("Need max_length >= 2 and a tokenizer with an EOS token")
+         self.examples = []
+-        with open(path, encoding="utf-8") as handle:
+-            for line_number, line in enumerate(handle, 1):
+-                if not line.strip():
+-                    continue
+-                row = json.loads(line)
+-                if "text" in row and "prompt" not in row and "response" not in row:
+-                    prompt, target = [], tokenizer.encode(row["text"], add_special_tokens=False)
+-                elif "prompt" in row and "response" in row and "text" not in row:
+-                    prompt = tokenizer.encode(row["prompt"], add_special_tokens=False)
+-                    target = tokenizer.encode(row["response"], add_special_tokens=False)
+-                else:
+-                    raise ValueError(f"Line {line_number}: expected text OR prompt/response")
+-                if len(prompt) >= max_length - 1:
+-                    raise ValueError(f"Line {line_number}: prompt leaves no room for a response; increase max_length")
+-                target = target[:max_length - len(prompt) - 1] + [tokenizer.eos_token_id]
+-                tokens = prompt + target
+-                if tokenizer.mask_token_id is not None and tokenizer.mask_token_id in tokens:
+-                    raise ValueError(f"Line {line_number}: clean text contains the reserved mask token")
+-                self.examples.append((tokens, len(prompt)))
++        for file in _jsonl_files(path):
++            with open(file, encoding="utf-8") as handle:
++                for line_number, line in enumerate(handle, 1):
++                    if not line.strip():
++                        continue
++                    row = json.loads(line)
++                    if "text" in row and "prompt" not in row and "response" not in row:
++                        prompt, target = [], tokenizer.encode(row["text"], add_special_tokens=False)
++                    elif "prompt" in row and "response" in row and "text" not in row:
++                        prompt = tokenizer.encode(row["prompt"], add_special_tokens=False)
++                        target = tokenizer.encode(row["response"], add_special_tokens=False)
++                    else:
++                        raise ValueError(f"{file}:{line_number}: expected text OR prompt/response")
++                    if len(prompt) >= max_length - 1:
++                        raise ValueError(f"{file}:{line_number}: prompt leaves no room for a response; increase max_length")
++                    target = target[:max_length - len(prompt) - 1] + [tokenizer.eos_token_id]
++                    tokens = prompt + target
++                    if tokenizer.mask_token_id is not None and tokenizer.mask_token_id in tokens:
++                        raise ValueError(f"{file}:{line_number}: clean text contains the reserved mask token")
++                    self.examples.append((tokens, len(prompt)))
+         if not self.examples:
+             raise ValueError("Training dataset is empty")
+         self.pad_token_id = tokenizer.eos_token_id
+@@ -63,7 +91,8 @@ def create_training_loader(args, tokenizer):
+     if args.num_workers < 0:
+         raise ValueError("num_workers must be nonnegative")
+     generator = torch.Generator().manual_seed(args.seed)
+-    if args.data_format == "pile-parquet":
++    data_format = resolve_data_format(args.data, args.data_format)
++    if data_format == "pile-parquet":
+         dataset = PileParquetDataset(
+             args.data, tokenizer, args.max_length, split=args.data_split, seed=args.seed,
+             shuffle_buffer=args.shuffle_buffer, parquet_batch_size=args.parquet_batch_size,
+diff --git a/scripts/finetune_dfm.py b/scripts/finetune_dfm.py
+index 20ec1c3..4c5cf53 100644
+--- a/scripts/finetune_dfm.py
++++ b/scripts/finetune_dfm.py
+@@ -33,7 +33,8 @@ def parse_args():
+     parser.add_argument("--backend", choices=("auto", "native", "reference"), default="auto")
+     parser.add_argument("--precision", choices=("fp32", "bf16", "fp16"), default="fp32")
+     parser.add_argument("--data", required=True)
+-    parser.add_argument("--data-format", choices=("jsonl", "pile-parquet"), default="jsonl")
++    parser.add_argument("--data-format", choices=("auto", "jsonl", "pile-parquet"), default="auto",
++                        help="auto: a directory of .jsonl shards -> JSONL, otherwise parquet/Pile")
+     parser.add_argument("--data-split", choices=("train", "validation", "test"), default="train")
+     parser.add_argument("--num-workers", type=int, default=0)
+     parser.add_argument("--shuffle-buffer", type=int, default=128)
+diff --git a/tests/test_dfm_data.py b/tests/test_dfm_data.py
+index 1a38577..d00f675 100644
+--- a/tests/test_dfm_data.py
++++ b/tests/test_dfm_data.py
+@@ -4,7 +4,7 @@ import json
+ 
+ import pytest
+ 
+-from mamba_ssm.utils.dfm_data import DFMTextDataset
++from mamba_ssm.utils.dfm_data import DFMTextDataset, resolve_data_format
+ 
+ 
+ class Tokenizer:
+@@ -37,3 +37,24 @@ def test_invalid_jsonl(tmp_path, row, match):
+     path.write_text("" if row is None else json.dumps(row) + "\n")
+     with pytest.raises(ValueError, match=match):
+         DFMTextDataset(path, Tokenizer())
++
++
++def test_jsonl_directory_shards(tmp_path):
++    root = tmp_path / "train"
++    root.mkdir()
++    (root / "part-000.jsonl").write_text(json.dumps({"text": "ab"}) + "\n")
++    (root / "part-001.jsonl").write_text(json.dumps({"text": "cd"}) + "\n")
++    dataset = DFMTextDataset(root, Tokenizer(), max_length=8)
++    assert len(dataset) == 2
++    assert resolve_data_format(root, "auto") == "jsonl"
++    (root / "part-002.parquet").write_bytes(b"")
++    assert resolve_data_format(root, "auto") == "jsonl"
++
++
++def test_auto_data_format_file(tmp_path):
++    text = tmp_path / "train.jsonl"
++    text.write_text(json.dumps({"text": "ab"}) + "\n")
++    parquet = tmp_path / "train.parquet"
++    parquet.write_bytes(b"")
++    assert resolve_data_format(text, "auto") == "jsonl"
++    assert resolve_data_format(parquet, "auto") == "pile-parquet"

@@ -29,6 +29,11 @@ if git -C "$TARGET" rev-parse --verify -q rsi-bench >/dev/null; then
 fi
 tmp="$(mktemp -d)"
 git -C "$TARGET" worktree add --detach -q "$tmp" "$ref"
+# JSONL file/directory support in the target mamba data loader.
+jsonl_patch="$ROOT/integrations/dfm_ssm/mamba-jsonl.patch"
+if [[ -f "$jsonl_patch" ]] && git -C "$tmp" apply --check "$jsonl_patch" >/dev/null 2>&1; then
+  git -C "$tmp" apply "$jsonl_patch"
+fi
 mkdir -p "$tmp/bench"
 cp "$ROOT/integrations/dfm_ssm/run_experiment.py" "$tmp/bench/rsi_dfm_train_eval.py"
 cp "$ROOT/integrations/dfm_ssm/dfm_lm_eval.py" "$tmp/bench/dfm_lm_eval.py"

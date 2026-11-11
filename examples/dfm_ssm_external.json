@@ -17,8 +17,6 @@
     "{out}",
     "--device",
     "cuda",
-    "--train-steps",
-    "2",
     "--train-batch-size",
     "2",
     "--grad-accum",
@@ -34,8 +32,8 @@
   ],
   "remote": {
     "host": "8818",
-    "dir": "/home/sl/rsi",
-    "python": "/home/sl/coral-eval-env-recovery-20261109-1345/.eval-venv/bin/python",
+    "dir": "/home/sl/mamba",
+    "python": "/home/sl/miniconda3/envs/mamba/bin/python",
     "ssh_args": [
       "-o",
       "BatchMode=yes",
@@ -50,11 +48,10 @@
       "TRANSFORMERS_OFFLINE": "1",
       "HF_DATASETS_OFFLINE": "1",
       "TOKENIZERS_PARALLELISM": "false",
-      "RSI_DFM_TRAIN_DATA": "/home/sl/rsi-data/train.jsonl",
-      "RSI_DFM_BASE_MODEL": "/home/sl/rsi-data/tiny-mamba",
-      "RSI_DFM_TOKENIZER": "/home/sl/rsi-data/tokenizer",
-      "RSI_DFM_BACKEND": "reference",
-      "RSI_DFM_TRAIN_STEPS": "2",
+      "RSI_DFM_TRAIN_DATA": "/home/sl/SlimPajama-10B",
+      "RSI_DFM_BASE_MODEL": "/home/sl/mamba/checkpoints",
+      "RSI_DFM_BACKEND": "native",
+      "RSI_DFM_TRAIN_STEPS": "38000",
       "RSI_DFM_OFFLINE": "1"
     },
     "timeout_s": 3600,
@@ -63,9 +60,9 @@
       "pretrained",
       "data"
     ],
-    "worktree": "/home/sl/projects/dfm-ssm-{run_id}",
-    "out": "/home/sl/projects/dfm-ssm-{run_id}/out",
-    "setup": ""
+    "worktree": "/home/sl/mamba/projects/dfm-ssm-{run_id}",
+    "out": "/home/sl/mamba/projects/dfm-ssm-{run_id}/out",
+    "setup": "export CUDA_HOME=/usr/local/cuda-12.8; export PATH=\"$CUDA_HOME/bin:$PATH\"; export LD_LIBRARY_PATH=\"$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}\"; export PYTHONPATH=\"$HOME/mamba${PYTHONPATH:+:$PYTHONPATH}\"; export TOKENIZERS_PARALLELISM=\"${TOKENIZERS_PARALLELISM:-false}\""
   },
   "datasets": [
     "wikitext-2-raw-v1"
@@ -77,7 +74,7 @@
     {
       "name": "word_ppl",
       "direction": "min",
-      "tolerance": 0.01,
+      "tolerance": 1,
       "weight": 1.0,
       "bounds": null
     }

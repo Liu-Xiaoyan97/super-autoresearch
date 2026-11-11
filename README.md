@@ -405,6 +405,22 @@ DFM_SSM_DIR=/Users/liuxiaoyan/workspace/dfm-ssm ./scripts/setup-dfm-ssm.sh
 挂载。要用外部仓库，需要先重建容器；SSH/rsync/socat 会在容器启动时由
 `container/bootstrap.sh` 自动安装，不需要手动 apt。
 
+### Native backend 的 CUDA 环境
+
+外部 fixture 已设置 `RSI_DFM_BACKEND=native`，并通过 `remote.setup` 导出：
+
+```bash
+export CUDA_HOME=/usr/local/cuda-12.8
+export PATH="$CUDA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
+export PYTHONPATH="$HOME/mamba${PYTHONPATH:+:$PYTHONPATH}"
+export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
+```
+
+这些变量让 `selective_scan_cuda`（在 `$HOME/mamba` 下编译）可被 native
+backend 导入。`remote.setup` 在 `cd` 之后、benchmark 之前执行；adapter 会再把
+当前 worktree 放到 `PYTHONPATH` 最前面。
+
 ### 指定服务器 Python 环境
 
 `remote.python` 可以是绝对路径：
@@ -433,8 +449,19 @@ DFM_SSM_DIR=/Users/liuxiaoyan/workspace/dfm-ssm ./scripts/setup-dfm-ssm.sh
 | `native` | `MambaLMHeadModel` + CUDA selective scan kernels，最快 | 需要 `selective_scan_cuda`；否则运行时报错 |
 | `reference` | 纯 PyTorch 顺序扫描，CPU/MPS/CUDA 都能跑，但慢 | 无需 CUDA 扩展；适合 smoke/正确性验证 |
 
-当前服务器没有编译 `selective_scan_cuda`，所以 fixture 用 `reference`。真实 130M
-训练建议装好 CUDA 扩展后改 `native`；baseline 和候选应使用同一个 backend。
+- `examples/dfm_ssm.json` 的小型 smoke 用 `reference`；
+- `examples/dfm_ssm_external.json` 用 `native`，并在 `remote.setup` 中导出
+  `/usr/local/cuda-12.8` 与 `$HOME/mamba`，让编译好的
+  `selective_scan_cuda.cpython-310-...so` 可导入。
+- baseline 和候选必须使用同一个 backend。
+
+命令参数补充：
+
+| 参数 | 作用 |
+|---|---|
+| `--data-format auto` | JSONL 文件/目录 → `jsonl`；parquet 目录/文件 → `pile-parquet` |
+| `--flow-time off` | lm-eval 用 causal backbone logits |
+| `--flow-time 1.0` | lm-eval 用 DFM forward logits |
 
 `remote.env` 的作用：
 
@@ -445,16 +472,17 @@ DFM_SSM_DIR=/Users/liuxiaoyan/workspace/dfm-ssm ./scripts/setup-dfm-ssm.sh
 | `TRANSFORMERS_OFFLINE=1` | 禁止 transformers 下载 |
 | `HF_DATASETS_OFFLINE=1` | 禁止 datasets 下载 |
 | `TOKENIZERS_PARALLELISM=false` | 关闭 tokenizer 并行，避免 fork/警告 |
-| `RSI_DFM_TRAIN_DATA` | 训练 JSONL 路径；adapter 的 `--data` 默认值 |
+| `RSI_DFM_TRAIN_DATA` | 训练 JSONL 文件、JSONL 目录或 parquet 目录；adapter 的 `--data` 默认值 |
 | `RSI_DFM_BASE_MODEL` | 基座 Mamba/AR checkpoint 路径；`--base-model` 默认值 |
 | `RSI_DFM_TOKENIZER` | tokenizer 路径；`--tokenizer` 默认值，必须与模型词表匹配 |
 | `RSI_DFM_BACKEND` | 上面三种 backend；`--backend` 默认值 |
-| `RSI_DFM_TRAIN_STEPS` | 训练步数默认值；**会被 `--train-steps 2` 覆盖** |
+| `RSI_DFM_TRAIN_STEPS` | 训练步数默认值；**命令里显式 `--train-steps` 会覆盖它** |
 | `RSI_DFM_OFFLINE=1` | adapter 是否默认设置 HF 离线变量；当前 fixture 已显式设置 HF_*，所以只是冗余保险 |
 
 优先级：`experiment_command` 里的显式参数 > `remote.env` > adapter 默认值。
 例如要改训练步数，改命令里的 `--train-steps`，不要只改
-`RSI_DFM_TRAIN_STEPS`。`gpu_ids` 生成的 `CUDA_VISIBLE_DEVICES` 不在 `env`
+`RSI_DFM_TRAIN_STEPS`。外部 fixture 已移除 `--train-steps`，所以当前由
+`RSI_DFM_TRAIN_STEPS=38000` 控制。`gpu_ids` 生成的 `CUDA_VISIBLE_DEVICES` 不在 `env`
 里配置；`PYTHONPATH` 由 adapter 自动指向远程仓库。
 
 ### 8. 远程目录与本地产物

@@ -84,7 +84,9 @@ def main() -> int:
                         choices=("auto", "native", "reference"))
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--checkpoint", help="existing DFM checkpoint; skips training")
-    parser.add_argument("--data", help="training JSONL (or RSI_DFM_TRAIN_DATA)")
+    parser.add_argument("--data", help="training JSONL file/dir or parquet dir (or RSI_DFM_TRAIN_DATA)")
+    parser.add_argument("--data-format", default="auto", choices=("auto", "jsonl", "pile-parquet"),
+                        help="auto: JSONL file/dir -> jsonl, parquet -> pile-parquet")
     parser.add_argument("--tokenizer", default=os.environ.get("RSI_DFM_TOKENIZER", "EleutherAI/gpt-neox-20b"))
     parser.add_argument("--base-model", default=os.environ.get("RSI_DFM_BASE_MODEL", "state-spaces/mamba-130m"))
     parser.add_argument("--train-steps", type=int, default=0, help="0 = scope default")
@@ -145,7 +147,7 @@ def main() -> int:
                 "--data",
                 str(Path(data_path).expanduser()),
                 "--data-format",
-                "jsonl",
+                args.data_format,
                 "--source-distribution",
                 "uniform",
                 "--block-length",
