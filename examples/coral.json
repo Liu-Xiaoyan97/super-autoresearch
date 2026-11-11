@@ -1,0 +1,161 @@
+{
+  "id": "coral-wikitext-ppl",
+  "statement": "Improve CORAL, a non-Transformer causal kernel / state-space language model, so that wikitext word perplexity measured by the fixed lm-eval protocol decreases without adding self-attention or transformer blocks.",
+  "domain": "state space models",
+  "subfield": "causal kernel and state-space language modeling",
+  "source_paper": "CORAL dense causal-kernel language model (internal prototype)",
+  "repo": "${RSI_TARGET_REPO}",
+  "repo_ref": "rsi-bench",
+  "experiment_command": [
+    "{python}",
+    "bench/rsi_coral_train_eval.py",
+    "--repo",
+    "{repo}",
+    "--scope",
+    "{scope}",
+    "--out",
+    "{out}"
+  ],
+  "remote": {
+    "host": "8818",
+    "dir": "/home/sl/coral-rsi",
+    "python": "/home/sl/coral-eval-env-recovery-20261109-1345/.eval-venv/bin/python",
+    "ssh_args": [
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ServerAliveInterval=30"
+    ],
+    "rsync_args": [],
+    "gpu_ids": "0",
+    "env": {
+      "HF_DATASETS_CACHE": "/home/sl/coral-e2-C512L21H2720-1b-bf16only-20261109-1020/eval/hf-official-wikitext/datasets",
+      "RSI_CORAL_TRAIN_DATA": "/home/sl/SlimPajama-10B",
+      "RSI_CORAL_TOKENIZER": "/home/sl/coral-e2-latest-checkpoint-wikitext-cpu-20261109-1955/snapshot/checkpoint-3000",
+      "RSI_CORAL_STAGE": "stages/pretrain-dense-158m-025b.json",
+      "RSI_CORAL_MODEL_FILE": "models/modeling_coral_dense.py",
+      "RSI_CORAL_TRAIN_BATCH_SIZE": "16",
+      "RSI_CORAL_MAX_LENGTH": "1024",
+      "RSI_CORAL_LM_EVAL_BATCH_SIZE": "1",
+      "RSI_CORAL_EVAL_MAX_LENGTH": "1024",
+      "RSI_CORAL_OFFLINE": "1"
+    },
+    "timeout_s": 86400,
+    "excludes": [
+      "*.bin",
+      "*.parquet",
+      "*.pt",
+      "*.safetensors",
+      "artifacts",
+      "build",
+      "checkpoints",
+      "data",
+      "datasets",
+      "experiments",
+      "logs",
+      "outputs",
+      "pretrained",
+      "runs",
+      "thirdparty/lm_eval/__pycache__"
+    ],
+    "worktree": "/home/sl/coral-rsi/projects/coral-{run_id}",
+    "out": "/home/sl/coral-rsi/projects/coral-{run_id}/out",
+    "setup": "export CUDA_HOME=/usr/local/cuda-12.8; export PATH=\"$CUDA_HOME/bin:$PATH\"; export LD_LIBRARY_PATH=\"$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}\"; export PYTHONPATH=\"$PWD${PYTHONPATH:+:$PYTHONPATH}\""
+  },
+  "datasets": [
+    "wikitext-2-raw-v1"
+  ],
+  "subset_datasets": [
+    "wikitext-2-raw-v1"
+  ],
+  "metrics": [
+    {
+      "name": "word_ppl",
+      "direction": "min",
+      "tolerance": 0.005,
+      "weight": 1.0,
+      "bounds": null
+    }
+  ],
+  "reported_metrics": {},
+  "constraints": [
+    "Keep CORAL a non-Transformer model: no self-attention, transformer blocks, or pretrained transformer backbone",
+    "Evaluate with the official lm-eval wikitext task and report word_perplexity (lower is better)",
+    "Use the same tokenizer, context length, evaluation split, and effective training budget for every candidate",
+    "Do not train on wikitext test data or add extra evaluation data",
+    "The GPU server is offline: use preinstalled packages and local data/model caches",
+    "Do not modify bench/rsi_coral_train_eval.py or the benchmark protocol"
+  ],
+  "directions": [
+    {
+      "id": "causal-state-mixing",
+      "title": "causal state mixing",
+      "description": "Improve the causal kernel, convolutional history, retention, and selective state mixing while keeping the model non-Transformer.",
+      "keywords": [
+        "kernel",
+        "convolution",
+        "retention",
+        "state",
+        "causal",
+        "scan"
+      ],
+      "weight": 1.0,
+      "must_include": false
+    },
+    {
+      "id": "architecture-capacity",
+      "title": "non-Transformer architecture capacity",
+      "description": "Improve width, depth, expansion, local kernel size, and dense FFN capacity without adding attention.",
+      "keywords": [
+        "width",
+        "depth",
+        "expansion",
+        "local",
+        "ffn",
+        "capacity"
+      ],
+      "weight": 0.9,
+      "must_include": false
+    },
+    {
+      "id": "language-modeling-objective",
+      "title": "language-modeling objective",
+      "description": "Improve the causal language-modeling loss or auxiliary regularization while preserving the evaluation protocol.",
+      "keywords": [
+        "cross-entropy",
+        "loss",
+        "entropy",
+        "regularization",
+        "auxiliary"
+      ],
+      "weight": 0.8,
+      "must_include": false
+    },
+    {
+      "id": "optimization-data",
+      "title": "optimization and data recipe",
+      "description": "Improve the optimizer, learning-rate schedule, precision, sequence packing, or data ordering at a fixed token budget.",
+      "keywords": [
+        "muon",
+        "learning-rate",
+        "schedule",
+        "packing",
+        "batch",
+        "precision"
+      ],
+      "weight": 0.8,
+      "must_include": false
+    }
+  ],
+  "forbidden": [
+    "adding self-attention or transformer blocks",
+    "changing the lm-eval wikitext task or word_perplexity metric",
+    "modifying bench/rsi_coral_train_eval.py",
+    "training on wikitext test data",
+    "using extra evaluation data",
+    "changing the tokenizer or evaluation split",
+    "loading a pretrained transformer backbone"
+  ],
+  "venue": "ICLR",
+  "audience_note": "External target: snapshot the authorized current dense stack, not old HEAD, into isolated rsi-bench. Production budget comes from stages/pretrain-dense-158m-025b.json (954 steps, effective batch 256, sequence 1024). No baseline is asserted for this snapshot; only a successful real train/evaluate run may populate word_ppl. Explicit limited subset smoke is plumbing evidence, not a full-protocol score."
+}

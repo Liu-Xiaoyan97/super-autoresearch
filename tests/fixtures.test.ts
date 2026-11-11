@@ -5,7 +5,7 @@ import { loadProblem } from "../src/rsi/run.ts";
 import { fixture } from "./helpers.ts";
 
 test("every test/example fixture parses as a Problem", () => {
-  for (const name of ["ood_frozen_encoder", "abort_case", "meta_refine", "dfm_ssm_external"]) {
+  for (const name of ["ood_frozen_encoder", "abort_case", "meta_refine", "dfm_ssm_external", "coral"]) {
     const problem = loadProblem(fixture(name));
     assert.ok(problem.id);
     assert.ok(problem.statement);
@@ -23,6 +23,20 @@ test("the external dfm-ssm fixture keeps GPU and runner wiring explicit", () => 
   assert.equal(problem.remote?.env.RSI_DFM_TOKENIZER, "/home/sl/mamba/checkpoints");
   assert.match(problem.remote?.env.RSI_DFM_TRAIN_LAUNCHER ?? "", /accelerate launch/);
   assert.deepEqual(problem.experiment_command?.slice(0, 2), ["{python}", "bench/rsi_dfm_train_eval.py"]);
+});
+
+test("the coral fixture targets the non-Transformer dense stack", () => {
+  const problem = loadProblem(fixture("coral"));
+  assert.equal(problem.metrics[0].name, "word_ppl");
+  assert.equal(problem.metrics[0].direction, "min");
+  assert.equal(problem.metrics[0].tolerance, 0.005);
+  assert.equal(problem.repo_ref, "rsi-bench");
+  assert.equal(problem.remote?.gpu_ids, "0");
+  assert.equal(problem.remote?.env.RSI_CORAL_TRAIN_DATA, "/home/sl/SlimPajama-10B");
+  assert.equal(problem.remote?.env.RSI_CORAL_TOKENIZER, "/home/sl/coral-e2-latest-checkpoint-wikitext-cpu-20261109-1955/snapshot/checkpoint-3000");
+  assert.equal(problem.remote?.env.RSI_CORAL_STAGE, "stages/pretrain-dense-158m-025b.json");
+  assert.deepEqual(problem.experiment_command?.slice(0, 2), ["{python}", "bench/rsi_coral_train_eval.py"]);
+  assert.ok(problem.forbidden.some((item) => /self-attention|transformer/.test(item)));
 });
 
 test("repo paths expand ${ENV} placeholders", () => {
