@@ -25,6 +25,7 @@ import {
   makeTrace,
 } from "../types.ts";
 import { BaseAgent, type AgentContext } from "./base.ts";
+import { askUnifiedDiff } from "./patch.ts";
 import { FullSetCritic, SubsetCritic } from "./critics.ts";
 import { FullSetEngineer, SubsetEngineer } from "./engineering.ts";
 
@@ -85,7 +86,7 @@ export class SubsetCoder extends BaseAgent {
 
   async implement(idea: Idea, opts: { base: Evidence }): Promise<Evidence> {
     const brief = this.ctx.workspace.brief?.(codeOf(opts.base), `${idea.mechanism} ${idea.hypothesis}`) ?? "";
-    const out = await this.ask(SubsetPatch, {
+    const out = await askUnifiedDiff(this, SubsetPatch, {
       user:
         `${stableString(idea)}\n\nReturn a unified diff against this snapshot that implements the mechanism. ` +
         `Do not modify run_experiment.py or tests.\n\n${brief}`,
@@ -114,7 +115,7 @@ export class FullSetCoder extends BaseAgent {
 
   async scale(idea: Idea, opts: { subset: Evidence }): Promise<Evidence> {
     const brief = this.ctx.workspace.brief?.(codeOf(opts.subset), `${idea.mechanism} ${idea.hypothesis}`) ?? "";
-    const out = await this.ask(FullSetPatch, {
+    const out = await askUnifiedDiff(this, FullSetPatch, {
       user:
         `${stableString(idea)}\n\nReturn a unified diff against this snapshot that scales the validated change ` +
         `to the full benchmark without changing the method. Do not modify run_experiment.py or tests.\n\n${brief}`,
@@ -143,7 +144,7 @@ export class AblationCoder extends BaseAgent {
 
   async runPlan(idea: Idea, plan: AblationPlan, opts: { best: Evidence }): Promise<AblationResult> {
     const brief = this.ctx.workspace.brief?.(codeOf(opts.best), `${idea.mechanism} ${plan.component}`) ?? "";
-    const out = await this.ask(AblationPatch, {
+    const out = await askUnifiedDiff(this, AblationPatch, {
       user:
         `${stableString(idea)}\n${stableString(plan)}\n\nReturn a unified diff that performs only this ` +
         `component intervention. Do not modify run_experiment.py or tests.\n\n${brief}`,
@@ -195,7 +196,7 @@ export class RebuttalCoder extends BaseAgent {
 
   async runTask(idea: Idea, task: RebuttalTask, opts: { best: Evidence }): Promise<Evidence> {
     const brief = this.ctx.workspace.brief?.(codeOf(opts.best), `${idea.mechanism} ${task.question}`) ?? "";
-    const out = await this.ask(RebuttalPatch, {
+    const out = await askUnifiedDiff(this, RebuttalPatch, {
       user:
         `${stableString(idea)}\n${stableString(task)}\n\nReturn a unified diff that implements the ` +
         `supplementary experiment without changing the core method. Do not modify run_experiment.py or tests.\n\n${brief}`,

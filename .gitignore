@@ -20,3 +20,4 @@ vendor/
 .venv-dfm/
 .pi/
 container/pi-home/bin/
+container/ssh/

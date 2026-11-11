@@ -5,6 +5,7 @@ import { stableString } from "../json.ts";
 import { FullSetEngineeringPatch, SubsetEngineeringPatch } from "../schemas.ts";
 import { type Evidence, type Idea, makeEvidence } from "../types.ts";
 import { BaseAgent } from "./base.ts";
+import { askUnifiedDiff } from "./patch.ts";
 import { codeOf } from "./coding.ts";
 
 export class SubsetEngineer extends BaseAgent {
@@ -14,7 +15,7 @@ export class SubsetEngineer extends BaseAgent {
 
   async refine(idea: Idea, opts: { evidence: Evidence; feedback: string }): Promise<Evidence> {
     const brief = this.ctx.workspace.brief?.(codeOf(opts.evidence), `${idea.mechanism} ${opts.feedback}`) ?? "";
-    const out = await this.ask(SubsetEngineeringPatch, {
+    const out = await askUnifiedDiff(this, SubsetEngineeringPatch, {
       user:
         `${stableString(idea)}\nCritique: ${opts.feedback}\n${stableString(opts.evidence)}\n\n` +
         `Return a unified diff that fixes/tunes the implementation. Do not modify run_experiment.py or tests.\n\n${brief}`,
@@ -50,7 +51,7 @@ export class FullSetEngineer extends BaseAgent {
   ): Promise<{ idea: Idea; evidence: Evidence }> {
     const reason = opts.reason ?? "ablation";
     const brief = this.ctx.workspace.brief?.(codeOf(opts.evidence), `${idea.mechanism} ${opts.feedback}`) ?? "";
-    const out = await this.ask(FullSetEngineeringPatch, {
+    const out = await askUnifiedDiff(this, FullSetEngineeringPatch, {
       user:
         `${stableString(idea)}\nReason: ${reason}\nCritique: ${opts.feedback}\n` +
         `${stableString(opts.evidence)}\n` +

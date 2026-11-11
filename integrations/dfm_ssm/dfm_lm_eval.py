@@ -42,6 +42,7 @@ class DFMMambaLM(LM):
         **kwargs,
     ) -> None:
         del dtype, kwargs
+        super().__init__()
         self._flow_time = None if flow_time in (None, "off", "none") else float(flow_time)
         self._device = torch.device(device)
         self._model = DFMMambaLMHeadModel.from_pretrained(
@@ -89,7 +90,8 @@ class DFMMambaLM(LM):
     @torch.no_grad()
     def loglikelihood(self, requests):
         results = []
-        for context, continuation in requests:
+        for request in requests:
+            context, continuation = getattr(request, "args", request)
             text = context + continuation
             ids = self.tokenizer(text, return_tensors="pt", add_special_tokens=False).input_ids
             ids = ids.to(self._device)
@@ -110,7 +112,8 @@ class DFMMambaLM(LM):
     @torch.no_grad()
     def loglikelihood_rolling(self, requests):
         results = []
-        for (text,) in requests:
+        for request in requests:
+            text = getattr(request, "args", request)[0]
             ids = self.tokenizer(text, return_tensors="pt", add_special_tokens=False).input_ids
             ids = ids.to(self._device)
             total = 0.0

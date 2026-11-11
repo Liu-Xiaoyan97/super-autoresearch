@@ -6,6 +6,8 @@
  * session, and so tests can exercise a real HTTP-shaped transport offline.
  */
 
+import { randomUUID } from "node:crypto";
+
 import { LLMError, LLMProvider, type LLMRequest, type LLMResponse, textOf } from "./base.ts";
 
 export interface OpenAICompatOptions {
@@ -15,6 +17,8 @@ export interface OpenAICompatOptions {
   model?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
+  /** opencode-go routes requests per conversation; any stable id works. */
+  sessionId?: string;
 }
 
 export class OpenAICompatProvider extends LLMProvider {
@@ -24,6 +28,7 @@ export class OpenAICompatProvider extends LLMProvider {
   readonly apiKey: string;
   readonly timeoutMs: number;
   readonly fetchImpl: typeof fetch;
+  readonly sessionId: string;
 
   constructor(opts: OpenAICompatOptions = {}) {
     super();
@@ -35,6 +40,7 @@ export class OpenAICompatProvider extends LLMProvider {
     this.apiKey = opts.apiKey ?? process.env[opts.apiKeyEnv || "OPENCODE_API_KEY"] ?? "";
     this.timeoutMs = opts.timeoutMs ?? 180_000;
     this.fetchImpl = opts.fetchImpl ?? fetch;
+    this.sessionId = opts.sessionId || process.env.RSI_SESSION_ID || randomUUID();
   }
 
   async complete(req: LLMRequest): Promise<LLMResponse> {
@@ -57,6 +63,12 @@ export class OpenAICompatProvider extends LLMProvider {
         method: "POST",
         headers: {
           "content-type": "application/json",
+          ...(this.baseUrl.includes("opencode.ai")
+            ? {
+                "x-opencode-session": this.sessionId,
+                "x-opencode-client": "pi-rsi",
+              }
+            : {}),
           ...(this.apiKey ? { authorization: `Bearer ${this.apiKey}` } : {}),
         },
         body: JSON.stringify(payload),

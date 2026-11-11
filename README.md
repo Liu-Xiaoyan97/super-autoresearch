@@ -214,6 +214,190 @@ workspace 在目标仓库的 **git worktree** 上执行 `git apply`，并把候�
 `patches/*.apply.log` 并保持父 commit 不变，绝不伪造测量提升。真实优化运行建议
 在装有依赖的机器上执行，并把结果写回 `runs/<run_id>/`。
 
+## 容器内交互运行远程 RSI（GPU）
+
+这一节是实际操作手册。RSI 在容器里运行，目标代码在外部 GPU 服务器上训练/评测；
+**只上传目标仓库的 worktree，不上传 RSI 项目本身**。
+
+### 已经准备好的部分
+
+- 容器：`pi-agent-rsi`，Pi 自动加载 `/workspace/RSI` 与 `npm:pi-web-search`
+- 远程：SSH 别名 `8818`，用户 `sl`，GPU 0（A800 80GB）
+- 容器 SSH：`/root/.ssh/config`，通过 `socat` + `host.docker.internal:7890` 出网
+- 目标仓库：`vendor/dfm-ssm` 的 `rsi-bench` 分支
+- benchmark：`bench/rsi_dfm_train_eval.py` + `bench/dfm_lm_eval.py`
+- 指标：lm-eval `wikitext` 的 `word_perplexity`（`word_ppl`，越低越好）
+- 服务器 smoke 资产：`/home/sl/rsi-data/{tiny-mamba,tokenizer,train.jsonl}`
+
+### 1. 进入容器和 Pi
+
+```bash
+cd "/Users/liuxiaoyan/workspace/RSI "
+./container/up.sh shell
+
+# 容器内
+cd /workspace/RSI
+pi
+```
+
+### 2. 给 superagent 最高权限
+
+`runner=subprocess` 默认会被 `sop.experiment` 的 `person` 规则挡住。两种方式：
+
+**当前会话立即放开：**
+
+```text
+/rsi policy allow
+```
+
+**启动时默认放开：**
+
+```bash
+RSI_SUPERAGENT_POLICY=yolo pi
+```
+
+容器 compose 默认已经是 `RSI_SUPERAGENT_POLICY=yolo`；如果当前容器是旧进程，
+用上面的 `/rsi policy allow` 或重启容器即可。
+
+### 3. 先跑 mock 远程链路（不花 LLM 费用）
+
+```text
+/rsi run examples/dfm_ssm.json --mock --runner subprocess --max-refine-rounds 0 --max-review-refinements 0
+```
+
+查看状态：
+
+```text
+/rsi status <run_id>
+/rsi inspect <run_id>
+```
+
+### 4. 真实 provider + GPU 0
+
+```text
+/rsi run examples/dfm_ssm.json --runner subprocess --thinking low --max-refine-rounds 0 --max-review-refinements 0 --max-llm-calls 120 --max-wall-time-s 3000
+```
+
+如果仍然出现 Attention：
+
+```text
+/rsi status <run_id>
+/rsi tickets <run_id>
+/rsi answer <run_id> <ticket_id> "Approved: prepared offline DFM environment on server 8818, GPU 0, real remote benchmark."
+/rsi wait <run_id>
+```
+
+结束后：
+
+```text
+/rsi inspect <run_id>
+/rsi replay <run_id>
+```
+
+### 5. 不走 superagent 的 CLI 方式
+
+在容器内：
+
+```bash
+cd /workspace/RSI
+
+NODE_USE_ENV_PROXY=1 node src/rsi/cli.ts run examples/dfm_ssm.json   --provider opencode   --model deepseek-v4.1-flash   --runner subprocess   --max-refine-rounds 0   --max-review-refinements 0   --max-llm-calls 120   --max-wall-time-s 3000   --out runs   --seed 7
+```
+
+CLI 不经过 superagent 的 `person` 门，适合先验证远程链路。
+
+### 6. 改 GPU / 训练预算
+
+`examples/dfm_ssm.json`：
+
+```jsonc
+"remote": {
+  "host": "8818",
+  "dir": "/home/sl/rsi",
+  "python": "/home/sl/coral-eval-env-recovery-20261109-1345/.eval-venv/bin/python",
+  "gpu_ids": "0",              // 改成 "1" / "0,1" 选择 GPU
+  "timeout_s": 3600,
+  "env": {
+    "RSI_DFM_BASE_MODEL": "/home/sl/rsi-data/tiny-mamba",
+    "RSI_DFM_TOKENIZER": "/home/sl/rsi-data/tokenizer",
+    "RSI_DFM_TRAIN_DATA": "/home/sl/rsi-data/train.jsonl",
+    "RSI_DFM_BACKEND": "reference",
+    "RSI_DFM_TRAIN_STEPS": "2"
+  }
+}
+```
+
+训练预算同时出现在 `experiment_command`：
+
+```jsonc
+"--train-steps", "2",
+"--train-batch-size", "2",
+"--grad-accum", "2",
+"--max-length", "256",
+"--lm-eval-batch-size", "1",
+"--eval-max-length", "512",
+"--flow-time", "off"
+```
+
+- `gpu_ids` 直接写入 `CUDA_VISIBLE_DEVICES`；RSI 不做 GPU 排队/锁卡。
+- 多卡只提供可见性；DDP 需要在目标仓库 benchmark/trainer 内实现。
+- `RSI_DFM_BACKEND=reference` 是纯 PyTorch Mamba 路径；服务器装了
+  `selective_scan_cuda` 后可改 `native`。
+- `flow_time=off` 用 causal backbone 计算 lm-eval logits；改成 `1.0` 走
+  DFM forward，需与你们的评测协议一致。
+
+### 7. 换成真实模型/数据
+
+当前 `tiny-mamba` 是 3.3M 随机初始化模型，`word_ppl` 只是链路验证，不是科学结果。
+要得到有意义的 word-ppl，把 `remote.env` 指向服务器上的真实资产：
+
+```jsonc
+"RSI_DFM_BASE_MODEL": "/path/to/real-mamba-or-dfm",
+"RSI_DFM_TOKENIZER": "/path/to/tokenizer",
+"RSI_DFM_TRAIN_DATA": "/path/to/train.jsonl"
+```
+
+同时提高 `--train-steps`、`--max-length`、batch size 和 `remote.timeout_s`。
+服务器离线时，`lm-eval` 的 wikitext 数据集必须已缓存在
+`HF_DATASETS_CACHE`，模型/tokenizer 必须本地存在。
+
+### 8. 远程目录与本地产物
+
+服务器每次 run：
+
+```text
+/home/sl/rsi/rsi/<run_id>/
+  worktree/        # 从本地 git commit rsync 过去的候选代码（无 .git）
+  out/             # checkpoint、lm-eval 结果、metrics JSON
+```
+
+本地：
+
+```text
+runs/<run_id>/
+  state.json
+  final.json
+  traces.jsonl
+  worktree/        # 本地唯一 git checkout
+  patches/         # 每个候选的 diff + apply.log
+  artifacts/experiments/remote-*.json
+```
+
+`state.json` / `final.json` 的 `code.commit`、`code.branch` 是候选代码的真实身份。
+
+### 9. 当前容器的注意点
+
+`ssh` / `rsync` / `socat` 是装在当前运行容器里的；如果 `down` 后重建容器，需要重装：
+
+```bash
+./container/up.sh exec bash -lc '
+apt-get -o Acquire::http::Proxy=http://host.docker.internal:7890         -o Acquire::https::Proxy=http://host.docker.internal:7890 update -qq &&
+DEBIAN_FRONTEND=noninteractive apt-get   -o Acquire::http::Proxy=http://host.docker.internal:7890   -o Acquire::https::Proxy=http://host.docker.internal:7890   install -y -qq openssh-client rsync socat
+'
+```
+
+SSH key/config 在宿主 `container/ssh/`，已 gitignore，不会进入仓库。
+
 ## 设计保证
 
 | 纯数值决策（模型无法翻转） | 模型可追加意见 |
@@ -261,7 +445,7 @@ legacy/python/             原 Python 实现（可执行规范）
 ## 测试
 
 ```bash
-npm test            # 65 个离线测试：types、stage、mock、orchestrator、gates、replay
+npm test            # 87 个离线测试：types、stage、mock、orchestrator、gates、replay
 npm run typecheck   # tsc --noEmit，使用 ambient Pi 类型，不复制宿主包
 ```
 

@@ -40,9 +40,13 @@ def fail(out: Path, message: str) -> int:
     return 1
 
 
-def run(argv: list[str], cwd: Path, timeout: float | None) -> subprocess.CompletedProcess:
+def run(
+    argv: list[str], cwd: Path, timeout: float | None, env: dict[str, str]
+) -> subprocess.CompletedProcess:
     print("+", " ".join(shlex.quote(item) for item in argv), flush=True)
-    return subprocess.run(argv, cwd=str(cwd), timeout=timeout, capture_output=True, text=True)
+    return subprocess.run(
+        argv, cwd=str(cwd), timeout=timeout, capture_output=True, text=True, env=env
+    )
 
 
 def find_repo(explicit: str | None) -> Path:
@@ -76,6 +80,8 @@ def main() -> int:
     parser.add_argument("--scope", choices=sorted(SCOPE_TRAIN_STEPS), default="subset")
     parser.add_argument("--out", required=True)
     parser.add_argument("--device", default="cuda", choices=("cuda", "cpu", "mps"))
+    parser.add_argument("--backend", default=os.environ.get("RSI_DFM_BACKEND", "auto"),
+                        choices=("auto", "native", "reference"))
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--checkpoint", help="existing DFM checkpoint; skips training")
     parser.add_argument("--data", help="training JSONL (or RSI_DFM_TRAIN_DATA)")
@@ -89,6 +95,8 @@ def main() -> int:
     parser.add_argument("--lm-eval-task", default="wikitext")
     parser.add_argument("--lm-eval-batch-size", type=int, default=8)
     parser.add_argument("--eval-max-length", type=int, default=2048)
+    parser.add_argument("--flow-time", default="off",
+                        help="DFM flow time for logits: off = causal backbone, or 1.0")
     parser.add_argument("--offline", action="store_true", default=os.environ.get("RSI_DFM_OFFLINE", "1") == "1")
     parser.add_argument("--timeout", type=float, default=0, help="per-subprocess timeout seconds (0 = none)")
     args = parser.parse_args()
@@ -100,7 +108,8 @@ def main() -> int:
 
     env = dict(os.environ)
     env.setdefault("TOKENIZERS_PARALLELISM", "false")
-    env.setdefault("PYTHONPATH", str(repo))
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = str(repo) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
     if args.offline:
         env.setdefault("HF_HUB_OFFLINE", "1")
         env.setdefault("TRANSFORMERS_OFFLINE", "1")
@@ -143,6 +152,8 @@ def main() -> int:
                 str(args.block_length),
                 "--device",
                 args.device,
+                "--backend",
+                args.backend,
                 "--precision",
                 "fp32",
                 "--batch-size",
@@ -158,7 +169,7 @@ def main() -> int:
                 "--output",
                 str(checkpoint),
             ]
-            trained = run(train_cmd, repo, timeout)
+            trained = run(train_cmd, repo, timeout, env)
             if trained.returncode != 0:
                 return fail(
                     out,
@@ -172,7 +183,7 @@ def main() -> int:
             "--model",
             "dfm_mamba",
             "--model_args",
-            f"pretrained={checkpoint},device={args.device},batch_size={args.lm_eval_batch_size},max_length={args.eval_max_length}",
+            f"pretrained={checkpoint},max_length={args.eval_max_length},backend={args.backend},flow_time={args.flow_time}",
             "--tasks",
             args.lm_eval_task,
             "--device",
@@ -182,13 +193,18 @@ def main() -> int:
             "--output_path",
             str(eval_json),
         ]
-        evaluated = run(eval_cmd, repo, timeout)
+        evaluated = run(eval_cmd, repo, timeout, env)
         if evaluated.returncode != 0:
             return fail(
                 out,
                 f"lm-eval failed:\n{evaluated.stdout[-4000:]}\n{evaluated.stderr[-4000:]}",
             )
-        word_ppl, meta = parse_word_ppl(eval_json)
+        candidates = sorted(
+            eval_json.parent.glob(f"{eval_json.stem}*.json"),
+            key=lambda item: item.stat().st_mtime,
+        )
+        actual_eval_json = candidates[-1] if candidates else eval_json
+        word_ppl, meta = parse_word_ppl(actual_eval_json)
         if word_ppl is None:
             return fail(out, f"lm-eval output has no word_perplexity metric: {meta}")
 
@@ -199,7 +215,10 @@ def main() -> int:
                 "checkpoint": str(checkpoint),
                 "lm_eval_task": args.lm_eval_task,
                 "lm_eval_metric": meta,
+                "lm_eval_output": str(actual_eval_json),
+                "flow_time": args.flow_time,
                 "device": args.device,
+                "backend": args.backend,
                 "gpu_ids": env.get("CUDA_VISIBLE_DEVICES"),
                 "seed": args.seed,
                 "wall_time_s": round(time.time() - started, 3),

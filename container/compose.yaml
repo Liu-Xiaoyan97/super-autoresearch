@@ -17,6 +17,8 @@ services:
       RSI_PYTHON: ${RSI_PYTHON:-python3}
       # Optional SSH target used when Problem.remote.host is empty.
       RSI_REMOTE_HOST: ${RSI_REMOTE_HOST:-}
+      # Highest permission for superagent SOP rules (experiments included).
+      RSI_SUPERAGENT_POLICY: ${RSI_SUPERAGENT_POLICY:-yolo}
       # The Kiri VM cannot reach host loopback; use host.docker.internal.
       HTTP_PROXY: ${CONTAINER_HTTP_PROXY:-}
       HTTPS_PROXY: ${CONTAINER_HTTPS_PROXY:-}

@@ -26,7 +26,7 @@ import { PiLLMProvider, listModels } from "../src/rsi/providers/pi.ts";
 import { InlineWorker, type TaskWorker } from "../src/rsi/superagent/executor.ts";
 import type { Notice } from "../src/rsi/superagent/engine.ts";
 import type { PolicySettings } from "../src/rsi/superagent/model.ts";
-import { defaultPolicySettings } from "../src/rsi/superagent/policy.ts";
+import { defaultPolicySettings, permissivePolicySettings } from "../src/rsi/superagent/policy.ts";
 import { orchestratorBriefing, policySection } from "../src/rsi/superagent/prompts.ts";
 import { SuperagentRuntime, type DispatchParams } from "../src/rsi/superagent/runtime.ts";
 import { SUPERAGENT_PARAMS, formatStatus, superagentAction } from "../src/rsi/superagent/tools.ts";
@@ -64,6 +64,11 @@ interface ResearchParams {
   runner?: "simulated" | "subprocess";
   title?: string;
   wait?: boolean;
+  strict_directions?: boolean;
+  max_refine_rounds?: number;
+  max_review_refinements?: number;
+  max_llm_calls?: number;
+  max_wall_time_s?: number;
 }
 
 const RESEARCH_PARAMS: JsonSchema = {
@@ -115,6 +120,14 @@ const RESEARCH_PARAMS: JsonSchema = {
         "simulated = deterministic offline metrics; subprocess = execute the problem repository's run_experiment.py (needs a person's authority).",
     },
     title: { type: "string", description: "One-line label for the run ticket (default: the run id)." },
+    strict_directions: {
+      type: "boolean",
+      description: "Treat Problem.directions[].must_include as a hard gate.",
+    },
+    max_refine_rounds: { type: "number" },
+    max_review_refinements: { type: "number" },
+    max_llm_calls: { type: "number" },
+    max_wall_time_s: { type: "number" },
     wait: {
       type: "boolean",
       description:
@@ -149,7 +162,21 @@ interface RuntimeHost {
   runtimes: Map<string, SuperagentRuntime>;
 }
 
-const HOST: RuntimeHost = { policy: { settings: defaultPolicySettings() }, runtimes: new Map() };
+function initialPolicy(): PolicySettings {
+  const mode = (process.env.RSI_SUPERAGENT_POLICY || "observe").toLowerCase();
+  if (mode === "yolo" || mode === "allow" || mode === "all") {
+    return permissivePolicySettings();
+  }
+  if (mode === "auto") {
+    return defaultPolicySettings({ acceptMode: "auto" });
+  }
+  if (mode === "off") {
+    return defaultPolicySettings({ acceptMode: "off" });
+  }
+  return defaultPolicySettings();
+}
+
+const HOST: RuntimeHost = { policy: { settings: initialPolicy() }, runtimes: new Map() };
 
 function runtimeKey(ctx: ToolContext): string {
   return `${ctx.cwd}::${ctx.sessionManager?.getSessionId?.() ?? "no-session"}`;
@@ -314,6 +341,11 @@ async function dispatchResearch(
     options: {
       web_search: params.web_search ?? true,
       script: params.script,
+      strict_directions: params.strict_directions,
+      max_refine_rounds: params.max_refine_rounds,
+      max_review_refinements: params.max_review_refinements,
+      max_llm_calls: params.max_llm_calls,
+      max_wall_time_s: params.max_wall_time_s,
     },
   };
   const { session, duplicate } = runtime.dispatch(dispatch);
@@ -513,6 +545,7 @@ export default function rsiExtension(pi: ExtensionAPI): void {
         ctx.ui.notify(
           [
             "/rsi run <problem.json> [--mock] [--inline] [--wait] [--seed 7] [--out runs] [--provider opencode-go] [--model ID]",
+            "         [--runner simulated|subprocess] [--thinking low] [--max-refine-rounds N] [--max-llm-calls N] [--max-wall-time-s N]",
             "/rsi status [run_id]        protocol state of a run, or all runs",
             "/rsi tickets <run_id>       task tickets of a run",
             "/rsi ticket <run_id> <id>   one ticket with its reports",
@@ -581,6 +614,7 @@ export default function rsiExtension(pi: ExtensionAPI): void {
         const value = args.positional[1];
         const extra: Record<string, unknown> = { show_rules: Boolean(args.flags["show-rules"]) };
         if (value === "auto" || value === "observe" || value === "off") extra.mode = value;
+        if (value === "allow" || value === "yolo" || value === "all") extra.allow = true;
         if (value === "pause") extra.paused = true;
         if (value === "resume") extra.paused = false;
         await superagent("policy", extra);
@@ -666,6 +700,11 @@ export default function rsiExtension(pi: ExtensionAPI): void {
           agents: args.flags.inline ? "inline" : "subagent",
           thinking: (flagString(args.flags, "thinking") as ResearchParams["thinking"]) ?? "low",
           wait: Boolean(args.flags.wait),
+          strict_directions: Boolean(args.flags["strict-directions"]),
+          max_refine_rounds: flagNumber(args.flags, "max-refine-rounds"),
+          max_review_refinements: flagNumber(args.flags, "max-review-refinements"),
+          max_llm_calls: flagNumber(args.flags, "max-llm-calls"),
+          max_wall_time_s: flagNumber(args.flags, "max-wall-time-s"),
         },
         ctx,
         undefined,

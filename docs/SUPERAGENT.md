@@ -67,6 +67,30 @@ thread that already has a ticket. An automated trigger (a benchmark result, a
 review note, a cron) is never explicit: it may continue a subscribed ticket, but
 it cannot authorize new work.
 
+### Highest permission (trusted container)
+
+`runner=subprocess` is blocked by `sop.experiment` (`person`). For a trusted
+development container, grant the highest profile explicitly:
+
+```text
+/rsi policy allow
+```
+
+or start Pi with:
+
+```bash
+RSI_SUPERAGENT_POLICY=yolo pi
+```
+
+`yolo` means `acceptMode: auto`, every SOP rule `auto` (including experiments),
+and every Source enabled. It is equivalent to:
+
+```text
+rsi_superagent { action: "policy", allow: true }
+```
+
+Use it only in an environment you control; the numeric gates are unchanged.
+
 Inside an accepted run, each SOP stage has a rule. The rule's level says who must
 be behind the step:
 

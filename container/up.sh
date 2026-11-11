@@ -57,15 +57,15 @@ case "$cmd" in
     ;;
   shell)
     ensure_env
-    exec "${COMPOSE[@]}" exec pi-agent bash
+    exec "${COMPOSE[@]}" exec -e "RSI_SUPERAGENT_POLICY=${RSI_SUPERAGENT_POLICY:-yolo}" pi-agent bash
     ;;
   exec)
     ensure_env
-    exec "${COMPOSE[@]}" exec pi-agent "$@"
+    exec "${COMPOSE[@]}" exec -e "RSI_SUPERAGENT_POLICY=${RSI_SUPERAGENT_POLICY:-yolo}" pi-agent "$@"
     ;;
   pi)
     ensure_env
-    exec "${COMPOSE[@]}" exec pi-agent pi "$@"
+    exec "${COMPOSE[@]}" exec -e "RSI_SUPERAGENT_POLICY=${RSI_SUPERAGENT_POLICY:-yolo}" pi-agent pi "$@"
     ;;
   creds|credentials)
     exec "$ROOT/container/sync-credentials.sh" "$@"
