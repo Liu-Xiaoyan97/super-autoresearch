@@ -255,6 +255,25 @@ Checks that must pass:
 - no secrets, absolute local paths, or generated checkpoints committed;
 - `git status` in the target repo shows only the intended harness commit.
 
+### Local asset preflight
+
+`remote.env` is injected on the execution host, not in your local shell. Before
+a long remote run, validate every local asset **on that host**:
+
+```bash
+ssh <remote.host> 'test -e /path/to/data && test -e /path/to/model'
+ssh <remote.host> '<remote.python> - <<"PY"
+from transformers import AutoTokenizer
+t = AutoTokenizer.from_pretrained("/path/to/tokenizer", local_files_only=True)
+print(len(t))
+PY'
+```
+
+For gpt-neox-20b the expected vocab is `50277`. A tokenizer is a local asset
+just like data and checkpoints: if it is missing, download it or point
+`RSI_DFM_TOKENIZER` / the project's tokenizer env at the local directory. Do
+not silently fall back to a network download on an offline server.
+
 For remote runs, additionally:
 
 ```bash

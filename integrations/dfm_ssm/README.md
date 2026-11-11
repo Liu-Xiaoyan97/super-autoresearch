@@ -8,6 +8,9 @@ This adapter is **target-owned**. RSI core does not import it. It is wired to
 `remote.env` is injected by RSI's `RemoteRunner` into the SSH command. It is
 not present when you invoke `run_experiment.py` directly on the host/container;
 set the same variables (or pass `--data` / `--checkpoint`) for a local test.
+The tokenizer can be a local directory, e.g.
+`RSI_DFM_TOKENIZER=/home/sl/mamba/checkpoints`; it is validated before
+training.
 
 ## Contract
 

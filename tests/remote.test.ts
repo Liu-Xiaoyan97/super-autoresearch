@@ -117,6 +117,7 @@ test("the dfm fixture injects remote.env into the SSH command", () => {
     "/home/sl/mamba/projects/dfm-ssm-run-1/out/process-0001.json",
   );
   assert.match(invocation.inner, /RSI_DFM_TRAIN_DATA=\/home\/sl\/SlimPajama-10B/);
+  assert.match(invocation.inner, /RSI_DFM_TOKENIZER=\/home\/sl\/mamba\/checkpoints/);
   assert.match(invocation.inner, /CUDA_VISIBLE_DEVICES=0/);
   assert.match(invocation.inner, /bench\/rsi_dfm_train_eval\.py/);
 });

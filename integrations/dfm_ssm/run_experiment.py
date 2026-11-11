@@ -147,6 +147,22 @@ def expand_train_command(
     return command
 
 
+def check_local_asset(value: str, label: str, env_name: str) -> None:
+    """Validate an absolute/~ path before a long remote training run.
+
+    Hugging Face repo ids (for example ``EleutherAI/gpt-neox-20b``) are not
+    local paths and are skipped; the target's own loader handles them.
+    """
+    if not value or not value.startswith(("/", "~", "./", "../")):
+        return
+    path = Path(value).expanduser()
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{label} not found: {path} (from {env_name}); "
+            "remote.env is injected by RemoteRunner on the GPU host"
+        )
+
+
 def find_repo(explicit: str | None) -> Path:
     if explicit:
         return Path(explicit).expanduser().resolve()
@@ -175,6 +191,8 @@ def train(
         )
     if not Path(data_path).expanduser().exists():
         raise FileNotFoundError(f"training data not found: {data_path}")
+    check_local_asset(args.tokenizer, "tokenizer", "RSI_DFM_TOKENIZER")
+    check_local_asset(args.base_model, "base model", "RSI_DFM_BASE_MODEL")
 
     steps = args.train_steps or env_int("TRAIN_STEPS", SCOPE_TRAIN_STEPS[scope])
     if steps <= 0:
