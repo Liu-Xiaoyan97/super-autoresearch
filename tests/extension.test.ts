@@ -124,7 +124,7 @@ test("a dispatched run reports to the foreground session without blocking", asyn
   assert.equal(String(dispatched.details.ticket_id).startsWith("run-"), true);
   assert.equal(dispatched.details.final, undefined);
 
-  await until(() => messages.length > 0);
+  await until(() => messages.some((item) => String(item.message.content).includes("RSI run finished")));
   const result = messages.find((item) => String(item.message.content).includes("RSI run finished"));
   assert.ok(result, `expected a result notice, got ${JSON.stringify(messages.map((item) => item.message.content))}`);
   assert.equal(result!.message.customType, "rsi-superagent");

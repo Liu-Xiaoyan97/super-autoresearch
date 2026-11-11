@@ -7,7 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { MockLLMProvider } from "../src/rsi/providers/mock.ts";
-import { SuperagentLLMProvider } from "../src/rsi/providers/superagent.ts";
+import { PiWorker, SuperagentLLMProvider } from "../src/rsi/providers/superagent.ts";
 import { Engine } from "../src/rsi/superagent/engine.ts";
 import { InlineWorker, type Executor } from "../src/rsi/superagent/executor.ts";
 import type { PolicySettings, RunSpec, Ticket } from "../src/rsi/superagent/model.ts";
@@ -137,10 +137,13 @@ test("a blocked report becomes an LLM error carrying the question", async () => 
 
 test("a mock run executes the SOP as task tickets and ends completed", async () => {
   const out = tempDir("rsi-superagent-run-");
+  const notices: Array<{ kind: string; ticketId: string; stage?: string }> = [];
   const runtime = new SuperagentRuntime({
     cwd: repoRoot,
     inMemory: true,
     workerFactory: () => new InlineWorker(new MockLLMProvider(null, 7)),
+    onNotice: (notice) => notices.push(notice),
+    notifyTaskReports: true,
   });
   const { session } = runtime.dispatch({
     problem: fixture("ood_frozen_encoder"),
@@ -164,6 +167,8 @@ test("a mock run executes the SOP as task tickets and ends completed", async () 
   assert.equal(status!.stages.some((stage) => stage.stage === "limits"), true);
   assert.equal(status!.stages.some((stage) => stage.stage === "seeds"), true);
   assert.equal(status!.tickets.every((ticket) => (ticket.ended as { outcome?: string } | null)?.outcome === "completed"), true);
+  assert.ok(notices.some((notice) => notice.kind === "started" && notice.stage === "limits"));
+  assert.ok(notices.some((notice) => notice.kind === "report" && String(notice.ticketId).startsWith("task-")));
 
   const tasks = session.engine.tickets({ runId: session.runId, kind: "task" });
   assert.equal(tasks.every((ticket) => ticket.mandate.basis === "run"), true);
@@ -182,10 +187,13 @@ test("a mock run executes the SOP as task tickets and ends completed", async () 
   };
   const statusCard = await superagentAction(host, { action: "status", run_id: session.runId });
   assert.match(statusCard.content[0].text, /run /);
+  assert.match(statusCard.content[0].text, new RegExp(`run ticket: ${session.ticketId}`));
+  assert.match(statusCard.content[0].text, new RegExp(String(status!.tickets[0].id)));
   assert.equal((statusCard.details.status as { ended?: { outcome: string } }).ended?.outcome, "completed");
 
   const ticketsCard = await superagentAction(host, { action: "tickets", run_id: session.runId });
   assert.match(ticketsCard.content[0].text, /limits|seeds|baseline/);
+  assert.match(ticketsCard.content[0].text, new RegExp(String(status!.tickets[0].id)));
 
   const one = await superagentAction(host, { action: "ticket", run_id: session.runId, ticket_id: tasks[0].id });
   assert.match(one.content[0].text, /mandate: explicit\/run/);
@@ -203,4 +211,54 @@ test("a mock run executes the SOP as task tickets and ends completed", async () 
   assert.equal(refused.isError, true);
 
   runtime.closeAll();
+});
+
+test("a Pi worker without a structured report fails instead of silently returning prose", async () => {
+  const model = { provider: "test", id: "model", maxTokens: 128 };
+  const registry = {
+    find: () => model,
+    getAvailable: () => [model],
+    hasConfiguredAuth: () => true,
+    complete: async () => {
+      throw new Error("unused");
+    },
+  };
+  const sdk = {
+    getAgentDir: () => "/tmp/rsi-pi-agent",
+    DefaultResourceLoader: class {
+      constructor(_: unknown) {}
+      async reload() {}
+    },
+    createAgentSession: async () => ({
+      session: {
+        prompt: async () => {},
+        getLastAssistantText: () => "<not a JSON answer>",
+        abort: async () => {},
+        dispose: () => {},
+        messages: [],
+      },
+    }),
+    SessionManager: { inMemory: () => ({}) },
+  };
+  const worker = new PiWorker({ cwd: repoRoot, registry, sdk, thinkingLevel: "low" });
+  const ticket = {
+    id: "task-json",
+    kind: "task",
+    stage: "limits",
+    task: "limitations.extract",
+    title: "limitations.extract",
+    payload: {
+      task: "limitations.extract",
+      role: "limits",
+      system: "system",
+      user: "user",
+      provider: "test",
+      model: "model",
+      schemaName: "LimitationBatch",
+      temperature: 0.2,
+      maxTokens: 128,
+      meta: {},
+    },
+  } as unknown as Ticket;
+  await assert.rejects(() => worker.run(ticket, new AbortController().signal), /valid JSON/);
 });

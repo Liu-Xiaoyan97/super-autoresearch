@@ -56,6 +56,8 @@ export interface RuntimeOptions {
   onNotice?: (notice: Notice) => void;
   onTrace?: (kind: string, data: Record<string, unknown>) => void;
   clock?: () => Date;
+  /** Send task start/ready reports to the foreground UI; failures always notify. */
+  notifyTaskReports?: boolean;
   /** Keep the run store in memory (tests). */
   inMemory?: boolean;
 }
@@ -80,6 +82,8 @@ export interface DispatchParams {
 export interface RunStatus {
   run_id: string;
   root: string;
+  /** The run ticket id, the id a person uses to inspect or stop the run. */
+  run_ticket_id?: string;
   title: string;
   state: string;
   ended?: { outcome: TicketOutcome; at: string; reason?: string };
@@ -120,6 +124,7 @@ export class RunSession {
     onNotice?: (notice: Notice) => void;
     onTrace?: (kind: string, data: Record<string, unknown>) => void;
     clock?: () => Date;
+    notifyTaskReports?: boolean;
   }) {
     this.spec = options.spec;
     this.runId = path.basename(options.spec.root);
@@ -146,6 +151,7 @@ export class RunSession {
       clock: options.clock,
       onTrace: options.onTrace,
       onNotice: options.onNotice,
+      notifyTaskReports: options.notifyTaskReports ?? false,
     });
     this.engine = engineRef;
     const trigger = this.engine.intake({
@@ -379,6 +385,7 @@ export class SuperagentRuntime {
       onNotice: this.options.onNotice,
       onTrace: this.options.onTrace,
       clock: this.options.clock,
+      notifyTaskReports: this.options.notifyTaskReports ?? true,
     });
   }
 
@@ -523,6 +530,7 @@ export function statusOfSnapshot(snapshot: Snapshot, runId: string, root: string
   return {
     run_id: runId,
     root,
+    run_ticket_id: run?.id,
     title: run?.title ?? runId,
     state: run ? ticketStage(run) : "unknown",
     ended: run?.ended ? { outcome: run.ended.outcome, at: run.ended.at, reason: run.ended.reason } : undefined,
@@ -542,6 +550,7 @@ export function statusOf(engine: Engine, runId: string): RunStatus {
   return {
     run_id: runId,
     root: run?.run?.root ?? "",
+    run_ticket_id: run?.id,
     title: run?.title ?? runId,
     state: run ? ticketStage(run) : "unknown",
     ended: run?.ended ? { outcome: run.ended.outcome, at: run.ended.at, reason: run.ended.reason } : undefined,

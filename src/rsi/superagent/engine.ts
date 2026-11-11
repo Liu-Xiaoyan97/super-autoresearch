@@ -76,7 +76,7 @@ export class PolicyHoldError extends ProtocolError {
 }
 
 export interface Notice {
-  kind: "report" | "attention" | "result" | "failure";
+  kind: "started" | "report" | "attention" | "result" | "failure";
   ticketId: string;
   runId?: string;
   stage?: Stage;
@@ -647,6 +647,15 @@ export class Engine {
     ticket.updatedAt = at;
     this.store.tickets.save(ticket);
     this.emit({ type: "assignment.started", at, data: { ticketId: ticket.id, assignmentId: assignment.id, attempt: assignment.attempts } });
+    if (ticket.kind === "task") {
+      this.notice({
+        kind: "started",
+        ticketId: ticket.id,
+        runId: ticket.runId,
+        stage: ticket.stage,
+        text: `${ticket.task ?? ticket.id} (${ticket.stage}) started on attempt ${assignment.attempts}`,
+      });
+    }
     try {
       this.executor.start(ticket, assignment);
     } catch (error) {

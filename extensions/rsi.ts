@@ -191,6 +191,7 @@ function runtimeFor(ctx: ToolContext): SuperagentRuntime {
     policy: HOST.policy.settings,
     workerFactory: (context) => workerFor(ctx, context.spec, context.signal),
     onNotice: (notice) => notify(ctx, notice),
+    notifyTaskReports: true,
   });
   HOST.runtimes.set(key, runtime);
   return runtime;
@@ -231,16 +232,25 @@ function workerFor(ctx: ToolContext, spec: RunSpec, signal: AbortSignal): TaskWo
 function notify(ctx: ToolContext, notice: Notice): void {
   const pi = PI;
   if (!pi?.sendMessage) return;
-  const head = notice.kind === "attention" ? "RSI needs a person" : notice.kind === "result" ? "RSI run finished" : "RSI run problem";
+  const head = notice.kind === "attention"
+    ? "RSI needs a person"
+    : notice.kind === "result"
+      ? "RSI run finished"
+      : notice.kind === "failure"
+        ? "RSI run problem"
+        : notice.kind === "started"
+          ? "RSI task started"
+          : "RSI task report";
   const where = notice.runId && notice.ticketId ? ` (run ${notice.runId}, ticket ${notice.ticketId})` : "";
   const answer = notice.kind === "attention" && notice.runId && notice.ticketId
     ? `\nAnswer with rsi_superagent action=answer run_id=${notice.runId} ticket_id=${notice.ticketId}.`
     : "";
   const text = `${head}${where}: ${notice.text}${answer}`;
+  const triggerTurn = notice.kind === "attention" || notice.kind === "failure" || notice.kind === "result";
   try {
     pi.sendMessage(
       { customType: "rsi-superagent", content: text, display: true, details: notice },
-      { deliverAs: "followUp", triggerTurn: true },
+      { deliverAs: "followUp", triggerTurn },
     );
   } catch {
     try {

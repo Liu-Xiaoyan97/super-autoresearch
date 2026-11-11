@@ -13,7 +13,7 @@
  */
 
 import { asRecord } from "../json.ts";
-import { LLMError, LLMProvider, type LLMRequest, type LLMResponse } from "./base.ts";
+import { LLMError, LLMProvider, extractJson, type LLMRequest, type LLMResponse } from "./base.ts";
 import { PiLLMProvider, usageOf, type PiRegistry, type PiProviderOptions } from "./pi.ts";
 import type { TaskWorker, WorkerOutcome } from "../superagent/executor.ts";
 import { REPORT_PARAMETERS, REPORT_TOOL_NAME, normalizeEnvelope, outputText, payloadOf } from "../superagent/executor.ts";
@@ -177,8 +177,17 @@ export class PiWorker implements TaskWorker {
         }
         const text = (session.getLastAssistantText() ?? "").trim();
         const envelope = normalizeEnvelope(collected.envelope, text);
-        if (envelope.state === "ready" && !outputText(envelope.output)) {
+        const output = outputText(envelope.output);
+        if (envelope.state === "ready" && !output) {
           throw new Error("worker returned neither an output.text nor assistant text");
+        }
+        // A worker that writes prose/tool-call XML instead of the requested
+        // structured answer is a failed task, not a ready result with a
+        // permissive fallback. The ticket report is what the foreground sees.
+        if (envelope.state === "ready" && payload.schemaName && extractJson(output) === null) {
+          throw new Error(
+            `worker returned no valid JSON for ${payload.schemaName}; report state=failed instead of ready`,
+          );
         }
         const assistants = session.messages.filter((message) => message.role === "assistant");
         return {

@@ -89,10 +89,25 @@ export function formatStatus(status: RunStatus): string {
   const stages = status.stages.length
     ? status.stages.map((stage) => `  ${stage.section} ${stage.title}: ${stage.state} (${stage.done}/${stage.tasks} tasks done)`).join("\n")
     : "  no stage has run yet";
+  const ticketLines = status.tickets.length
+    ? [
+        `tickets (${status.tickets.length}):`,
+        ...status.tickets.slice(0, 30).map((ticket) => {
+          const id = String(ticket.id ?? "?");
+          const state = String(ticket.state ?? "?");
+          const stage = String(ticket.stage ?? "");
+          const task = ticket.task ? ` · ${String(ticket.task)}` : "";
+          return `  ${id.padEnd(14)} ${state.padEnd(12)} ${stage}${task}`;
+        }),
+        ...(status.tickets.length > 30 ? [`  ... ${status.tickets.length - 30} more; /rsi tickets ${status.run_id}`] : []),
+      ]
+    : [];
   return [
     `run ${status.run_id}: ${status.state}${status.mode ? ` · ${status.mode}` : ""}${status.runner ? `/${status.runner}` : ""}`,
     `root: ${status.root}`,
+    ...(status.run_ticket_id ? [`run ticket: ${status.run_ticket_id}`] : []),
     stages,
+    ...ticketLines,
     `policy: ${status.policy.mode}${status.policy.paused ? " (paused)" : ""} · ${status.policy.version}`,
   ].join("\n") + progress + attention + ended;
 }
@@ -147,7 +162,7 @@ export async function superagentAction(host: SuperagentHost, params: Record<stri
         const status = runtime.status(needRun());
         if (!status) return text(`no run ${runId}`, { run_id: runId }, true);
         const lines = status.tickets.map((ticket) =>
-          `${String(ticket.state).padEnd(14)} ${String(ticket.stage).padEnd(10)} ${String(ticket.task ?? ticket.id)}  ${String((ticket.report as { summary?: string } | null)?.summary ?? "")}`.slice(0, 200),
+          `${String(ticket.id).padEnd(14)} ${String(ticket.state).padEnd(14)} ${String(ticket.stage).padEnd(10)} ${String(ticket.task ?? "")}  ${String((ticket.report as { summary?: string } | null)?.summary ?? "")}`.slice(0, 240),
         );
         return text(lines.length ? lines.join("\n") : "this run has no task tickets yet", { run_id: runId, tickets: status.tickets });
       }
