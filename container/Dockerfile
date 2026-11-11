@@ -12,6 +12,8 @@ FROM ${BASE_IMAGE}
 
 ARG PI_VERSION=1.5.2
 ARG NPM_REGISTRY=https://registry.npmmirror.com
+# Optional build-time apt proxy, e.g. http://host.docker.internal:7890
+ARG APT_PROXY
 
 ENV DEBIAN_FRONTEND=noninteractive \
     NPM_CONFIG_REGISTRY=${NPM_REGISTRY} \
@@ -19,11 +21,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PI_PROVIDER=opencode-go \
     PI_MODEL=deepseek-v4.1-flash
 
-RUN apt-get update \
+RUN if [ -n "$APT_PROXY" ]; then \
+      printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' "$APT_PROXY" "$APT_PROXY" > /etc/apt/apt.conf.d/01proxy; \
+    fi \
+ && apt-get update \
  && apt-get install -y --no-install-recommends \
-      bash ca-certificates curl git jq ripgrep \
+      bash ca-certificates curl git jq ripgrep openssh-client rsync socat \
       python3 python3-venv make \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* /etc/apt/apt.conf.d/01proxy
 
 # Pi ships platform binaries through npm; --ignore-scripts matches the official
 # container recipe and avoids running arbitrary package lifecycle scripts.

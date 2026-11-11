@@ -7,8 +7,8 @@ RSI 的所有研究问题配置都在 **Problem JSON fixture** 里。扩展本�
 |---|---|---|
 | 指标 | `metrics` | `{"name":"mse","direction":"min","tolerance":0.01}` |
 | 研究方向 | `domain`、`subfield`、`directions`、`forbidden`、`constraints` | 见下方完整示例 |
-| 研究代码路径 | `repo`、`repo_ref`、`experiment_command` | `vendor/dfm-ssm`、`rsi-bench`、`bench/rsi_dfm_train_eval.py` |
-| 远程 GPU | `remote` | `host`、`dir`、`gpu_ids`、`env`、`timeout_s` |
+| 研究代码路径 | `repo`、`repo_ref`、`experiment_command` | `/repos/dfm-ssm`、`rsi-bench`、`bench/rsi_dfm_train_eval.py` |
+| 远程 GPU / 路径映射 | `remote` | `host`、`worktree`、`out`、`python`、`setup`、`gpu_ids` |
 
 最完整的真实示例：`examples/dfm_ssm.json`。合成示例：
 `examples/ood_frozen_encoder.json`、`examples/meta_refine.json`。
@@ -24,7 +24,7 @@ RSI 的所有研究问题配置都在 **Problem JSON fixture** 里。扩展本�
   "source_paper": "Mamba-3 (arXiv:2603.15569) with the DFM-Mamba path",
 
   // ── 研究代码路径（外部 git 仓库）────────────────────────────
-  "repo": "vendor/dfm-ssm",        // 相对 cwd；容器内 cwd=/workspace/RSI
+  "repo": "/repos/dfm-ssm",        // 外部 git 仓库（compose 挂载）
   "repo_ref": "rsi-bench",         // 基线分支 / tag / commit；默认 HEAD
   "experiment_command": [          // 在候选 worktree 中执行
     "{python}", "bench/rsi_dfm_train_eval.py",
@@ -38,7 +38,10 @@ RSI 的所有研究问题配置都在 **Problem JSON fixture** 里。扩展本�
   "remote": {
     "host": "",                    // 或 RSI_REMOTE_HOST
     "dir": "/data/rsi",
+    "worktree": "/home/sl/projects/dfm-ssm-{run_id}",  // 本地→服务器项目路径
+    "out": "/home/sl/projects/dfm-ssm-{run_id}/out",
     "python": "/opt/conda/envs/dfm/bin/python",
+    "setup": "source /opt/conda/etc/profile.d/conda.sh && conda activate dfm",
     "ssh_args": ["-o", "BatchMode=yes"],
     "gpu_ids": "0",                // → CUDA_VISIBLE_DEVICES
     "env": {
@@ -144,10 +147,14 @@ node src/rsi/cli.ts run examples/my_problem.json --mock --strict-directions
 ## 研究代码路径与 benchmark 契约
 
 - `repo`：必须是**外部 git 仓库**的路径（绝对路径，或相对当前 cwd）。
-  容器内 cwd 是 `/workspace/RSI`，所以 `vendor/dfm-ssm` =
-  `/workspace/RSI/vendor/dfm-ssm`。
+  推荐把宿主工作区挂到容器 `/repos`，然后写 `/repos/dfm-ssm`；也可以继续用
+  `/workspace/RSI/vendor/dfm-ssm`。git 提交/分支发生在该仓库，不在 RSI 仓库。
 - `repo_ref`：基线 ref；默认 `HEAD`。dfm 使用 `rsi-bench`，因为 benchmark
   脚本在目标仓库的那个分支上。
+- `remote.worktree` / `remote.out`：本地项目路径到服务器路径的映射模板，支持
+  `{run_id}`、`{repo}`。默认 `<remote.dir>/rsi/<run_id>/worktree`。
+- `remote.python` / `remote.setup`：指定远程 Python 环境；`setup` 可执行
+  `conda activate`、`module load` 等。
 - `experiment_command`：在候选 worktree 中执行；支持占位符：
   `{scope}`、`{out}`、`{repo}`、`{commit}`、`{python}`（远程 Python）。
 - 默认命令（未设置时）：

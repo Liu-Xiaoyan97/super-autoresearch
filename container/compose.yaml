@@ -19,12 +19,16 @@ services:
       RSI_REMOTE_HOST: ${RSI_REMOTE_HOST:-}
       # Highest permission for superagent SOP rules (experiments included).
       RSI_SUPERAGENT_POLICY: ${RSI_SUPERAGENT_POLICY:-yolo}
+      # Host workspace mounted at /repos in the container.
+      RSI_TARGET_REPO: ${RSI_TARGET_REPO:-/repos/dfm-ssm}
       # The Kiri VM cannot reach host loopback; use host.docker.internal.
       HTTP_PROXY: ${CONTAINER_HTTP_PROXY:-}
       HTTPS_PROXY: ${CONTAINER_HTTPS_PROXY:-}
       NO_PROXY: ${CONTAINER_NO_PROXY:-localhost,127.0.0.1,.local,host.kiri.internal}
     volumes:
       - ..:/workspace/RSI
+      - ${RSI_EXTERNAL_ROOT:-./external}:/repos
+      - ./ssh:/root/.ssh:ro
       - ./pi-home:/root/.pi/agent
     stdin_open: true
     tty: true

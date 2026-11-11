@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildRemoteInvocation, GitWorkspace, RemoteRunner, shellQuote } from "../src/rsi/runtime/workspace.ts";
+import {
+  buildRemoteInvocation,
+  expandRemoteTemplate,
+  GitWorkspace,
+  RemoteRunner,
+  shellQuote,
+} from "../src/rsi/runtime/workspace.ts";
 import { defaultConfig } from "../src/rsi/config.ts";
 import { loadProblem } from "../src/rsi/run.ts";
 import { fixture, tempDir } from "./helpers.ts";
@@ -11,6 +17,9 @@ import type { RemoteConfig } from "../src/rsi/types.ts";
 const remote: RemoteConfig = {
   host: "gpu-node",
   dir: "/data/rsi",
+  worktree: "",
+  out: "",
+  setup: "",
   python: "/opt/conda/bin/python",
   ssh_args: ["-o", "BatchMode=yes"],
   rsync_args: [],
@@ -87,4 +96,18 @@ test("a Problem with remote selects RemoteRunner", () => {
     tempDir("rsi-remote-select-"),
   );
   assert.ok(workspace.runner instanceof RemoteRunner);
+});
+
+test("remote path templates and setup are applied", () => {
+  const worktree = expandRemoteTemplate("/home/sl/projects/dfm-ssm-{run_id}", "run-1", "dfm-ssm");
+  assert.equal(worktree, "/home/sl/projects/dfm-ssm-run-1");
+  const invocation = buildRemoteInvocation(
+    { ...remote, setup: "source /opt/conda/etc/profile.d/conda.sh && conda activate dsfm" },
+    ["{python}", "bench/run.py"],
+    req,
+    worktree,
+    "/home/sl/projects/dfm-ssm-run-1/out",
+  );
+  assert.match(invocation.inner, /conda activate dsfm/);
+  assert.match(invocation.inner, /cd \/home\/sl\/projects\/dfm-ssm-run-1/);
 });

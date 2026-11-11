@@ -22,8 +22,11 @@ worktree 的快照，然后执行 benchmark。服务器不需要联网，也不�
 ```json
 "remote": {
   "host": "gpu-node",                  // 或留空，用 RSI_REMOTE_HOST
-  "dir": "/data/rsi",                  // 服务器上的基础目录
+  "dir": "/data/rsi",                  // 默认基础目录
+  "worktree": "/home/sl/projects/dfm-ssm-{run_id}",  // 可选：本地项目→服务器路径映射
+  "out": "/home/sl/projects/dfm-ssm-{run_id}/out",   // 可选：远程输出目录
   "python": "/opt/conda/envs/dfm/bin/python",
+  "setup": "source /opt/conda/etc/profile.d/conda.sh && conda activate dfm",
   "ssh_args": ["-o", "BatchMode=yes", "-o", "ServerAliveInterval=30"],
   "rsync_args": [],
   "gpu_ids": "0",                      // → CUDA_VISIBLE_DEVICES
@@ -43,8 +46,11 @@ worktree 的快照，然后执行 benchmark。服务器不需要联网，也不�
 | 字段 | 作用 |
 |---|---|
 | `host` | SSH 目标；留空时读容器环境 `RSI_REMOTE_HOST` |
-| `dir` | 远程基础目录；每次 run 使用 `<dir>/rsi/<run_id>/` |
+| `dir` | 默认远程基础目录；每次 run 使用 `<dir>/rsi/<run_id>/` |
+| `worktree` | 远程项目路径模板；支持 `{run_id}`、`{repo}`。默认 `<dir>/rsi/<run_id>/worktree` |
+| `out` | 远程输出目录模板；默认远程 worktree 的兄弟目录 `out/` |
 | `python` | 远程 Python；`experiment_command` 中用 `{python}` |
+| `setup` | `cd` 之后、命令之前执行的 shell 初始化（conda/module/venv） |
 | `ssh_args` | 额外 SSH 参数（端口、跳板机、BatchMode） |
 | `rsync_args` | 额外 rsync 参数（如 `--bwlimit`） |
 | `gpu_ids` | `"0"`、`"0,1"`、`"2"` → `CUDA_VISIBLE_DEVICES` |
@@ -54,6 +60,42 @@ worktree 的快照，然后执行 benchmark。服务器不需要联网，也不�
 
 默认还会排除：`.git`、`runs`、`patches`、`__pycache__`、`.pytest_cache`、
 `node_modules`、`.venv*`、`*.pyc`。
+
+## 外部项目与路径映射
+
+目标项目可以完全不在本仓库内。推荐在 `container/.env`（gitignored）配置：
+
+```dotenv
+RSI_EXTERNAL_ROOT=/Users/liuxiaoyan/workspace
+RSI_TARGET_REPO=/repos/dfm-ssm
+```
+
+compose 把宿主机 `RSI_EXTERNAL_ROOT` 挂载到容器 `/repos`。fixture：
+
+```jsonc
+"repo": "/repos/dfm-ssm",
+"remote": {
+  "worktree": "/home/sl/projects/dfm-ssm-{run_id}",
+  "out": "/home/sl/projects/dfm-ssm-{run_id}/out"
+}
+```
+
+本地 git 仓库（宿主 `/Users/.../dfm-ssm`）仍是候选 commit/分支的唯一来源；
+服务器只收到当前候选 worktree 的 rsync 快照。
+
+## 指定服务器 Python 环境
+
+```jsonc
+// 方式 A：绝对路径
+"python": "/opt/conda/envs/dfm/bin/python"
+
+// 方式 B：先激活环境，再用 {python}
+"python": "python",
+"setup": "source /opt/conda/etc/profile.d/conda.sh && conda activate dfm"
+```
+
+`setup` 在 `cd <remote worktree>` 之后执行；适合 conda activate、module load、
+`LD_LIBRARY_PATH` 等。
 
 ## 容器内设置 SSH 目标
 

@@ -61,6 +61,9 @@ test("RemoteRunner rsyncs the local worktree, runs over ssh, and fetches metrics
     const remote: RemoteConfig = {
       host: "fake-host",
       dir: tempDir("rsi-remote-"),
+      worktree: "",
+      out: "",
+      setup: "",
       python: "python3",
       ssh_args: [],
       rsync_args: [],

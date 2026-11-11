@@ -48,7 +48,7 @@ shift || true
 case "$cmd" in
   build)
     ensure_base
-    "${COMPOSE[@]}" build "$@"
+    "${COMPOSE[@]}" build --build-arg "APT_PROXY=${APT_PROXY:-http://host.docker.internal:7890}" "$@"
     ;;
   run|up)
     ensure_base
@@ -73,6 +73,9 @@ case "$cmd" in
   auth)
     exec "$ROOT/container/sync-auth.sh" "$@"
     ;;
+  ssh)
+    exec "$ROOT/container/sync-ssh.sh" "$@"
+    ;;
   logs)
     "${COMPOSE[@]}" logs "$@"
     ;;
@@ -80,7 +83,7 @@ case "$cmd" in
     "${COMPOSE[@]}" down "$@"
     ;;
   *)
-    echo "usage: $0 {build|run|shell|exec|pi|creds|auth|logs|down} ..." >&2
+    echo "usage: $0 {build|run|shell|exec|pi|creds|auth|ssh|logs|down} ..." >&2
     exit 2
     ;;
 esac

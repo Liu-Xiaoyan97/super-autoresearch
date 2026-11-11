@@ -293,8 +293,14 @@ export function buildRemoteInvocation(
     .map(([key, value]) => `${key}=${shellQuote(value)}`)
     .join(" ");
   const timeout = remote.timeout_s > 0 ? `timeout ${Math.trunc(remote.timeout_s)} ` : "";
-  const inner = `cd ${shellQuote(remoteWorktree)} && ${exports ? `export ${exports}; ` : ""}${timeout}${argv}`;
+  const setup = remote.setup.trim() ? `${remote.setup.trim()}; ` : "";
+  const inner = `cd ${shellQuote(remoteWorktree)} && ${setup}${exports ? `export ${exports}; ` : ""}${timeout}${argv}`;
   return { inner, env };
+}
+
+/** Expand {run_id} (and {repo}) in a remote path template. */
+export function expandRemoteTemplate(template: string, runId: string, repoName: string): string {
+  return template.replaceAll("{run_id}", safeName(runId)).replaceAll("{repo}", repoName);
 }
 
 interface ShResult {
@@ -395,10 +401,25 @@ export class RemoteRunner implements Runner {
         wall_time_s: 0,
       };
     }
+    if (!this.remote.dir && !this.remote.worktree) {
+      return {
+        metrics: {},
+        status: "failed",
+        log_path: "",
+        stdout: "",
+        stderr: "remote.dir or remote.worktree is required",
+        wall_time_s: 0,
+      };
+    }
     const seq = ++this.sequence;
-    const remoteRoot = path.posix.join(this.remote.dir, "rsi", safeName(this.runId));
-    const remoteWorktree = path.posix.join(remoteRoot, "worktree");
-    const remoteOutDir = path.posix.join(remoteRoot, "out");
+    const repoName = safeName(path.basename(path.resolve(req.repo.repo ?? req.repo.path)));
+    const baseDir = this.remote.dir || "~/rsi";
+    const worktreeTemplate =
+      this.remote.worktree || path.posix.join(baseDir, "rsi", "{run_id}", "worktree");
+    const remoteWorktree = expandRemoteTemplate(worktreeTemplate, this.runId, repoName);
+    const outTemplate =
+      this.remote.out || path.posix.join(path.posix.dirname(remoteWorktree), "out");
+    const remoteOutDir = expandRemoteTemplate(outTemplate, this.runId, repoName);
     const remoteOut = path.posix.join(remoteOutDir, `process-${String(seq).padStart(4, "0")}.json`);
     const logPath = this.store.artifact(`experiments/remote-${String(seq).padStart(4, "0")}.json`);
     let stdout = "";

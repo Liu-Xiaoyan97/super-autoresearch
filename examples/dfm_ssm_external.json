@@ -1,0 +1,149 @@
+{
+  "id": "dfm-ssm-external-wikitext-ppl",
+  "statement": "Improve DFM-Mamba (discrete flow matching on Mamba) so that after training, wikitext word perplexity measured by lm-eval decreases, without changing the evaluation protocol or using extra evaluation data.",
+  "domain": "discrete flow matching / state space models",
+  "subfield": "DFM-Mamba training and wikitext language modeling",
+  "source_paper": "Mamba-3: Improved Sequence Modeling using State Space Principles (arXiv:2603.15569) with the DFM-Mamba path",
+  "repo": "${RSI_TARGET_REPO}",
+  "repo_ref": "rsi-bench",
+  "experiment_command": [
+    "{python}",
+    "bench/rsi_dfm_train_eval.py",
+    "--repo",
+    "{repo}",
+    "--scope",
+    "{scope}",
+    "--out",
+    "{out}",
+    "--device",
+    "cuda",
+    "--train-steps",
+    "2",
+    "--train-batch-size",
+    "2",
+    "--grad-accum",
+    "2",
+    "--max-length",
+    "256",
+    "--lm-eval-batch-size",
+    "1",
+    "--eval-max-length",
+    "512",
+    "--flow-time",
+    "off"
+  ],
+  "remote": {
+    "host": "8818",
+    "dir": "/home/sl/rsi",
+    "python": "/home/sl/coral-eval-env-recovery-20261109-1345/.eval-venv/bin/python",
+    "ssh_args": [
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ServerAliveInterval=30"
+    ],
+    "rsync_args": [],
+    "gpu_ids": "0",
+    "env": {
+      "HF_DATASETS_CACHE": "/home/sl/coral-e2-C512L21H2720-1b-bf16only-20261109-1020/eval/hf-official-wikitext/datasets",
+      "HF_HUB_OFFLINE": "1",
+      "TRANSFORMERS_OFFLINE": "1",
+      "HF_DATASETS_OFFLINE": "1",
+      "TOKENIZERS_PARALLELISM": "false",
+      "RSI_DFM_TRAIN_DATA": "/home/sl/rsi-data/train.jsonl",
+      "RSI_DFM_BASE_MODEL": "/home/sl/rsi-data/tiny-mamba",
+      "RSI_DFM_TOKENIZER": "/home/sl/rsi-data/tokenizer",
+      "RSI_DFM_BACKEND": "reference",
+      "RSI_DFM_TRAIN_STEPS": "2",
+      "RSI_DFM_OFFLINE": "1"
+    },
+    "timeout_s": 3600,
+    "excludes": [
+      "checkpoints",
+      "pretrained",
+      "data"
+    ],
+    "worktree": "/home/sl/projects/dfm-ssm-{run_id}",
+    "out": "/home/sl/projects/dfm-ssm-{run_id}/out",
+    "setup": ""
+  },
+  "datasets": [
+    "wikitext-2-raw-v1"
+  ],
+  "subset_datasets": [
+    "wikitext-2-raw-v1"
+  ],
+  "metrics": [
+    {
+      "name": "word_ppl",
+      "direction": "min",
+      "tolerance": 0.01,
+      "weight": 1.0,
+      "bounds": null
+    }
+  ],
+  "reported_metrics": {
+    "word_ppl": 20.0
+  },
+  "constraints": [
+    "Evaluate with lm-eval task wikitext and report word_perplexity (lower is better)",
+    "Use the same tokenizer, context length, and evaluation split for every candidate",
+    "Match the training budget across candidates unless the idea explicitly changes it",
+    "The GPU server is offline: use preinstalled packages and local data/model caches",
+    "Do not train on wikitext test data",
+    "Do not modify bench/rsi_dfm_train_eval.py or bench/dfm_lm_eval.py"
+  ],
+  "directions": [
+    {
+      "id": "dfm-objective",
+      "title": "DFM training objective",
+      "description": "Change the discrete flow-matching objective or time/noise schedule while keeping the Mamba backbone and tokenizer fixed.",
+      "keywords": [
+        "flow",
+        "posterior",
+        "time",
+        "loss",
+        "mixture"
+      ],
+      "weight": 1.0,
+      "must_include": false
+    },
+    {
+      "id": "block-schedule",
+      "title": "block and context schedule",
+      "description": "Improve block length, context handling, or training sequence composition for language modeling.",
+      "keywords": [
+        "block",
+        "context",
+        "sequence",
+        "chunk"
+      ],
+      "weight": 0.9,
+      "must_include": false
+    },
+    {
+      "id": "training-recipe",
+      "title": "optimization recipe",
+      "description": "Improve optimization, data ordering, or precision handling without changing the evaluation protocol.",
+      "keywords": [
+        "optimizer",
+        "schedule",
+        "warmup",
+        "gradient",
+        "precision"
+      ],
+      "weight": 0.8,
+      "must_include": false
+    }
+  ],
+  "forbidden": [
+    "changing the lm-eval task or word_ppl metric",
+    "modifying bench/rsi_dfm_train_eval.py",
+    "modifying bench/dfm_lm_eval.py",
+    "training on wikitext test data",
+    "using extra evaluation data",
+    "changing the tokenizer or evaluation split"
+  ],
+  "venue": "ICLR",
+  "audience_note": "External-repository variant: the target project lives outside this repository and is mounted at /repos/dfm-ssm in the container. Candidate code is committed in that git repository; only its worktree is rsynced to the GPU server."
+}

@@ -19,10 +19,22 @@ test("the dfm-ssm fixture targets the real repository and injects its runner", (
 });
 
 test("every shipped fixture parses as a Problem", () => {
-  for (const name of ["ood_frozen_encoder", "abort_case", "meta_refine", "dfm_ssm"]) {
+  for (const name of ["ood_frozen_encoder", "abort_case", "meta_refine", "dfm_ssm", "dfm_ssm_external"]) {
     const problem = loadProblem(fixture(name));
     assert.ok(problem.id);
     assert.ok(problem.statement);
     assert.ok(problem.metrics.length > 0);
+  }
+});
+
+test("repo paths expand ${ENV} placeholders", () => {
+  const previous = process.env.RSI_TARGET_REPO;
+  process.env.RSI_TARGET_REPO = "/repos/external-project";
+  try {
+    const problem = loadProblem(fixture("dfm_ssm_external"));
+    assert.equal(problem.repo, "/repos/external-project");
+  } finally {
+    if (previous === undefined) delete process.env.RSI_TARGET_REPO;
+    else process.env.RSI_TARGET_REPO = previous;
   }
 });

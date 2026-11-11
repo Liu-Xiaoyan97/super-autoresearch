@@ -73,13 +73,20 @@ function parseMetric(raw: unknown): MetricSpec {
   });
 }
 
+function expandEnv(value: string): string {
+  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => process.env[name] ?? "");
+}
+
 function parseRemote(raw: unknown): RemoteConfig | null {
   const item = asRecord(raw);
   if (!item) return null;
   return {
     host: str(item.host) || process.env.RSI_REMOTE_HOST || "",
     dir: str(item.dir),
+    worktree: str(item.worktree),
+    out: str(item.out),
     python: str(item.python, "python3"),
+    setup: str(item.setup),
     ssh_args: strArray(item.ssh_args),
     rsync_args: strArray(item.rsync_args),
     gpu_ids: str(item.gpu_ids),
@@ -111,7 +118,10 @@ export function parseProblem(raw: unknown): Problem {
     domain: str(item.domain),
     subfield: str(item.subfield),
     source_paper: str(item.source_paper),
-    repo: typeof item.repo === "string" && item.repo.trim() ? item.repo : null,
+    repo:
+      typeof item.repo === "string" && item.repo.trim()
+        ? expandEnv(item.repo)
+        : null,
     repo_ref:
       typeof item.repo_ref === "string" && item.repo_ref.trim() ? item.repo_ref : null,
     experiment_command: strArray(item.experiment_command).length

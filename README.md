@@ -361,6 +361,68 @@ CLI 不经过 superagent 的 `person` 门，适合先验证远程链路。
 服务器离线时，`lm-eval` 的 wikitext 数据集必须已缓存在
 `HF_DATASETS_CACHE`，模型/tokenizer 必须本地存在。
 
+### 外部目标仓库与本地→服务器路径映射
+
+待优化项目不需要放在本仓库的 `vendor/` 下。推荐做法：
+
+```text
+宿主机：/Users/liuxiaoyan/workspace/dfm-ssm     （独立 git 仓库）
+容器：  /repos/dfm-ssm                           （compose 挂载）
+服务器：/home/sl/projects/dfm-ssm-<run_id>       （rsync 目标）
+```
+
+`container/compose.yaml` 已支持：
+
+```dotenv
+# container/.env（gitignored）
+RSI_EXTERNAL_ROOT=/Users/liuxiaoyan/workspace
+RSI_TARGET_REPO=/repos/dfm-ssm
+```
+
+compose 把宿主 `RSI_EXTERNAL_ROOT` 挂到容器 `/repos`。fixture 使用：
+
+```jsonc
+"repo": "${RSI_TARGET_REPO}",       // 容器内 /repos/dfm-ssm
+"remote": {
+  "worktree": "/home/sl/projects/dfm-ssm-{run_id}",
+  "out": "/home/sl/projects/dfm-ssm-{run_id}/out"
+}
+```
+
+- `repo` 是容器内可访问的本地 git 仓库路径；git 提交/分支仍在这个外部仓库里。
+- `remote.worktree` 是本地项目到服务器路径的映射目标，支持 `{run_id}`、`{repo}`。
+- 默认 `worktree` 是 `<remote.dir>/rsi/<run_id>/worktree`；显式设置后以模板为准。
+- `remote.out` 是服务器上的输出目录；默认是 worktree 的兄弟目录 `out/`。
+- 只在服务器上同步候选 worktree；RSI 项目本身不会上传。
+
+示例 fixture：`examples/dfm_ssm_external.json`。准备外部仓库：
+
+```bash
+DFM_SSM_DIR=/Users/liuxiaoyan/workspace/dfm-ssm ./scripts/setup-dfm-ssm.sh
+```
+
+注意：**当前正在运行的容器**是在这套 compose 配置之前创建的，没有 `/repos`
+挂载。要用外部仓库，需要先重建容器（并确保镜像内的 ssh/rsync/socat 已安装）；
+如果暂时不重建，继续用 `vendor/dfm-ssm` 的 fixture。
+
+### 指定服务器 Python 环境
+
+`remote.python` 可以是绝对路径：
+
+```jsonc
+"python": "/home/sl/coral-eval-env-recovery-20261109-1345/.eval-venv/bin/python"
+```
+
+也可以用 `setup` 先激活 conda/venv，然后让 `{python}` 使用环境内的 `python`：
+
+```jsonc
+"python": "python",
+"setup": "source /home/sl/miniconda3/etc/profile.d/conda.sh && conda activate dsfm"
+```
+
+`setup` 会在 `cd <远程 worktree>` 之后、benchmark 命令之前执行；适用于
+`conda activate`、`module load`、设置 `LD_LIBRARY_PATH` 等。
+
 ### 8. 远程目录与本地产物
 
 服务器每次 run：
@@ -445,7 +507,7 @@ legacy/python/             原 Python 实现（可执行规范）
 ## 测试
 
 ```bash
-npm test            # 87 个离线测试：types、stage、mock、orchestrator、gates、replay
+npm test            # 89 个离线测试：types、stage、mock、orchestrator、gates、replay
 npm run typecheck   # tsc --noEmit，使用 ambient Pi 类型，不复制宿主包
 ```
 

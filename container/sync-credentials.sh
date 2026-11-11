@@ -62,6 +62,8 @@ no_proxy = os.environ.get(
 )
 remote_host = os.environ.get("RSI_REMOTE_HOST", "").strip()
 superagent_policy = os.environ.get("RSI_SUPERAGENT_POLICY", "yolo").strip() or "yolo"
+external_root = os.environ.get("RSI_EXTERNAL_ROOT", "").strip()
+target_repo = os.environ.get("RSI_TARGET_REPO", "/repos/dfm-ssm").strip() or "/repos/dfm-ssm"
 
 with open(out_path, "w", encoding="utf-8") as handle:
     handle.write(
@@ -74,6 +76,8 @@ with open(out_path, "w", encoding="utf-8") as handle:
         f"CONTAINER_NO_PROXY={no_proxy}\n"
         f"RSI_REMOTE_HOST={remote_host}\n"
         f"RSI_SUPERAGENT_POLICY={superagent_policy}\n"
+        f"RSI_EXTERNAL_ROOT={external_root}\n"
+        f"RSI_TARGET_REPO={target_repo}\n"
     )
 os.chmod(out_path, stat.S_IRUSR | stat.S_IWUSR)
 print(f"wrote {out_path} (mode 600)")

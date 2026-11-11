@@ -36,8 +36,14 @@ export interface RemoteConfig {
   host: string;
   /** Base directory on the GPU server (must exist or be creatable). */
   dir: string;
+  /** Optional remote project path template; supports {run_id}. Default: <dir>/rsi/<run_id>/worktree. */
+  worktree: string;
+  /** Optional remote output directory template; supports {run_id}. Default: <worktree>/../out. */
+  out: string;
   /** Remote python executable (default python3). */
   python: string;
+  /** Optional shell setup before the command, e.g. conda activate / module load. */
+  setup: string;
   ssh_args: string[];
   rsync_args: string[];
   /** Value for CUDA_VISIBLE_DEVICES, e.g. "0" or "0,1". */
