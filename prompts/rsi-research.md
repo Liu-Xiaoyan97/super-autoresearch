@@ -2,11 +2,11 @@
 description: Run the ScientistTwo/RSI closed research loop as a superagent run
 argument-hint: "[problem.json] [mode:mock|provider]"
 ---
-Run the RSI superagent on `${1:-examples/ood_frozen_encoder.json}`.
+Run the RSI superagent on `${1:-tests/fixtures/ood_frozen_encoder.json}`.
 
 Steps:
 
-1. Call `rsi_research` with `problem: "${1:-examples/ood_frozen_encoder.json}"`,
+1. Call `rsi_research` with `problem: "${1:-tests/fixtures/ood_frozen_encoder.json}"`,
    `mode: "mock"`, `out: "runs"`, `seed: 7`, and no `wait`. It returns a
    `run_id` and a `ticket_id` immediately; the SOP runs as task tickets.
 2. Tell the user the run id and what the SOP will produce. Do not wait inside

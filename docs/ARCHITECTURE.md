@@ -2,8 +2,8 @@
 
 Companion to `docs/SPEC.md` (the contract) and `docs/analysis/*.md` (the paper
 extraction). This file describes what the TypeScript Pi package *actually* does.
-The original Python implementation is preserved at `legacy/python/` as the
-executable reference; the field names and artifact contract are unchanged.
+It is a port of the original Python 3.11 implementation, which is no longer in
+this tree; the field names and artifact contract are unchanged.
 
 ---
 
@@ -265,7 +265,7 @@ the same workaround.
 * **Real execution** → `runner: "subprocess"`; `Problem.experiment_command`
   runs in the candidate worktree and writes `{"metrics": {...}}` to `--out`.
   The target project owns its benchmark harness; RSI core does not import it.
-  See `examples/dfm_ssm.json` and the optional adapter template in
+  See `examples/dfm_ssm_external.json` and the optional adapter template in
   `integrations/dfm_ssm/`.
 * **One context per problem.** `AgentContext` holds a single `Problem` and
   `scratch.baseline` / `scratch.baseline_full` are deliberately unqualified.
@@ -274,9 +274,10 @@ the same workaround.
 
 ---
 
-## 9. Python parity
+## 9. Port provenance
 
-`legacy/python/` is the original implementation. The TypeScript port preserves:
+The TypeScript package is a port of the original Python 3.11 implementation. The
+port preserves:
 
 - frozen field names and the JSON artifact contract;
 - the deterministic simulated-runner formula (CRC32, headroom compensation,
@@ -290,7 +291,7 @@ Intentional differences:
 - the offline mock provider is explicit and task-keyed instead of Python
   reflection, so mock ids/values are deterministic but not byte-identical;
 - TypeScript uses external git repositories, per-run worktrees, candidate
-  branches/commits, and `Problem.experiment_command`; the Python reference copies
-  snapshots and records patches without executing them;
-- the root test suite is `node:test`; the Python pytest suite is still runnable
-  under `legacy/python/`.
+  branches/commits, and `Problem.experiment_command`; the Python reference copied
+  snapshots and recorded patches without executing them;
+- the test suite is `node:test`; there is no second language runtime to keep in
+  sync.

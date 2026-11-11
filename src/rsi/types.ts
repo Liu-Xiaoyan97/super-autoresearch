@@ -1,9 +1,9 @@
 /**
  * Frozen domain models for the ScientistTwo / RSI loop.
  *
- * Ported from the Python reference (legacy/python/src/scientisttwo/types.py).
- * The field names are part of the artifact contract: state.json, final.json and
- * traces.jsonl from earlier runs stay readable.
+ * Value names come from the original Python implementation; they are part of
+ * the artifact contract: state.json, final.json and traces.jsonl from earlier
+ * runs stay readable.
  */
 
 export type Decision = "good" | "bad" | "engineer" | "refine" | "accept";

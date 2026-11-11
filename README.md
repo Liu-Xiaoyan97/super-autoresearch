@@ -88,7 +88,7 @@ cd "/Users/liuxiaoyan/workspace/RSI "
 
 ```text
 /rsi help
-/rsi run examples/ood_frozen_encoder.json --mock
+/rsi run tests/fixtures/ood_frozen_encoder.json --mock
 /rsi inspect ood-frozen-encoder-s7
 /rsi replay ood-frozen-encoder-s7
 ```
@@ -102,7 +102,7 @@ mock 运行是确定性的、免费的，几秒内就能跑到实验阶段。pro
 ## 快速开始（离线 CLI，无需 Pi / API key）
 
 ```bash
-node src/rsi/cli.ts run examples/ood_frozen_encoder.json --mock
+node src/rsi/cli.ts run tests/fixtures/ood_frozen_encoder.json --mock
 node src/rsi/cli.ts inspect ood-frozen-encoder-s7
 node src/rsi/cli.ts replay  ood-frozen-encoder-s7
 npm test
@@ -190,19 +190,43 @@ RSI 的 novelty 与 reference-audit worker 会自动获得 `web_search` 工具�
 - 项目基准属于目标项目本身。`integrations/` 只是可选适配器模板，不在 Pi
   扩展加载路径内，也不被 `src/rsi/` 引用。
 
-## 目标仓库：dfm-ssm
+## 生成新项目的 adapter
 
-针对真实 Mamba + DFM 仓库的 fixture 在 `examples/dfm_ssm.json`，默认指向
-`vendor/dfm-ssm`（不进入 git）。准备：
+用 `rsi-adapter` skill。它读取一个 `examples/*.json`，检查目标仓库，生成
+`integrations/<project>/run_experiment.py`、`README.md`、`setup.sh` 和
+`adapter.json`：
 
 ```bash
-./scripts/setup-dfm-ssm.sh
+python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
+  --problem examples/<project>.json \
+  --repo /path/to/target \
+  --name <project> \
+  --out integrations/<project>
 ```
 
-该脚本克隆 `git@gitlab.com:Liu-Xiaoyan97/dfm-ssm.git`，并在目标仓库内创建
-`rsi-bench` 分支，放入 `bench/rsi_dfm_train_eval.py` 和 `bench/dfm_lm_eval.py`。
-指标是 **wikitext word-ppl**（lm-eval 的 `word_perplexity`，越低越好）：
-先训练 DFM-Mamba checkpoint，再用 lm-eval 在 wikitext 上评测。
+生成的是契约骨架，`train` / `evaluate` / `parse_metrics` 仍是 TODO；按
+`skills/rsi-adapter/SKILL.md` 的检查表接上目标项目后再跑实验。
+
+## 目标仓库：dfm-ssm
+
+针对真实 Mamba + DFM 仓库的 fixture 在 `examples/dfm_ssm_external.json`。目标项目
+是独立 git 仓库，不放在本仓库的 `vendor/` 下；容器通过 `RSI_TARGET_REPO` 指向挂载
+路径，例如 `/repos/dfm-ssm`。准备：
+
+```bash
+# 宿主机独立仓库：/Users/liuxiaoyan/workspace/dfm-ssm
+# container/.env 中：
+#   RSI_EXTERNAL_ROOT=/Users/liuxiaoyan/workspace
+#   RSI_TARGET_REPO=/repos/dfm-ssm
+
+# 可选：把 adapter 安装到目标仓库的 rsi-bench 分支
+DFM_SSM_DIR=/Users/liuxiaoyan/workspace/dfm-ssm ./scripts/setup-dfm-ssm.sh
+```
+
+脚本在目标仓库内创建/更新 `rsi-bench` 分支，放入
+`bench/rsi_dfm_train_eval.py` 和 `bench/dfm_lm_eval.py`。指标是
+**wikitext word-ppl**（lm-eval 的 `word_perplexity`，越低越好）：先训练
+DFM-Mamba checkpoint，再用 lm-eval 在 wikitext 上评测。
 
 GPU 服务器通过通用 `remote` 配置执行：本地 git worktree 用 `rsync` 同步到
 服务器，SSH 远程运行，`gpu_ids` 写入 `CUDA_VISIBLE_DEVICES`；服务器不需要联网。
@@ -224,10 +248,10 @@ workspace 在目标仓库的 **git worktree** 上执行 `git apply`，并把候�
 - 容器：`pi-agent-rsi`，Pi 自动加载 `/workspace/RSI` 与 `npm:pi-web-search`
 - 远程：SSH 别名 `8818`，用户 `sl`，GPU 0（A800 80GB）
 - 容器 SSH：`/root/.ssh/config`，通过 `socat` + `host.docker.internal:7890` 出网
-- 目标仓库：`vendor/dfm-ssm` 的 `rsi-bench` 分支
+- 目标仓库：宿主机 `/Users/liuxiaoyan/workspace/dfm-ssm`，容器内 `/repos/dfm-ssm` 的 `rsi-bench` 分支
 - benchmark：`bench/rsi_dfm_train_eval.py` + `bench/dfm_lm_eval.py`
 - 指标：lm-eval `wikitext` 的 `word_perplexity`（`word_ppl`，越低越好）
-- 服务器 smoke 资产：`/home/sl/rsi-data/{tiny-mamba,tokenizer,train.jsonl}`
+- 服务器资产：`/home/sl/mamba/checkpoints`、`/home/sl/SlimPajama-10B`、wikitext 缓存（见 fixture `remote.env`）
 
 ### 1. 进入容器和 Pi
 
@@ -262,8 +286,10 @@ RSI_SUPERAGENT_POLICY=yolo pi
 ### 3. 先跑 mock 远程链路（不花 LLM 费用）
 
 ```text
-/rsi run examples/dfm_ssm.json --mock --runner subprocess --max-refine-rounds 0 --max-review-refinements 0
+/rsi run examples/dfm_ssm_external.json --mock --runner subprocess --max-refine-rounds 0 --max-review-refinements 0
 ```
+
+`--mock` 只替换 LLM，不会跳过 adapter；`--runner subprocess` 仍会真实执行目标项目。
 
 查看状态：
 
@@ -275,7 +301,7 @@ RSI_SUPERAGENT_POLICY=yolo pi
 ### 4. 真实 provider + GPU 0
 
 ```text
-/rsi run examples/dfm_ssm.json --runner subprocess --thinking low --max-refine-rounds 0 --max-review-refinements 0 --max-llm-calls 120 --max-wall-time-s 3000
+/rsi run examples/dfm_ssm_external.json --runner subprocess --thinking low --max-refine-rounds 0 --max-review-refinements 0 --max-llm-calls 120 --max-wall-time-s 3000
 ```
 
 如果仍然出现 Attention：
@@ -301,28 +327,26 @@ RSI_SUPERAGENT_POLICY=yolo pi
 ```bash
 cd /workspace/RSI
 
-NODE_USE_ENV_PROXY=1 node src/rsi/cli.ts run examples/dfm_ssm.json   --provider opencode   --model deepseek-v4.1-flash   --runner subprocess   --max-refine-rounds 0   --max-review-refinements 0   --max-llm-calls 120   --max-wall-time-s 3000   --out runs   --seed 7
+NODE_USE_ENV_PROXY=1 node src/rsi/cli.ts run examples/dfm_ssm_external.json   --provider opencode   --model deepseek-v4.1-flash   --runner subprocess   --max-refine-rounds 0   --max-review-refinements 0   --max-llm-calls 120   --max-wall-time-s 3000   --out runs   --seed 7
 ```
 
 CLI 不经过 superagent 的 `person` 门，适合先验证远程链路。
 
 ### 6. 改 GPU / 训练预算
 
-`examples/dfm_ssm.json`：
+`examples/dfm_ssm_external.json` 的 `remote` 示例（实际值以文件为准）：
 
 ```jsonc
 "remote": {
   "host": "8818",
-  "dir": "/home/sl/rsi",
-  "python": "/home/sl/coral-eval-env-recovery-20261109-1345/.eval-venv/bin/python",
-  "gpu_ids": "0",              // 改成 "1" / "0,1" 选择 GPU
-  "timeout_s": 3600,
+  "dir": "/home/sl/mamba",
+  "python": "/home/sl/miniconda3/envs/mamba/bin/python",
+  "gpu_ids": "0",              // 必填；改成 "1" / "0,1" 选择 GPU
+  "timeout_s": 86400,
   "env": {
-    "RSI_DFM_BASE_MODEL": "/home/sl/rsi-data/tiny-mamba",
-    "RSI_DFM_TOKENIZER": "/home/sl/rsi-data/tokenizer",
-    "RSI_DFM_TRAIN_DATA": "/home/sl/rsi-data/train.jsonl",
-    "RSI_DFM_BACKEND": "reference",
-    "RSI_DFM_TRAIN_STEPS": "2"
+    "RSI_DFM_BASE_MODEL": "/home/sl/mamba/checkpoints",
+    "RSI_DFM_TRAIN_DATA": "/home/sl/SlimPajama-10B",
+    "RSI_DFM_BACKEND": "native"
   }
 }
 ```
@@ -478,7 +502,7 @@ backend 导入。`remote.setup` 在 `cd` 之后、benchmark 之前执行；adapt
 | `native` | `MambaLMHeadModel` + CUDA selective scan kernels，最快 | 需要 `selective_scan_cuda`；否则运行时报错 |
 | `reference` | 纯 PyTorch 顺序扫描，CPU/MPS/CUDA 都能跑，但慢 | 无需 CUDA 扩展；适合 smoke/正确性验证 |
 
-- `examples/dfm_ssm.json` 的小型 smoke 用 `reference`；
+- `examples/dfm_ssm_external.json` 的小型 smoke 用 `reference`；
 - `examples/dfm_ssm_external.json` 用 `native`，并在 `remote.setup` 中导出
   `/usr/local/cuda-12.8` 与 `$HOME/mamba`，让编译好的
   `selective_scan_cuda.cpython-310-...so` 可导入。
@@ -612,18 +636,18 @@ skills/rsi-adapter/        从 examples/*.json 生成目标项目 adapter + 安�
 prompts/superagent/        orchestrator / worker / dispatch / replies / policy
 prompts/rsi-research.md    /rsi-research prompt 模板
 tests/                     node:test 套件（离线、无网络）
+tests/fixtures/            合成 fixture（不进入 examples/）
 container/                 Dockerfile、compose、Kiri 辅助脚本、pi-home 配置
-examples/                  Problem fixtures + mock script（含 dfm_ssm.json）
+examples/                  真实外部项目 fixture + mock script
 integrations/dfm_ssm/      dfm-ssm 的 train + lm-eval 适配器（可选，不属于核心）
 scripts/                   仓库准备脚本
 docs/                      SPEC、ARCHITECTURE、PROVIDER、CONTAINER、论文分析
-legacy/python/             原 Python 实现（可执行规范）
 ```
 
 ## 测试
 
 ```bash
-npm test            # 89 个离线测试：types、stage、mock、orchestrator、gates、replay
+npm test            # 离线测试：types、stage、mock、orchestrator、gates、replay
 npm run typecheck   # tsc --noEmit，使用 ambient Pi 类型，不复制宿主包
 ```
 
@@ -631,21 +655,14 @@ npm run typecheck   # tsc --noEmit，使用 ambient Pi 类型，不复制宿主�
 门、review 循环、meta 改进、integrity 检查、artifact/replay 契约，以及成功和
 abort 两条路径。
 
-Python 参考实现仍可运行：
-
-```bash
-cd legacy/python
-PYTHONPATH=src python3 -m pytest -q      # 134 passed
-```
-
 ## 保真边界：这不是什么
 
 - 论文中的数字（`86/107`、`+25.2%`、ScholarPeer/Stanford 分数）是其基础设施的
   评测结果，不在此复现。本仓库复现的是**机制**，并逐条标注 `[PAPER]` /
   `[CHOICE]` / `[INFERENCE]` / `[EXTENSION]`。
-- `examples/ood_frozen_encoder.json` 是**合成** fixture，借用 Procrustes-DS 的
+- `tests/fixtures/ood_frozen_encoder.json` 是**合成** fixture，借用 Procrustes-DS 的
   任务框架；指标是占位值。
-- `examples/meta_refine.json` + `examples/mock_script.json` 是**合成续写**，用于
+- `tests/fixtures/meta_refine.json` + `examples/mock_script.json` 是**合成续写**，用于
   覆盖 §3.5 rebuttal 与 §3.6 meta-refinement。
 - 模拟 runner 不是科学基准。`runner: "subprocess"` 会执行目标仓库的
   `run_experiment.py`；真实运行完全可能诚实地无法超过复现基线。
@@ -661,4 +678,3 @@ PYTHONPATH=src python3 -m pytest -q      # 134 passed
 5. `docs/REMOTE.md` — rsync + SSH 到 GPU 服务器、GPU 选择、离线服务器。
 6. `docs/CONTAINER.md` / `docs/PROVIDER.md` — 运行 Pi 与 opencode-go。
 7. `docs/analysis/*.md` — 论文逐节提取。
-8. `legacy/python/README.md` — 可执行的 Python 参考实现。

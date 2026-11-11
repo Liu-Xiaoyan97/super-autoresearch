@@ -151,13 +151,13 @@ RSI 只做 `rsync` + `ssh`，不会在服务器上 `pip install` 或 `git clone`
 
    由 `./scripts/setup-dfm-ssm.sh` 自动完成。
 
-2. 配置 `examples/dfm_ssm.json` 的 `remote.host`、`remote.python`、
+2. 配置 `examples/dfm_ssm_external.json` 的 `remote.host`、`remote.python`、
    `gpu_ids`、`env` 中的本地模型/数据路径。
 
 3. 运行：
 
 ```text
-/rsi run examples/dfm_ssm.json --runner subprocess --thinking low
+/rsi run examples/dfm_ssm_external.json --runner subprocess --thinking low
 ```
 
 4. benchmark 行为：

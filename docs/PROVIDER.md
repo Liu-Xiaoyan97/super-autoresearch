@@ -79,7 +79,7 @@ Three equivalent layers, from broadest to narrowest:
 3. **Per run** — tool arguments or the slash command:
    ```text
    rsi_research { problem: "...", provider: "opencode-go", model: "glm-5.3-flash", coding_model: "kimi-k3" }
-   /rsi run examples/ood_frozen_encoder.json --provider opencode-go --model glm-5.3-flash
+   /rsi run tests/fixtures/ood_frozen_encoder.json --provider opencode-go --model glm-5.3-flash
    ```
 
 `opencode-go` models include `deepseek-v4.1-flash`, `deepseek-v4-pro`,
@@ -126,7 +126,7 @@ the rest run without extensions or tools. Test it with:
 ./container/up.sh exec pi auth check --provider opencode-go
 ./container/up.sh exec pi --print --no-session --model opencode-go/deepseek-v4.1-flash "Reply with: OK"
 ./container/up.sh exec bash -lc 'cd /workspace/RSI && pi -ne -e ./extensions/rsi.ts -nbt --tools rsi_research -p --no-session \
-  "Call rsi_research with problem examples/ood_frozen_encoder.json, mode mock, out /tmp/rsi-check"'
+  "Call rsi_research with problem tests/fixtures/ood_frozen_encoder.json, mode mock, out /tmp/rsi-check"'
 ```
 
 Expected: `ready`, `OK`, and a completed offline run (no model cost).
@@ -136,7 +136,7 @@ Expected: `ready`, `OK`, and a completed offline run (no model cost).
 | Symptom | Cause | Fix |
 |---|---|---|
 | `no credential for opencode-go` | `.env` missing or container not restarted | `./container/sync-credentials.sh && ./container/up.sh down && ./container/up.sh run` |
-| `MissingSessionID` / 400 | nested call did not pass a session id | use this extension's `PiLLMProvider`/`PiSubagentProvider`; both pass `sessionId` |
+| `MissingSessionID` / 400 | nested call did not pass a session id | use this extension's `PiLLMProvider`/`PiWorker`; both pass `sessionId` |
 | `model '...' is not available` | typo or provider mismatch | `pi --list-models`, then use `provider/model` |
 | Provider works in Pi but not in the CLI | CLI has no Pi model registry | use `--mock`, or set `OPENCODE_API_KEY` and run `--provider opencode` (OpenAI-compatible transport) |
 | `fetch failed` / timeout in the container | Kiri VM cannot reach the host loopback proxy | `./container/up.sh creds` (rewrites to `host.docker.internal:7890`), then `down`/`run` |

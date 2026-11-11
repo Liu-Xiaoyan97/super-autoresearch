@@ -10,8 +10,8 @@ RSI 的所有研究问题配置都在 **Problem JSON fixture** 里。扩展本�
 | 研究代码路径 | `repo`、`repo_ref`、`experiment_command` | `/repos/dfm-ssm`、`rsi-bench`、`bench/rsi_dfm_train_eval.py` |
 | 远程 GPU / 路径映射 | `remote` | `host`、`worktree`、`out`、`python`、`setup`、`gpu_ids` |
 
-最完整的真实示例：`examples/dfm_ssm.json`。合成示例：
-`examples/ood_frozen_encoder.json`、`examples/meta_refine.json`。
+最完整的真实示例：`examples/dfm_ssm_external.json`。合成示例：
+`tests/fixtures/ood_frozen_encoder.json`、`tests/fixtures/meta_refine.json`。
 
 ## 完整注释示例
 
@@ -206,8 +206,8 @@ dfm-ssm 的准备：
 ## 运行与查看
 
 ```text
-/rsi run examples/dfm_ssm.json --mock --runner subprocess
-/rsi run examples/dfm_ssm.json --runner subprocess --thinking low
+/rsi run examples/dfm_ssm_external.json --mock --runner subprocess
+/rsi run examples/dfm_ssm_external.json --runner subprocess --thinking low
 /rsi inspect <run_id>
 /rsi replay <run_id>
 ```

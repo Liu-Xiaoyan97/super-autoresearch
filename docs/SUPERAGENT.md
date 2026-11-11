@@ -171,8 +171,9 @@ decision behind. On restart, a live assignment is recorded as interrupted: a
 | `policy` | generated last from the live policy | `prompts/superagent/policy.md` |
 | `environment` | generated per run | `prompts/superagent/environment.md` |
 
-The files are overrides: deleting one falls back to the built-in default in
-`src/rsi/superagent/prompts.ts`. The policy section is regenerated on every
+The files are the only source: `src/rsi/superagent/prompts.ts` reads them and
+throws when one is missing, so an incomplete package fails loudly instead of
+running workers on an empty contract. The policy section is regenerated on every
 change, so editing prompt text never freezes a stale rule.
 
 ## What is deliberately absent
@@ -200,7 +201,6 @@ change, so editing prompt text never freezes a stale rule.
 | `src/rsi/superagent/tools.ts` | the `rsi_superagent` action handlers |
 | `src/rsi/superagent/prompts.ts` | prompt parts and the generated policy section |
 | `src/rsi/providers/superagent.ts` | `PiWorker` (Pi sessions) and `SuperagentLLMProvider` |
-| `src/rsi/providers/subagent.ts` | deprecated shim for the old import path |
 
 Tests: `tests/superagent-protocol.test.ts` (domain, gate, store, SOP mapping)
 and `tests/superagent-run.test.ts` (provider, runtime, tools). Both are offline.

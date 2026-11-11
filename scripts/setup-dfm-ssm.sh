@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prepare the dfm-ssm repository used by examples/dfm_ssm.json.
+# Prepare the dfm-ssm repository used by examples/dfm_ssm_external.json.
 #
 #   ./scripts/setup-dfm-ssm.sh
 #   DFM_SSM_REPO=git@gitlab.com:... ./scripts/setup-dfm-ssm.sh
@@ -49,7 +49,7 @@ git -C "$TARGET" worktree remove --force "$tmp"
 
 echo
 echo "dfm-ssm ready at: $TARGET"
-echo "fixture:          examples/dfm_ssm.json"
+echo "fixture:          examples/dfm_ssm_external.json (needs RSI_TARGET_REPO=$TARGET)"
 echo "benchmark ref:     rsi-bench (bench/rsi_dfm_train_eval.py)"
 echo
 echo "Smoke-test the benchmark (needs torch):"
@@ -58,5 +58,5 @@ echo "  python3 /tmp/dfm-check/bench/rsi_dfm_train_eval.py --repo /tmp/dfm-check
 echo "    --scope subset --out /tmp/dfm-report.json"
 echo
 echo "Run through RSI (inside the container):"
-echo "  /rsi run examples/dfm_ssm.json --mock"
-echo "  /rsi run examples/dfm_ssm.json --provider opencode-go --model deepseek-v4.1-flash --thinking low"
+echo "  /rsi run examples/dfm_ssm_external.json --mock"
+echo "  /rsi run examples/dfm_ssm_external.json --provider opencode-go --model deepseek-v4.1-flash --thinking low"

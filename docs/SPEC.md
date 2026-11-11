@@ -10,8 +10,8 @@ improvement*, never by the model's own opinion).
 Implementation status (v1): the runnable product is a **Pi (pi-agent) extension** in
 TypeScript under `extensions/` + `src/rsi/`. It has no runtime npm dependencies; model calls go
 through Pi's provider registry (default `opencode-go/deepseek-v4.1-flash`) or the deterministic
-offline provider. The original Python 3.11 implementation is preserved at `legacy/python/` as the
-executable reference; field names, artifact JSON, and the invariants below are shared by both.
+offline provider. It is a port of the original Python 3.11 implementation (no longer kept in this
+tree); field names, artifact JSON, and the invariants below are unchanged.
 
 ---
 
@@ -43,7 +43,7 @@ src/rsi/
   schemas.ts                        tolerant model-output envelopes + JSON shapes
   providers/base.ts                 CONTRACT: LLMProvider + StructuredSpec
   providers/pi.ts                   Pi model-registry provider
-  providers/subagent.ts             one Pi subagent session per agent
+  providers/superagent.ts           PiWorker (Pi sessions) + SuperagentLLMProvider
   providers/mock.ts                 deterministic offline provider
   providers/openai.ts               CLI-only OpenAI-compatible transport
   runtime/workspace.ts              experiment execution (simulated + subprocess)
@@ -65,12 +65,12 @@ src/rsi/
   run.ts                            shared run/inspect/replay API
   cli.ts                            `rsi run|replay|inspect|list`
 tests/                              node:test suite (offline, no network)
-examples/*.json                     offline fixtures
+tests/fixtures/*.json               synthetic offline fixtures
+examples/*.json                     real/external project fixtures
 skills/rsi-research/SKILL.md        agent operating instructions + superagent protocol
 skills/rsi-adapter/SKILL.md         generate a target-project benchmark adapter
 prompts/rsi-research.md             /rsi-research template
 container/                          pi-agent container + Kiri helpers
-legacy/python/                      original Python reference implementation
 ```
 
 **Ownership rule for parallel implementers:** you may only edit the files assigned to you, and you
@@ -328,8 +328,8 @@ A fixture is a plain serialized `Problem` (see `types.Problem`), e.g.:
 }
 ```
 
-Required fixtures: `examples/ood_frozen_encoder.json` (happy path), `examples/abort_case.json`
-(0 Good ideas ⇒ abort), `examples/meta_refine.json` (meta-review Refine that improves the metric).
+Required fixtures: `tests/fixtures/ood_frozen_encoder.json` (happy path), `tests/fixtures/abort_case.json`
+(0 Good ideas ⇒ abort), `tests/fixtures/meta_refine.json` (meta-review Refine that improves the metric).
 
 The TypeScript extension extends the fixture with two project-neutral fields:
 
@@ -352,9 +352,9 @@ run. See README §"Fidelity: what the case study actually shows".
 ### 7.4 CLI
 
 ```
-scientisttwo run <fixture.json> [--mock] [--out runs] [--seed 7] [--max-refine-rounds N]
-scientisttwo inspect <run_id>
-scientisttwo replay <run_id>
+node src/rsi/cli.ts run <fixture.json> [--mock] [--out runs] [--seed 7] [--max-refine-rounds N]
+node src/rsi/cli.ts inspect <run_id>
+node src/rsi/cli.ts replay <run_id>
 ```
 
 `run` flags: `--runner {simulated,subprocess}`, `--strict-directions`,
@@ -369,10 +369,10 @@ exit non-zero on mismatch.
 
 ## 8. Definition of done (v0)
 
-- [x] `pytest` green offline — 122 tests, no network, no API key.
-- [x] `python -m scientisttwo.cli run examples/ood_frozen_encoder.json --mock` completes §3.1→§3.6 and
+- [x] `npm test` green offline — 101 tests, no network, no API key.
+- [x] `node src/rsi/cli.ts run tests/fixtures/ood_frozen_encoder.json --mock` completes §3.1→§3.6 and
       prints the decision path + review scores.
-- [x] Abort path (`0 Good after K rounds`) covered: `examples/abort_case.json`, exit code 2.
+- [x] Abort path (`0 Good after K rounds`) covered: `tests/fixtures/abort_case.json`, exit code 2.
 - [x] Meta-review `Refine` that improves E updates the state (`adopt.meta:*`) — scripted fixture test.
 - [x] Meta-review `Refine` that does **not** improve E discards the refinement (I2) — covered.
 - [x] `replay` rebuilds the decision path from `traces.jsonl` alone and fails on mismatch.

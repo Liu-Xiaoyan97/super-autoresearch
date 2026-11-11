@@ -2,8 +2,8 @@
  * Tunable knobs of the RSI loop.
  *
  * Values marked [PAPER] are taken from the ScientistTwo paper (section noted);
- * [CHOICE] values are documented defaults of this port. The Python reference
- * config is the source of truth (legacy/python/src/scientisttwo/config.py).
+ * [CHOICE] values are documented defaults of this port. These values are the
+ * source of truth; every one is mirrored into `final.json` provenance.
  */
 
 export interface ModelRoute {

@@ -77,7 +77,7 @@ const RESEARCH_PARAMS: JsonSchema = {
     problem: {
       type: "string",
       description:
-        "Path to a Problem JSON fixture (for example examples/ood_frozen_encoder.json) or an inline JSON object.",
+        "Path to a Problem JSON fixture (for example tests/fixtures/ood_frozen_encoder.json or examples/dfm_ssm_external.json) or an inline JSON object.",
     },
     mode: {
       type: "string",

@@ -67,8 +67,8 @@ Useful commands inside Pi:
 /rsi help
 /rsi list
 /rsi models opencode-go
-/rsi run examples/ood_frozen_encoder.json --mock
-/rsi run examples/ood_frozen_encoder.json --provider opencode-go --model deepseek-v4.1-flash --thinking low
+/rsi run tests/fixtures/ood_frozen_encoder.json --mock
+/rsi run tests/fixtures/ood_frozen_encoder.json --provider opencode-go --model deepseek-v4.1-flash --thinking low
 /rsi inspect ood-frozen-encoder-s7
 /rsi replay ood-frozen-encoder-s7
 ```
@@ -81,7 +81,7 @@ model calls; `/rsi run` asks for confirmation first.
 The agent can drive the loop directly:
 
 ```text
-Call rsi_research with problem examples/ood_frozen_encoder.json, mode mock,
+Call rsi_research with problem tests/fixtures/ood_frozen_encoder.json, mode mock,
 out runs, seed 7. Then call rsi_inspect on the returned run_id and report the
 decision path.
 ```
@@ -91,7 +91,7 @@ Or non-interactive from the host:
 ```bash
 ./container/up.sh exec bash -lc 'cd /workspace/RSI && pi -p --no-session \
   --tools rsi_research,rsi_inspect \
-  "Call rsi_research with problem examples/ood_frozen_encoder.json, mode mock, out /tmp/rsi-check"'
+  "Call rsi_research with problem tests/fixtures/ood_frozen_encoder.json, mode mock, out /tmp/rsi-check"'
 ```
 
 Extension tools available in the session:
@@ -106,7 +106,7 @@ Extension tools available in the session:
 
 ```bash
 ./container/up.sh exec bash -lc 'cd /workspace/RSI && node src/rsi/cli.ts run \
-  examples/ood_frozen_encoder.json --mock --out runs'
+  tests/fixtures/ood_frozen_encoder.json --mock --out runs'
 ./container/up.sh exec bash -lc 'cd /workspace/RSI && node src/rsi/cli.ts replay \
   ood-frozen-encoder-s7 --out runs'
 ```
@@ -116,7 +116,7 @@ transport (the extension itself always uses Pi's registry):
 
 ```bash
 ./container/up.sh exec bash -lc 'cd /workspace/RSI && node src/rsi/cli.ts run \
-  examples/ood_frozen_encoder.json --provider opencode --model deepseek-v4.1-flash \
+  tests/fixtures/ood_frozen_encoder.json --provider opencode --model deepseek-v4.1-flash \
   --max-llm-calls 40 --out runs'
 ```
 
@@ -194,7 +194,7 @@ python3 integrations/dfm_ssm/run_experiment.py --repo vendor/dfm-ssm \
   --scope subset --out /tmp/dfm-report.json
 ```
 
-Then run `examples/dfm_ssm.json` with `runner="subprocess"` (needs `torch` in the
+Then run `examples/dfm_ssm_external.json` with `runner="subprocess"` (needs `torch` in the
 Python environment used by `run_experiment.py`).
 
 ## Git worktrees and cleanup
