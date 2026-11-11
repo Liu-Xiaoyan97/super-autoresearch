@@ -147,11 +147,19 @@ async def _run(args: argparse.Namespace) -> int:
         if not isinstance(script, dict):
             raise ValueError("mock script must be a task-keyed JSON object")
         options["script"] = script
+    if provider_name != "mock":
+        # Forward only what the caller actually set; the provider keeps its own
+        # defaults otherwise (Kimi base URL / model / $KIMI_API_KEY).
+        for flag, key in (("model", "model"), ("base_url", "base_url"), ("api_key_env", "api_key_env")):
+            value = getattr(args, flag, None)
+            if value:
+                options[key] = value
     llm = build_provider(config, provider_name, **options)
     if provider_name != "mock":
+        model = options.get("model") or getattr(llm, "model", None)
         config.model_routes = {
             key: route.model_copy(update={
-                "provider": provider_name, "model": getattr(llm, "model", route.model),
+                "provider": provider_name, "model": model or route.model,
             })
             for key, route in config.model_routes.items()
         }
@@ -209,6 +217,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     run.add_argument("--mock", action="store_true", help="force deterministic offline provider")
     run.add_argument("--script", help="optional task-keyed mock JSON script (e.g. examples/mock_script.json)")
     run.add_argument("--provider", default="mock", choices=["mock", "openai", "kimi", "openai_compat"])
+    run.add_argument("--model", help="model id for the OpenAI-compatible provider")
+    run.add_argument("--base-url", help="OpenAI-compatible endpoint, e.g. https://api.moonshot.cn/v1")
+    run.add_argument("--api-key-env",
+                     help="environment variable holding the API key (default: KIMI_API_KEY)")
     run.add_argument("--out", default="runs")
     run.add_argument("--seed", type=int, default=7)
     run.add_argument("--runner", default="simulated", choices=["simulated", "subprocess"],

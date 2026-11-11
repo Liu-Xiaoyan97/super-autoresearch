@@ -84,13 +84,19 @@ code/             baseline / subset / full-set codebase snapshots
 from scientisttwo.config import ScientistTwoConfig, ModelRoute
 from scientisttwo.providers import build_provider
 
-cfg = ScientistTwoConfig(
-    model_routes={
-        "default": ModelRoute(provider="kimi", model="kimi-k2-0905-preview"),
-        "coding":  ModelRoute(provider="kimi", model="kimi-k2-0905-preview"),
-    }
-)
-llm = build_provider(cfg, "openai")   # OpenAI-compatible endpoint, key from $KIMI_API_KEY
+export KIMI_API_KEY=...
+python3 -m scientisttwo.cli run examples/ood_frozen_encoder.json \
+    --provider kimi --model kimi-k2-0905-preview \
+    --base-url https://api.moonshot.cn/v1 --api-key-env KIMI_API_KEY
+
+# Python API
+from scientisttwo.config import ScientistTwoConfig
+from scientisttwo.providers import build_provider
+
+llm = build_provider(ScientistTwoConfig(), "openai",
+                     model="kimi-k2-0905-preview",
+                     base_url="https://api.moonshot.cn/v1",
+                     api_key_env="KIMI_API_KEY")
 ```
 
 `runner="subprocess"` executes the repository for real (`--runner subprocess` on the CLI); the
