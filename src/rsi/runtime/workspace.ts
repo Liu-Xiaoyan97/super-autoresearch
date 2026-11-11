@@ -35,6 +35,43 @@ import {
 import { ArtifactStore } from "./store.ts";
 
 export const SUBSET_FRACTION_KEY = "subset_fraction";
+
+/** Default rsync excludes: VCS, caches, checkpoints, data and binary artifacts. */
+export const DEFAULT_RSYNC_EXCLUDES = [
+  ".git",
+  "runs",
+  "patches",
+  "artifacts",
+  "checkpoints",
+  "pretrained",
+  "data",
+  "datasets",
+  "build",
+  "dist",
+  "logs",
+  ".cache",
+  ".pytest_cache",
+  ".mypy_cache",
+  "__pycache__",
+  "node_modules",
+  ".venv",
+  ".venv-*",
+  ".conda",
+  "*.pyc",
+  "*.pyo",
+  "*.pt",
+  "*.pth",
+  "*.bin",
+  "*.safetensors",
+  "*.parquet",
+  "*.arrow",
+  "*.sqlite",
+  "*.db",
+  "*.log",
+  "*.zip",
+  "*.tar",
+  "*.tar.gz",
+];
 export const HEADROOM_GAIN = 2;
 
 export const DEFAULT_EXPERIMENT_COMMAND = [
@@ -284,8 +321,13 @@ export function buildRemoteInvocation(
   remoteWorktree: string,
   remoteOut: string,
 ): RemoteInvocation {
-  const env: Record<string, string> = { ...remote.env };
-  if (remote.gpu_ids) env.CUDA_VISIBLE_DEVICES = remote.gpu_ids;
+  if (!remote.gpu_ids) {
+    throw new Error('remote.gpu_ids is required; use "0" for a single GPU');
+  }
+  const env: Record<string, string> = {
+    ...remote.env,
+    CUDA_VISIBLE_DEVICES: remote.gpu_ids,
+  };
   const argv = expandCommand(command, req, remoteWorktree, remoteOut, remote.python)
     .map((token) => shellQuote(token))
     .join(" ");
@@ -401,6 +443,16 @@ export class RemoteRunner implements Runner {
         wall_time_s: 0,
       };
     }
+    if (!this.remote.gpu_ids) {
+      return {
+        metrics: {},
+        status: "failed",
+        log_path: "",
+        stdout: "",
+        stderr: 'remote.gpu_ids is required; use "0" for a single GPU',
+        wall_time_s: 0,
+      };
+    }
     if (!this.remote.dir && !this.remote.worktree) {
       return {
         metrics: {},
@@ -434,22 +486,20 @@ export class RemoteRunner implements Runner {
       return this.fail(logPath, stdout + mkdir.stdout, stderr + mkdir.stderr, started);
     }
 
-    const excludes = [
-      ".git",
-      "runs",
-      "patches",
-      "__pycache__",
-      ".pytest_cache",
-      "node_modules",
-      ".venv",
-      ".venv-*",
-      "*.pyc",
+    // Combine defaults, repo-specific excludes, and everything ignored by
+    // .gitignore. Using --exclude-from keeps the rsync command line bounded.
+    const excludes = new Set([
+      ...DEFAULT_RSYNC_EXCLUDES,
       ...this.remote.excludes,
-    ];
+      ...gitIgnoredPaths(req.repo.path),
+    ]);
+    const excludeFile = this.store.path("rsync", `excludes-${String(seq).padStart(4, "0")}.txt`);
+    fs.writeFileSync(excludeFile, `${[...excludes].join("\n")}\n`, "utf8");
     const rsyncArgs = [
       "-az",
       "--delete",
-      ...excludes.flatMap((pattern) => ["--exclude", pattern]),
+      "--exclude-from",
+      excludeFile,
       ...this.remote.rsync_args,
       `${path.resolve(req.repo.path)}/`,
       `${this.remote.host}:${shellQuote(remoteWorktree)}/`,
@@ -537,6 +587,17 @@ interface GitResult {
   status: number;
   stdout: string;
   stderr: string;
+}
+
+/** Paths ignored by the repository's .gitignore files, relative to root. */
+export function gitIgnoredPaths(root: string): string[] {
+  const result = git(
+    root,
+    ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+    true,
+  );
+  if (result.status !== 0) return [];
+  return result.stdout.split("\0").filter(Boolean);
 }
 
 function git(cwd: string, args: string[], allowFailure = false): GitResult {

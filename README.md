@@ -418,6 +418,11 @@ compose 把宿主 `RSI_EXTERNAL_ROOT` 挂到容器 `/repos`。fixture 使用：
 - 默认 `worktree` 是 `<remote.dir>/rsi/<run_id>/worktree`；显式设置后以模板为准。
 - `remote.out` 是服务器上的输出目录；默认是 worktree 的兄弟目录 `out/`。
 - 只在服务器上同步候选 worktree；RSI 项目本身不会上传。
+- rsync 默认排除 `.git`、`runs`、`patches`、`checkpoints`、`pretrained`、
+  `data`、`build`、缓存和二进制权重；同时用
+  `git ls-files --others --ignored --exclude-standard` 收集目标仓库**所有
+  `.gitignore` 命中的本地内容**，通过 `--exclude-from` 排除。`.gitignore`
+  的否定规则（`!keep.log`）由 git 处理，不需要手工翻译成 rsync 语法。
 
 示例 fixture：`examples/dfm_ssm_external.json`。准备外部仓库：
 

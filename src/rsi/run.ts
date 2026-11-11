@@ -89,7 +89,14 @@ function parseRemote(raw: unknown): RemoteConfig | null {
     setup: str(item.setup),
     ssh_args: strArray(item.ssh_args),
     rsync_args: strArray(item.rsync_args),
-    gpu_ids: str(item.gpu_ids),
+    gpu_ids: (() => {
+      const raw = item.gpu_ids;
+      const value = typeof raw === "number" ? String(raw) : str(raw);
+      if (!/^\d+(,\d+)*$/.test(value)) {
+        throw new Error('remote.gpu_ids is required and must be a GPU id list such as "0" or "0,1"');
+      }
+      return value;
+    })(),
     env: stringRecord(item.env),
     timeout_s: num(item.timeout_s, 7200),
     excludes: strArray(item.excludes),

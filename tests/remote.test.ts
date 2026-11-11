@@ -3,11 +3,16 @@ import assert from "node:assert/strict";
 
 import {
   buildRemoteInvocation,
+  DEFAULT_RSYNC_EXCLUDES,
   expandRemoteTemplate,
+  gitIgnoredPaths,
   GitWorkspace,
   RemoteRunner,
   shellQuote,
 } from "../src/rsi/runtime/workspace.ts";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { defaultConfig } from "../src/rsi/config.ts";
 import { loadProblem } from "../src/rsi/run.ts";
 import { fixture, tempDir } from "./helpers.ts";
@@ -75,20 +80,22 @@ test("shellQuote escapes single quotes", () => {
   assert.equal(shellQuote("/tmp/a b"), "'/tmp/a b'");
 });
 
-test("remote invocation without GPU ids leaves CUDA_VISIBLE_DEVICES unset", () => {
-  const invocation = buildRemoteInvocation(
-    { ...remote, gpu_ids: "", env: {}, timeout_s: 0 },
-    ["true"],
-    req,
-    "/remote/worktree",
-    "/remote/out.json",
+test("remote invocation requires an explicit GPU id", () => {
+  assert.throws(
+    () =>
+      buildRemoteInvocation(
+        { ...remote, gpu_ids: "", env: {}, timeout_s: 0 },
+        ["true"],
+        req,
+        "/remote/worktree",
+        "/remote/out.json",
+      ),
+    /remote\.gpu_ids is required/,
   );
-  assert.doesNotMatch(invocation.inner, /CUDA_VISIBLE_DEVICES/);
-  assert.doesNotMatch(invocation.inner, /timeout /);
 });
 
 test("a Problem with remote selects RemoteRunner", () => {
-  const problem = loadProblem(fixture("dfm_ssm"));
+  const problem = loadProblem(fixture("dfm_ssm_external"));
   assert.ok(problem.remote);
   const workspace = new GitWorkspace(
     problem,
@@ -110,4 +117,28 @@ test("remote path templates and setup are applied", () => {
   );
   assert.match(invocation.inner, /conda activate dsfm/);
   assert.match(invocation.inner, /cd \/home\/sl\/projects\/dfm-ssm-run-1/);
+});
+
+test("default rsync excludes cover VCS, caches, checkpoints and data", () => {
+  for (const pattern of [".git", "runs", "checkpoints", "pretrained", "data", "build", "*.pt", "*.parquet"]) {
+    assert.ok(DEFAULT_RSYNC_EXCLUDES.includes(pattern), pattern);
+  }
+});
+
+test("gitIgnoredPaths honours .gitignore, including negations", () => {
+  const root = tempDir("rsi-ignore-");
+  const git = (args: string[]) => {
+    const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  git(["init", "-q"]);
+  fs.writeFileSync(path.join(root, ".gitignore"), "ignored/\n*.log\n!keep.log\n");
+  fs.mkdirSync(path.join(root, "ignored"));
+  fs.writeFileSync(path.join(root, "ignored", "data.bin"), "x");
+  fs.writeFileSync(path.join(root, "a.log"), "x");
+  fs.writeFileSync(path.join(root, "keep.log"), "x");
+  const ignored = gitIgnoredPaths(root);
+  assert.ok(ignored.some((item) => item.startsWith("ignored")));
+  assert.ok(ignored.includes("a.log"));
+  assert.ok(!ignored.includes("keep.log"));
 });
