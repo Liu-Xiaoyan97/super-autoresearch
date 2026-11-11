@@ -105,6 +105,22 @@ test("a Problem with remote selects RemoteRunner", () => {
   assert.ok(workspace.runner instanceof RemoteRunner);
 });
 
+test("the dfm fixture injects remote.env into the SSH command", () => {
+  const problem = loadProblem(fixture("dfm_ssm_external"));
+  assert.ok(problem.remote);
+  assert.ok(problem.experiment_command);
+  const invocation = buildRemoteInvocation(
+    problem.remote,
+    problem.experiment_command,
+    req,
+    "/home/sl/mamba/projects/dfm-ssm-run-1/worktree",
+    "/home/sl/mamba/projects/dfm-ssm-run-1/out/process-0001.json",
+  );
+  assert.match(invocation.inner, /RSI_DFM_TRAIN_DATA=\/home\/sl\/SlimPajama-10B/);
+  assert.match(invocation.inner, /CUDA_VISIBLE_DEVICES=0/);
+  assert.match(invocation.inner, /bench\/rsi_dfm_train_eval\.py/);
+});
+
 test("remote path templates and setup are applied", () => {
   const worktree = expandRemoteTemplate("/home/sl/projects/dfm-ssm-{run_id}", "run-1", "dfm-ssm");
   assert.equal(worktree, "/home/sl/projects/dfm-ssm-run-1");
