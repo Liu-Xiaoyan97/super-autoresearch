@@ -14,23 +14,7 @@
     "--scope",
     "{scope}",
     "--out",
-    "{out}",
-    "--device",
-    "cuda",
-    "--train-steps",
-    "2",
-    "--train-batch-size",
-    "2",
-    "--grad-accum",
-    "2",
-    "--max-length",
-    "256",
-    "--lm-eval-batch-size",
-    "1",
-    "--eval-max-length",
-    "512",
-    "--flow-time",
-    "off"
+    "{out}"
   ],
   "remote": {
     "host": "8818",
@@ -46,16 +30,21 @@
     "gpu_ids": "0",
     "env": {
       "HF_DATASETS_CACHE": "/home/sl/coral-e2-C512L21H2720-1b-bf16only-20261109-1020/eval/hf-official-wikitext/datasets",
-      "HF_HUB_OFFLINE": "1",
-      "TRANSFORMERS_OFFLINE": "1",
-      "HF_DATASETS_OFFLINE": "1",
-      "TOKENIZERS_PARALLELISM": "false",
       "RSI_DFM_TRAIN_DATA": "/home/sl/rsi-data/train.jsonl",
       "RSI_DFM_BASE_MODEL": "/home/sl/rsi-data/tiny-mamba",
       "RSI_DFM_TOKENIZER": "/home/sl/rsi-data/tokenizer",
       "RSI_DFM_BACKEND": "reference",
       "RSI_DFM_TRAIN_STEPS": "2",
-      "RSI_DFM_OFFLINE": "1"
+      "RSI_DFM_OFFLINE": "1",
+      "RSI_DFM_DEVICE": "cuda",
+      "RSI_DFM_TRAIN_BATCH_SIZE": "2",
+      "RSI_DFM_GRAD_ACCUM": "2",
+      "RSI_DFM_MAX_LENGTH": "256",
+      "RSI_DFM_BLOCK_LENGTH": "16",
+      "RSI_DFM_LM_EVAL_BATCH_SIZE": "1",
+      "RSI_DFM_EVAL_MAX_LENGTH": "512",
+      "RSI_DFM_FLOW_TIME": "off",
+      "RSI_DFM_DATA_FORMAT": "auto"
     },
     "timeout_s": 3600,
     "excludes": [
@@ -95,7 +84,13 @@
       "id": "dfm-objective",
       "title": "DFM training objective",
       "description": "Change the discrete flow-matching objective or time/noise schedule while keeping the Mamba backbone and tokenizer fixed.",
-      "keywords": ["flow", "posterior", "time", "loss", "mixture"],
+      "keywords": [
+        "flow",
+        "posterior",
+        "time",
+        "loss",
+        "mixture"
+      ],
       "weight": 1.0,
       "must_include": false
     },
@@ -103,7 +98,12 @@
       "id": "block-schedule",
       "title": "block and context schedule",
       "description": "Improve block length, context handling, or training sequence composition for language modeling.",
-      "keywords": ["block", "context", "sequence", "chunk"],
+      "keywords": [
+        "block",
+        "context",
+        "sequence",
+        "chunk"
+      ],
       "weight": 0.9,
       "must_include": false
     },
@@ -111,7 +111,13 @@
       "id": "training-recipe",
       "title": "optimization recipe",
       "description": "Improve optimization, data ordering, or precision handling without changing the evaluation protocol.",
-      "keywords": ["optimizer", "schedule", "warmup", "gradient", "precision"],
+      "keywords": [
+        "optimizer",
+        "schedule",
+        "warmup",
+        "gradient",
+        "precision"
+      ],
       "weight": 0.8,
       "must_include": false
     }

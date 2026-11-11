@@ -14,21 +14,7 @@
     "--scope",
     "{scope}",
     "--out",
-    "{out}",
-    "--device",
-    "cuda",
-    "--train-batch-size",
-    "2",
-    "--grad-accum",
-    "2",
-    "--max-length",
-    "256",
-    "--lm-eval-batch-size",
-    "1",
-    "--eval-max-length",
-    "512",
-    "--flow-time",
-    "off"
+    "{out}"
   ],
   "remote": {
     "host": "8818",
@@ -44,17 +30,22 @@
     "gpu_ids": "0",
     "env": {
       "HF_DATASETS_CACHE": "/home/sl/coral-e2-C512L21H2720-1b-bf16only-20261109-1020/eval/hf-official-wikitext/datasets",
-      "HF_HUB_OFFLINE": "1",
-      "TRANSFORMERS_OFFLINE": "1",
-      "HF_DATASETS_OFFLINE": "1",
-      "TOKENIZERS_PARALLELISM": "false",
       "RSI_DFM_TRAIN_DATA": "/home/sl/SlimPajama-10B",
       "RSI_DFM_BASE_MODEL": "/home/sl/mamba/checkpoints",
       "RSI_DFM_BACKEND": "native",
       "RSI_DFM_TRAIN_STEPS": "38000",
-      "RSI_DFM_OFFLINE": "1"
+      "RSI_DFM_OFFLINE": "1",
+      "RSI_DFM_DEVICE": "cuda",
+      "RSI_DFM_TRAIN_BATCH_SIZE": "2",
+      "RSI_DFM_GRAD_ACCUM": "2",
+      "RSI_DFM_MAX_LENGTH": "256",
+      "RSI_DFM_BLOCK_LENGTH": "16",
+      "RSI_DFM_LM_EVAL_BATCH_SIZE": "1",
+      "RSI_DFM_EVAL_MAX_LENGTH": "512",
+      "RSI_DFM_FLOW_TIME": "off",
+      "RSI_DFM_DATA_FORMAT": "auto"
     },
-    "timeout_s": 3600,
+    "timeout_s": 86400,
     "excludes": [
       "checkpoints",
       "pretrained",
@@ -62,7 +53,7 @@
     ],
     "worktree": "/home/sl/mamba/projects/dfm-ssm-{run_id}",
     "out": "/home/sl/mamba/projects/dfm-ssm-{run_id}/out",
-    "setup": "export CUDA_HOME=/usr/local/cuda-12.8; export PATH=\"$CUDA_HOME/bin:$PATH\"; export LD_LIBRARY_PATH=\"$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}\"; export PYTHONPATH=\"$HOME/mamba${PYTHONPATH:+:$PYTHONPATH}\"; export TOKENIZERS_PARALLELISM=\"${TOKENIZERS_PARALLELISM:-false}\""
+    "setup": "export CUDA_HOME=/usr/local/cuda-12.8; export PATH=\"$CUDA_HOME/bin:$PATH\"; export LD_LIBRARY_PATH=\"$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}\"; export PYTHONPATH=\"$HOME/mamba${PYTHONPATH:+:$PYTHONPATH}\""
   },
   "datasets": [
     "wikitext-2-raw-v1"

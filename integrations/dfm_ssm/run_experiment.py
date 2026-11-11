@@ -25,6 +25,20 @@ import sys
 import time
 from pathlib import Path
 
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 SCOPE_TRAIN_STEPS = {
     "subset": 20,
     "full": 100,
@@ -79,28 +93,33 @@ def main() -> int:
     parser.add_argument("--repo", help="dfm-ssm checkout (default: snapshot root or vendor/dfm-ssm)")
     parser.add_argument("--scope", choices=sorted(SCOPE_TRAIN_STEPS), default="subset")
     parser.add_argument("--out", required=True)
-    parser.add_argument("--device", default="cuda", choices=("cuda", "cpu", "mps"))
+    parser.add_argument("--device", default=os.environ.get("RSI_DFM_DEVICE", "cuda"),
+                        choices=("cuda", "cpu", "mps"))
     parser.add_argument("--backend", default=os.environ.get("RSI_DFM_BACKEND", "auto"),
                         choices=("auto", "native", "reference"))
-    parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--checkpoint", help="existing DFM checkpoint; skips training")
-    parser.add_argument("--data", help="training JSONL file/dir or parquet dir (or RSI_DFM_TRAIN_DATA)")
-    parser.add_argument("--data-format", default="auto", choices=("auto", "jsonl", "pile-parquet"),
+    parser.add_argument("--seed", type=int, default=env_int("RSI_DFM_SEED", 7))
+    parser.add_argument("--checkpoint", default=os.environ.get("RSI_DFM_CHECKPOINT") or None,
+                        help="existing DFM checkpoint; skips training")
+    parser.add_argument("--data", default=os.environ.get("RSI_DFM_TRAIN_DATA") or None,
+                        help="training JSONL file/dir or parquet dir (default: RSI_DFM_TRAIN_DATA)")
+    parser.add_argument("--data-format", default=os.environ.get("RSI_DFM_DATA_FORMAT", "auto"),
+                        choices=("auto", "jsonl", "pile-parquet"),
                         help="auto: JSONL file/dir -> jsonl, parquet -> pile-parquet")
     parser.add_argument("--tokenizer", default=os.environ.get("RSI_DFM_TOKENIZER", "EleutherAI/gpt-neox-20b"))
     parser.add_argument("--base-model", default=os.environ.get("RSI_DFM_BASE_MODEL", "state-spaces/mamba-130m"))
-    parser.add_argument("--train-steps", type=int, default=0, help="0 = scope default")
-    parser.add_argument("--train-batch-size", type=int, default=2)
-    parser.add_argument("--grad-accum", type=int, default=8)
-    parser.add_argument("--max-length", type=int, default=512)
-    parser.add_argument("--block-length", type=int, default=16)
-    parser.add_argument("--lm-eval-task", default="wikitext")
-    parser.add_argument("--lm-eval-batch-size", type=int, default=8)
-    parser.add_argument("--eval-max-length", type=int, default=2048)
-    parser.add_argument("--flow-time", default="off",
+    parser.add_argument("--train-steps", type=int, default=0, help="0 = RSI_DFM_TRAIN_STEPS or scope default")
+    parser.add_argument("--train-batch-size", type=int, default=env_int("RSI_DFM_TRAIN_BATCH_SIZE", 2))
+    parser.add_argument("--grad-accum", type=int, default=env_int("RSI_DFM_GRAD_ACCUM", 8))
+    parser.add_argument("--max-length", type=int, default=env_int("RSI_DFM_MAX_LENGTH", 512))
+    parser.add_argument("--block-length", type=int, default=env_int("RSI_DFM_BLOCK_LENGTH", 16))
+    parser.add_argument("--lm-eval-task", default=os.environ.get("RSI_DFM_LM_EVAL_TASK", "wikitext"))
+    parser.add_argument("--lm-eval-batch-size", type=int, default=env_int("RSI_DFM_LM_EVAL_BATCH_SIZE", 8))
+    parser.add_argument("--eval-max-length", type=int, default=env_int("RSI_DFM_EVAL_MAX_LENGTH", 2048))
+    parser.add_argument("--flow-time", default=os.environ.get("RSI_DFM_FLOW_TIME", "off"),
                         help="DFM flow time for logits: off = causal backbone, or 1.0")
     parser.add_argument("--offline", action="store_true", default=os.environ.get("RSI_DFM_OFFLINE", "1") == "1")
-    parser.add_argument("--timeout", type=float, default=0, help="per-subprocess timeout seconds (0 = none)")
+    parser.add_argument("--timeout", type=float, default=env_float("RSI_DFM_TIMEOUT", 0),
+                        help="per-subprocess timeout seconds (0 = none)")
     args = parser.parse_args()
 
     out = Path(args.out).expanduser().resolve()
@@ -125,7 +144,7 @@ def main() -> int:
 
     try:
         if checkpoint is None:
-            data_path = args.data or os.environ.get("RSI_DFM_TRAIN_DATA")
+            data_path = args.data
             if not data_path:
                 return fail(
                     out,

@@ -327,17 +327,33 @@ CLI 不经过 superagent 的 `person` 门，适合先验证远程链路。
 }
 ```
 
-训练预算同时出现在 `experiment_command`：
+配置只有一处：`experiment_command` 只负责调用 benchmark，所有 dfm 参数都在
+`remote.env`：
 
 ```jsonc
-"--train-steps", "2",
-"--train-batch-size", "2",
-"--grad-accum", "2",
-"--max-length", "256",
-"--lm-eval-batch-size", "1",
-"--eval-max-length", "512",
-"--flow-time", "off"
+"experiment_command": [
+  "{python}", "bench/rsi_dfm_train_eval.py",
+  "--repo", "{repo}", "--scope", "{scope}", "--out", "{out}"
+],
+"remote": {
+  "env": {
+    "RSI_DFM_DEVICE": "cuda",
+    "RSI_DFM_BACKEND": "reference",
+    "RSI_DFM_TRAIN_STEPS": "2",
+    "RSI_DFM_TRAIN_BATCH_SIZE": "2",
+    "RSI_DFM_GRAD_ACCUM": "2",
+    "RSI_DFM_MAX_LENGTH": "256",
+    "RSI_DFM_BLOCK_LENGTH": "16",
+    "RSI_DFM_LM_EVAL_BATCH_SIZE": "1",
+    "RSI_DFM_EVAL_MAX_LENGTH": "512",
+    "RSI_DFM_FLOW_TIME": "off",
+    "RSI_DFM_DATA_FORMAT": "auto"
+  }
+}
 ```
+
+如果确实需要临时覆盖，可以再在 `experiment_command` 里加对应命令行参数；
+显式 flag 优先于 `remote.env`。fixture 默认不再重复这两份配置。
 
 - `gpu_ids` 直接写入 `CUDA_VISIBLE_DEVICES`；RSI 不做 GPU 排队/锁卡。
 - 多卡只提供可见性；DDP 需要在目标仓库 benchmark/trainer 内实现。
@@ -475,15 +491,29 @@ backend 导入。`remote.setup` 在 `cd` 之后、benchmark 之前执行；adapt
 | `RSI_DFM_TRAIN_DATA` | 训练 JSONL 文件、JSONL 目录或 parquet 目录；adapter 的 `--data` 默认值 |
 | `RSI_DFM_BASE_MODEL` | 基座 Mamba/AR checkpoint 路径；`--base-model` 默认值 |
 | `RSI_DFM_TOKENIZER` | tokenizer 路径；`--tokenizer` 默认值，必须与模型词表匹配 |
-| `RSI_DFM_BACKEND` | 上面三种 backend；`--backend` 默认值 |
-| `RSI_DFM_TRAIN_STEPS` | 训练步数默认值；**命令里显式 `--train-steps` 会覆盖它** |
-| `RSI_DFM_OFFLINE=1` | adapter 是否默认设置 HF 离线变量；当前 fixture 已显式设置 HF_*，所以只是冗余保险 |
+| `RSI_DFM_BACKEND` | `auto` / `native` / `reference`；`--backend` 默认值 |
+| `RSI_DFM_DEVICE` | `cuda` / `cpu` / `mps`；`--device` 默认值 |
+| `RSI_DFM_TRAIN_STEPS` | 训练步数；`--train-steps` 未显式给出时使用 |
+| `RSI_DFM_TRAIN_BATCH_SIZE` | 训练 batch size |
+| `RSI_DFM_GRAD_ACCUM` | 梯度累积步数 |
+| `RSI_DFM_MAX_LENGTH` | 训练最大序列长度 |
+| `RSI_DFM_BLOCK_LENGTH` | DFM block length |
+| `RSI_DFM_LM_EVAL_BATCH_SIZE` | lm-eval batch size |
+| `RSI_DFM_EVAL_MAX_LENGTH` | lm-eval max length |
+| `RSI_DFM_FLOW_TIME` | `off` = backbone logits；`1.0` = DFM forward |
+| `RSI_DFM_DATA_FORMAT` | `auto` / `jsonl` / `pile-parquet` |
+| `RSI_DFM_SEED` | 可选，训练/采样 seed |
+| `RSI_DFM_LM_EVAL_TASK` | 可选，默认 `wikitext` |
+| `RSI_DFM_CHECKPOINT` | 可选，eval-only 的已有 checkpoint |
+| `RSI_DFM_OFFLINE=1` | adapter 自动设置 HF 离线变量；不需要再重复写 `HF_*_OFFLINE` |
+| `RSI_DFM_TIMEOUT` | 可选，单次训练/评测子进程超时秒数 |
 
 优先级：`experiment_command` 里的显式参数 > `remote.env` > adapter 默认值。
 例如要改训练步数，改命令里的 `--train-steps`，不要只改
-`RSI_DFM_TRAIN_STEPS`。外部 fixture 已移除 `--train-steps`，所以当前由
-`RSI_DFM_TRAIN_STEPS=38000` 控制。`gpu_ids` 生成的 `CUDA_VISIBLE_DEVICES` 不在 `env`
-里配置；`PYTHONPATH` 由 adapter 自动指向远程仓库。
+`RSI_DFM_TRAIN_STEPS`。fixture 的 `experiment_command` 已经不再包含这些参数，
+所以 `RSI_DFM_TRAIN_STEPS=38000` 等 env 就是唯一入口。`gpu_ids` 生成的
+`CUDA_VISIBLE_DEVICES` 不在 `env` 里配置；`PYTHONPATH`、`TOKENIZERS_PARALLELISM`
+和 HF 离线变量由 adapter 自动处理。
 
 ### 8. 远程目录与本地产物
 

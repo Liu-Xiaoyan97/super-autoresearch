@@ -26,12 +26,11 @@ RSI 的所有研究问题配置都在 **Problem JSON fixture** 里。扩展本�
   // ── 研究代码路径（外部 git 仓库）────────────────────────────
   "repo": "/repos/dfm-ssm",        // 外部 git 仓库（compose 挂载）
   "repo_ref": "rsi-bench",         // 基线分支 / tag / commit；默认 HEAD
-  "experiment_command": [          // 在候选 worktree 中执行
+  "experiment_command": [          // 只放调用与占位符；参数放 remote.env
     "{python}", "bench/rsi_dfm_train_eval.py",
     "--repo", "{repo}",            // 候选 worktree 路径
     "--scope", "{scope}",          // subset / full / ablation / rebuttal
-    "--out", "{out}",              // 必须写入 {"metrics": {...}} 的 JSON
-    "--device", "cuda"
+    "--out", "{out}"               // 必须写入 {"metrics": {...}} 的 JSON
   ],
 
   // ── 远程 GPU（可选；服务器离线）─────────────────────────────
@@ -45,11 +44,22 @@ RSI 的所有研究问题配置都在 **Problem JSON fixture** 里。扩展本�
     "ssh_args": ["-o", "BatchMode=yes"],
     "gpu_ids": "0",                // → CUDA_VISIBLE_DEVICES
     "env": {
-      "HF_HOME": "/data/hf",
-      "HF_HUB_OFFLINE": "1",
+      "HF_DATASETS_CACHE": "/data/hf/datasets",
       "RSI_DFM_TRAIN_DATA": "/data/dfm/train.jsonl",
       "RSI_DFM_BASE_MODEL": "/data/models/mamba-130m",
-      "RSI_DFM_TOKENIZER": "/data/models/gpt-neox-tokenizer"
+      "RSI_DFM_TOKENIZER": "/data/models/gpt-neox-tokenizer",
+      "RSI_DFM_BACKEND": "native",
+      "RSI_DFM_DEVICE": "cuda",
+      "RSI_DFM_TRAIN_STEPS": "1000",
+      "RSI_DFM_TRAIN_BATCH_SIZE": "2",
+      "RSI_DFM_GRAD_ACCUM": "8",
+      "RSI_DFM_MAX_LENGTH": "512",
+      "RSI_DFM_BLOCK_LENGTH": "16",
+      "RSI_DFM_LM_EVAL_BATCH_SIZE": "8",
+      "RSI_DFM_EVAL_MAX_LENGTH": "2048",
+      "RSI_DFM_FLOW_TIME": "off",
+      "RSI_DFM_DATA_FORMAT": "auto",
+      "RSI_DFM_OFFLINE": "1"
     },
     "timeout_s": 14400,
     "excludes": ["checkpoints", "pretrained", "data"]
@@ -157,6 +167,8 @@ node src/rsi/cli.ts run examples/my_problem.json --mock --strict-directions
   `conda activate`、`module load` 等。
 - `experiment_command`：在候选 worktree 中执行；支持占位符：
   `{scope}`、`{out}`、`{repo}`、`{commit}`、`{python}`（远程 Python）。
+  **只放调用/协议参数**；训练步数、batch、长度、backend、数据路径等放在
+  `remote.env`，避免两处重复。显式命令行 flag 仍可临时覆盖 env。
 - 默认命令（未设置时）：
   `python3 run_experiment.py --scope {scope} --out {out}`。
 - benchmark 必须把 metrics 写到 `--out`：
