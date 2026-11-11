@@ -28,6 +28,9 @@ services:
     volumes:
       - ..:/workspace/RSI
       - ${RSI_EXTERNAL_ROOT:-./external}:/repos
+      # Explicit target mount so the editable project is present even when the
+      # parent workspace is not the expected directory.
+      - ${RSI_TARGET_HOST:-/Users/liuxiaoyan/workspace/mamba}:/repos/mamba
       - ./ssh:/root/.ssh:ro
       - ./pi-home:/root/.pi/agent
     stdin_open: true
