@@ -4,9 +4,10 @@
 #   ./container/up.sh build
 #   ./container/up.sh run
 #
-# The base image is pulled through a Docker Hub mirror and tagged locally as
-# node:24-bookworm-slim; see up.sh. Override PI_VERSION to pin another release.
-ARG BASE_IMAGE=node:24-bookworm-slim
+# The base image is pulled through a Docker Hub mirror; the build itself runs in
+# Kiri's BuildKit. Override BASE_IMAGE (for example node:24-bookworm-slim, when
+# it is already present locally) or PI_VERSION to pin another release.
+ARG BASE_IMAGE=docker.m.daocloud.io/library/node:24-bookworm-slim
 FROM ${BASE_IMAGE}
 
 ARG PI_VERSION=1.5.2

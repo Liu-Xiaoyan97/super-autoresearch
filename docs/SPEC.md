@@ -7,7 +7,11 @@ Scope: the full §3.1 → §3.6 closed-loop pipeline (the "recursive self-improv
 stage = `candidate → critic → refine`, and the outer loops are gated by *strict empirical
 improvement*, never by the model's own opinion).
 
-Stack: Python 3.11+, asyncio, pydantic v2, zero required third-party runtime deps beyond pydantic.
+Implementation status (v1): the runnable product is a **Pi (pi-agent) extension** in
+TypeScript under `extensions/` + `src/rsi/`. It has no runtime npm dependencies; model calls go
+through Pi's provider registry (default `opencode-go/deepseek-v4.1-flash`) or the deterministic
+offline provider. The original Python 3.11 implementation is preserved at `legacy/python/` as the
+executable reference; field names, artifact JSON, and the invariants below are shared by both.
 
 ---
 
@@ -29,34 +33,43 @@ Stack: Python 3.11+, asyncio, pydantic v2, zero required third-party runtime dep
 ## 1. Module layout and file ownership
 
 ```
-pyproject.toml                      infra
+package.json                        Pi package manifest (pi.extensions/skills/prompts)
+extensions/rsi.ts                   extension entry: rsi_* tools + /rsi command
 docs/SPEC.md                        contract (frozen)
-docs/analysis/*.md                  paper analysis (3 research agents)
-src/scientisttwo/
-  types.py                          CONTRACT: domain models (frozen)
-  config.py                         CONTRACT: all hyperparameters (frozen)
-  providers/base.py                 CONTRACT: LLMProvider ABC (frozen)
-  providers/mock.py                 impl: deterministic offline provider
-  providers/openai_compat.py        impl: Kimi / vLLM / OpenAI-compatible
-  runtime/workspace.py              impl: experiment execution (real + simulated)
-  runtime/store.py                  impl: ArtifactStore / TraceStore (JSONL)
-  runtime/budget.py                 impl: counters + hard stops
-  core/stage.py                     impl: generic critic/refine loop
-  core/state.py                     impl: ResearchState + transitions
-  core/orchestrator.py              impl: the §3.1→§3.6 state machine
-  agents/base.py                    CONTRACT: BaseAgent + AgentContext (frozen)
-  agents/limitations.py             impl: LimitationExtractor, LimitationVerifier
-  agents/ideas.py                   impl: InitialIdeaGenerator, NoveltyChecker, IdeaGenerator, IdeaEvolver
-  agents/coding.py                  impl: BaselineCoder, SubsetCoder, FullSetCoder, RebuttalCoder, AblationCoder, IdeaImplementer
-  agents/critics.py                 impl: SubsetCritic, FullSetCritic, ResultComparison, Selector
-  agents/engineering.py             impl: SubsetEngineer, FullSetEngineer
-  agents/ablation.py                impl: AblationPlanner, AblationCritic
-  agents/writing.py                 impl: InitialDrafter, PaperEnhancer
-  agents/review.py                  impl: PeerReviewer, RebuttalPlanner, MetaReviewer
-  agents/integrity.py               §4.3 Integrity audit (score / spec / refs / method-code)
-  cli.py                            impl: `scientisttwo run|replay|inspect`
-tests/                              impl: pytest suite (offline, no network)
-examples/*.json                     impl: offline fixtures
+docs/analysis/*.md                  paper analysis
+src/rsi/
+  types.ts                          CONTRACT: domain models (frozen)
+  config.ts                         CONTRACT: all hyperparameters (frozen)
+  schemas.ts                        tolerant model-output envelopes + JSON shapes
+  providers/base.ts                 CONTRACT: LLMProvider + StructuredSpec
+  providers/pi.ts                   Pi model-registry provider
+  providers/subagent.ts             one Pi subagent session per agent
+  providers/mock.ts                 deterministic offline provider
+  providers/openai.ts               CLI-only OpenAI-compatible transport
+  runtime/workspace.ts              experiment execution (simulated + subprocess)
+  runtime/store.ts                  ArtifactStore / TraceStore (JSONL)
+  runtime/budget.ts                 counters + hard stops
+  core/stage.ts                     generic critic/refine loop
+  core/state.ts                     ResearchState + transitions
+  core/orchestrator.ts              the §3.1→§3.6 state machine
+  agents/base.ts                    CONTRACT: BaseAgent + AgentContext
+  agents/limitations.ts             LimitationExtractor, LimitationVerifier
+  agents/ideas.ts                   InitialIdeaGenerator, NoveltyChecker, IdeaGenerator, IdeaEvolver
+  agents/coding.ts                  BaselineCoder, SubsetCoder, FullSetCoder, RebuttalCoder, AblationCoder, IdeaImplementer
+  agents/critics.ts                 SubsetCritic, FullSetCritic, ResultComparison, Selector
+  agents/engineering.ts             SubsetEngineer, FullSetEngineer
+  agents/ablation.ts                AblationPlanner, AblationCritic
+  agents/writing.ts                 InitialDrafter, PaperEnhancer
+  agents/review.ts                  PeerReviewer, RebuttalPlanner, MetaReviewer
+  agents/integrity.ts               §4.3 Integrity audit (score / spec / refs / method-code)
+  run.ts                            shared run/inspect/replay API
+  cli.ts                            `rsi run|replay|inspect|list`
+tests/                              node:test suite (offline, no network)
+examples/*.json                     offline fixtures
+skills/rsi/SKILL.md                 agent operating instructions
+prompts/rsi-research.md             /rsi-research template
+container/                          pi-agent container + Kiri helpers
+legacy/python/                      original Python reference implementation
 ```
 
 **Ownership rule for parallel implementers:** you may only edit the files assigned to you, and you
@@ -316,6 +329,20 @@ A fixture is a plain serialized `Problem` (see `types.Problem`), e.g.:
 
 Required fixtures: `examples/ood_frozen_encoder.json` (happy path), `examples/abort_case.json`
 (0 Good ideas ⇒ abort), `examples/meta_refine.json` (meta-review Refine that improves the metric).
+
+The TypeScript extension extends the fixture with two project-neutral fields:
+
+- `repo` — path to an **external git repository** (never a copy inside RSI);
+- `repo_ref` — baseline ref, default `HEAD`;
+- `experiment_command` — command template executed in the candidate worktree
+  (`{scope}`, `{out}`, `{repo}`, `{commit}`, `{python}`), default
+  `python3 run_experiment.py --scope {scope} --out {out}`;
+- `remote` — optional rsync + SSH GPU execution (`host`, `dir`, `python`,
+  `gpu_ids`, `env`, `timeout_s`).
+
+Each candidate is a branch + commit in that repository, checked out through one
+per-run `git worktree`; `RepoRef` records `repo`, `commit`, `branch`, and the
+parent commit. RSI core never imports the target project.
 
 **These fixtures are synthetic.** The task framing of the first one mirrors the paper's
 Procrustes-DS case study, but its numbers are placeholders and it is *not* a reproduction of that

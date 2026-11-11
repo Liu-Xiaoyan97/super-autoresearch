@@ -1,0 +1,27 @@
+name: rsi-pi-agent
+
+services:
+  pi-agent:
+    build:
+      context: ..
+      dockerfile: container/Dockerfile
+    image: pi-agent:local
+    container_name: pi-agent-rsi
+    working_dir: /workspace/RSI
+    environment:
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:?set OPENCODE_API_KEY in container/.env}
+      PI_PROVIDER: opencode-go
+      PI_MODEL: ${PI_MODEL:-deepseek-v4.1-flash}
+      PI_REASONING_LEVEL: ${PI_REASONING_LEVEL:-high}
+      NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
+      RSI_PYTHON: ${RSI_PYTHON:-python3}
+      # The Kiri VM cannot reach host loopback; use host.docker.internal.
+      HTTP_PROXY: ${CONTAINER_HTTP_PROXY:-}
+      HTTPS_PROXY: ${CONTAINER_HTTPS_PROXY:-}
+      NO_PROXY: ${CONTAINER_NO_PROXY:-localhost,127.0.0.1,.local,host.kiri.internal}
+    volumes:
+      - ..:/workspace/RSI
+      - ./pi-home:/root/.pi/agent
+    stdin_open: true
+    tty: true
+    command: ["-lc", "while sleep 3600; do :; done"]

@@ -1,0 +1,50 @@
+{
+  "name": "pi-scientisttwo",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "ScientistTwo / RSI closed-loop research pipeline as a Pi extension (opencode-go provider)",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "scientisttwo",
+    "rsi",
+    "autonomous-research"
+  ],
+  "license": "MIT",
+  "pi": {
+    "extensions": [
+      "./extensions/rsi.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
+  },
+  "scripts": {
+    "cli": "node src/rsi/cli.ts",
+    "test": "node --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "smoke": "pi -ne -e ./extensions/rsi.ts -p --no-session \"list the loaded rsi tools\""
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  }
+}

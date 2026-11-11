@@ -1,143 +1,279 @@
-# ScientistTwo (reimplementation)
+# RSI — 作为 Pi 扩展的 ScientistTwo
 
-A faithful, runnable reimplementation of
+这是对以下论文的忠实、可运行实现：
 
 > **ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI**
-> Nam, Yoon, Pan, Wang, Meng, Ranganathan, Pfister — Google Cloud AI Research · [arXiv:2609.19644](https://arxiv.org/abs/2609.19644)
+> Nam, Yoon, Pan, Wang, Meng, Ranganathan, Pfister — Google Cloud AI Research
+> [arXiv:2609.19644](https://arxiv.org/abs/2609.19644)
 
-The paper is a **closed-loop, self-improving multi-agent research system**: one primitive
-(`candidate → critic → refine`) is reused at every level, and the *only* thing allowed to promote a
-hypothesis is a strictly better measurement against a **reproduced** baseline. Papers and codebases
-are outputs, not the point — the loop is what makes the system improve itself.
+实现形态是 **Pi（pi-agent）包 / 扩展**，而不是独立应用。闭环
+`candidate → critic → refine` 在 Pi 内运行；模型调用走 Pi 的 provider
+注册表，默认路由为 `opencode-go/deepseek-v4.1-flash`。
 
-| Paper | This repo |
+论文的核心是一个闭环、自我改进的多智能体研究系统。唯一允许把假设提升为
+incumbent 的条件，是相对于**复现基线**的严格更优测量。论文和代码库是输出，
+闭环本身才是目的。
+
+| 论文 | 本包实现 |
 |---|---|
-| §3.1 limitations → seed ideas → novelty filter | `agents/limitations.py`, `agents/ideas.py` |
-| §3.2 subset → critic → engineer → full-set | `agents/coding.py`, `agents/critics.py`, `agents/engineering.py`, `runtime/workspace.py` |
-| §3.3 idea evolution from execution traces | `agents/ideas.py::IdeaEvolver`, `core/orchestrator.py` |
-| §3.4 ablations + attribution | `agents/ablation.py` |
-| §3.5 draft → peer review → rebuttal experiments | `agents/writing.py`, `agents/review.py` |
-| §3.6 meta-review → idea refinement → re-draft | `agents/review.py::MetaReviewer`, `core/orchestrator.py` |
-| §4.3 integrity audit (score / spec / refs / method–code) | `agents/integrity.py` |
-| Listing 1 stage abstraction | `core/stage.py` |
-| Appendix A.2 hyperparameters | `config.py` (every value annotated `[PAPER]` vs `[CHOICE]`) |
+| §3.1 limitations → seed ideas → novelty filter | `src/rsi/agents/limitations.ts`、`agents/ideas.ts` |
+| §3.2 subset → critic → engineer → full-set | `src/rsi/agents/coding.ts`、`critics.ts`、`engineering.ts`、`runtime/workspace.ts` |
+| §3.3 idea evolution from execution traces | `src/rsi/agents/ideas.ts`、`core/orchestrator.ts` |
+| §3.4 ablations + attribution | `src/rsi/agents/ablation.ts` |
+| §3.5 draft → peer review → rebuttal experiments | `src/rsi/agents/writing.ts`、`review.ts` |
+| §3.6 meta-review → idea refinement → re-draft | `src/rsi/agents/review.ts`、`core/orchestrator.ts` |
+| §4.3 integrity audit（score/spec/refs/method-code） | `src/rsi/agents/integrity.ts` |
+| Listing 1 stage 抽象 | `src/rsi/core/stage.ts` |
+| 附录 A.2 超参数 | `src/rsi/config.ts`（每个值标注 `[PAPER]` / `[CHOICE]`） |
 
-## What is added beyond the paper — exploration guidance
+## 扩展暴露的入口
 
-The paper lets the agent choose its own direction. Real labs cannot: they have a domain and a
-strategy. `types.Problem` therefore carries a first-class steering layer:
+| 入口 | 作用 |
+|---|---|
+| `rsi_research` 工具 | 跑完 §3.1–§3.6，导出 `state.json`、`traces.jsonl`、`final.json`、候选代码 commit、LaTeX |
+| `rsi_inspect` 工具 | 汇总一次 run，不把完整 state 灌进上下文 |
+| `rsi_replay` 工具 | 只用 traces 重建决策路径；不调用模型、不访问 workspace |
+| `/rsi` 命令 | `run`、`inspect`、`replay`、`list`、`models`、`help` |
+| `rsi-research` skill | 给 agent 的路由与操作说明 |
+| `/rsi-research` prompt | 一次性“dry run → inspect → replay →（可选）真实运行”工作流 |
+
+### 用 subagent 实现多智能体
+
+默认 `agents=subagent`：每个流水线 agent 都在独立的 Pi 子会话中运行，有自己的
+system prompt、独立的内存历史和可选的工具白名单。critic 看不到生成器的私有
+推理，coding agent 也不会污染 drafting agent 的历史。`agents=inline` 保持同一
+流水线，但改用嵌套的 `modelRegistry.complete()` 调用。
+
+## 快速开始（容器）
+
+```bash
+cd "/Users/liuxiaoyan/workspace/RSI "
+
+./container/up.sh creds      # opencode-go key → container/.env
+./container/up.sh auth       # 完整 ~/.pi/agent/auth.json → 容器（含 OAuth provider）
+./container/up.sh build      # 仅首次需要
+./container/up.sh run
+./container/up.sh shell      # 然后执行：pi
+```
+
+`container/pi-home/settings.json` 已经配置：
+
+```json
+{
+  "defaultProvider": "opencode-go",
+  "defaultModel": "deepseek-v4.1-flash",
+  "packages": ["/workspace/RSI", "npm:pi-web-search"]
+}
+```
+
+进入 Pi 后：
+
+```text
+/rsi help
+/rsi run examples/ood_frozen_encoder.json --mock
+/rsi inspect ood-frozen-encoder-s7
+/rsi replay ood-frozen-encoder-s7
+```
+
+mock 运行是确定性的、免费的，几秒内就能跑到实验阶段。provider 运行会消耗
+真实调用，并先弹确认。
+
+详见 [`docs/CONTAINER.md`](docs/CONTAINER.md)、
+[`docs/PROVIDER.md`](docs/PROVIDER.md)。
+
+## 快速开始（离线 CLI，无需 Pi / API key）
+
+```bash
+node src/rsi/cli.ts run examples/ood_frozen_encoder.json --mock
+node src/rsi/cli.ts inspect ood-frozen-encoder-s7
+node src/rsi/cli.ts replay  ood-frozen-encoder-s7
+npm test
+npm run typecheck
+```
+
+每次 run 写入：
+
+```text
+runs/<run_id>/
+  state.json        运行结束时的完整研究状态
+  traces.jsonl      只追加：每次 LLM 调用、阶段转换、决策
+  final.json        paper、review、meta-review、integrity、decision_path
+  artifacts/        final.tex、模拟/溯源实验日志
+  worktree/         本次 run 的 git worktree（所有候选共用一个 checkout）
+  patches/          每个候选的 diff 与 git apply 日志
+```
+
+## 指向真实模型
+
+扩展使用 Pi 的 model registry，因此任何已认证的 Pi provider 都可直接用：
+
+```text
+rsi_research { problem: "...", provider: "opencode-go", model: "glm-5.3-flash" }
+```
+
+容器内可用环境变量覆盖：
+
+```bash
+RSI_MODEL=glm-5.3-flash
+RSI_CODING_MODEL=kimi-k3     # coding / ablation / rebuttal / draft_enhancer
+```
+
+`opencode-go` 需要 `x-opencode-session` 头；嵌套调用和 subagent 会话会自动
+携带 Pi 的 session id。凭据复制、验证和排错见
+[`docs/PROVIDER.md`](docs/PROVIDER.md)。
+
+### 联网检索
+
+容器安装了 [`pi-web-search`](https://github.com/ttttmr/pi-web-search)，使用
+provider 原生 web search（无需额外搜索 API key）。`web_search` 使用
+`container/pi-home/web-search.json` 指定的检索模型：
+
+```json
+{ "provider": "opencode-go", "model": "gpt-5.6-luna" }
+```
+
+RSI 的 novelty 与 reference-audit subagent 会自动获得 `web_search` 工具，用来
+检索真实文献；其他 agent 不联网，避免生成阶段被搜索结果污染。
+
+## 探索方向引导（超出论文）
+
+论文允许 agent 自由选择方向；`Problem` 带有一层研究方向约束：
 
 ```json
 {
   "domain": "time series forecasting",
   "subfield": "zero-shot / retrieval-augmented",
   "directions": [
-    {"id": "d1", "title": "spectral priors", "description": "DMD/FFT constraints",
-     "keywords": ["DMD", "spectral"], "weight": 1.0, "must_include": false},
-    {"id": "d2", "title": "safety gating", "description": "no-harm fallback",
-     "weight": 0.8, "must_include": true}
+    { "id": "d1", "title": "spectral priors", "description": "DMD/FFT constraints",
+      "keywords": ["DMD", "spectral"], "weight": 1.0, "must_include": false },
+    { "id": "d2", "title": "safety gating", "description": "no-harm fallback",
+      "weight": 0.8, "must_include": true }
   ],
   "forbidden": ["finetuning the backbone"]
 }
 ```
 
-`must_include` is a *soft* weight by default; pass `--strict-directions` to make it a hard gate
-(SPEC G4). A hard gate that filters every seed aborts the run with `no_eligible_seeds`.
+- 引导只进入**生成阶段**，绝不进入 critic 的算术；
+- 排序分数为 `novelty + guidance_weight · domain_fit`；
+- `must_include` 只有在 `strict_directions: true` 时才是硬门；
+- 每个 `Idea` 记录 `direction_ids`；manuscript 必须提到某个方向；
+- 离线模拟器包含 `domain_fit` 项，所以有引导/无引导的 run 在测试中可区分。
 
-Design constraints that keep this honest (see `docs/SPEC.md` §2b):
+## Git 原生与严格解耦
 
-* guidance enters **generation only** — never a critic's arithmetic;
-* `NoveltyChecker` reports `domain_fit`, and ranking is
-  `novelty + guidance_weight · domain_fit` (set the weight to 0 to recover the paper's pure-novelty
-  ordering);
-* `must_include` becomes a hard gate when `strict_directions` is on;
-* every `Idea` records `direction_ids`, and the manuscript must state which direction it advances;
-* the offline simulator includes the `domain_fit` term, so guided vs. unguided runs differ in tests.
+- 目标项目是**外部 git 仓库**；RSI 不为每个候选复制目录。
+- 每个候选是目标仓库中的 **branch + commit**（`rsi/<run_id>/<label>`）；
+  一个 run 只使用一个 `git worktree`（`runs/<run_id>/worktree`），所有候选复用。
+- `RepoRef` 记录 `repo`、`commit`、`branch`、`parent`；最终状态和 `final.json`
+  都以 commit 为代码身份，`worktree` 路径只是临时 checkout。
+- `Problem` 只暴露通用契约：`repo`、`repo_ref`、`experiment_command`
+  （`{scope}`、`{out}`、`{repo}`、`{commit}`）。RSI 核心不导入目标项目，
+  不知道 Mamba、DFM 或任何项目细节。
+- 项目基准属于目标项目本身。`integrations/` 只是可选适配器模板，不在 Pi
+  扩展加载路径内，也不被 `src/rsi/` 引用。
 
-## Quick start (offline, no API key)
+## 目标仓库：dfm-ssm
+
+针对真实 Mamba + DFM 仓库的 fixture 在 `examples/dfm_ssm.json`，默认指向
+`vendor/dfm-ssm`（不进入 git）。准备：
 
 ```bash
-cd "/Users/liuxiaoyan/workspace/RSI "
-export PYTHONPATH=src
-
-python3 -m scientisttwo.cli run examples/ood_frozen_encoder.json --mock
-python3 -m scientisttwo.cli inspect <run_id>
-python3 -m scientisttwo.cli replay  <run_id>     # rebuilds decisions from traces.jsonl, no model calls
-
-# execute the repository for real instead of the deterministic simulator:
-python3 -m scientisttwo.cli run examples/ood_frozen_encoder.json --runner subprocess
-python3 -m pytest -q                             # fully offline suite
+./scripts/setup-dfm-ssm.sh
 ```
 
-Every run writes `runs/<run_id>/`:
+该脚本克隆 `git@gitlab.com:Liu-Xiaoyan97/dfm-ssm.git`，并在目标仓库内创建
+`rsi-bench` 分支，放入 `bench/rsi_dfm_train_eval.py` 和 `bench/dfm_lm_eval.py`。
+指标是 **wikitext word-ppl**（lm-eval 的 `word_perplexity`，越低越好）：
+先训练 DFM-Mamba checkpoint，再用 lm-eval 在 wikitext 上评测。
 
-```
-state.json        full research state at the end of the run
-traces.jsonl      append-only log: every LLM call, every stage transition, every decision
-artifacts/        final.json, manuscript.tex, ablation tables, review rounds
-code/             baseline / subset / full-set codebase snapshots
-```
+GPU 服务器通过通用 `remote` 配置执行：本地 git worktree 用 `rsync` 同步到
+服务器，SSH 远程运行，`gpu_ids` 写入 `CUDA_VISIBLE_DEVICES`；服务器不需要联网。
+详见 [`docs/REMOTE.md`](docs/REMOTE.md)。
 
-## Pointing it at real models
+coding agent 会拿到 git commit 上的目录树 + 相关源码摘要，返回 unified diff；
+workspace 在目标仓库的 **git worktree** 上执行 `git apply`，并把候选写成
+`rsi/<run_id>/<label>` 分支上的 commit。不会为每个候选复制文件；diff 失败会写入
+`patches/*.apply.log` 并保持父 commit 不变，绝不伪造测量提升。真实优化运行建议
+在装有依赖的机器上执行，并把结果写回 `runs/<run_id>/`。
 
-```python
-from scientisttwo.config import ScientistTwoConfig, ModelRoute
-from scientisttwo.providers import build_provider
+## 设计保证
 
-export KIMI_API_KEY=...
-python3 -m scientisttwo.cli run examples/ood_frozen_encoder.json \
-    --provider kimi --model kimi-k2-0905-preview \
-    --base-url https://api.moonshot.cn/v1 --api-key-env KIMI_API_KEY
-
-# Python API
-from scientisttwo.config import ScientistTwoConfig
-from scientisttwo.providers import build_provider
-
-llm = build_provider(ScientistTwoConfig(), "openai",
-                     model="kimi-k2-0905-preview",
-                     base_url="https://api.moonshot.cn/v1",
-                     api_key_env="KIMI_API_KEY")
-```
-
-`runner="subprocess"` executes the repository for real (`--runner subprocess` on the CLI); the
-default `simulated` backend is the deterministic offline execution the tests assert on. With the
-synthetic scaffold a real run cannot beat the reproduced baseline, so it aborts with
-`no_good_ideas` — that is the honest outcome, not a bug.
-
-## Reading order
-
-1. `docs/SPEC.md` — the contract: invariants, state machine, frozen models, offline determinism rules.
-2. `docs/analysis/*.md` — section-by-section extraction from the paper ([PAPER] vs [INFERENCE]).
-3. `docs/ARCHITECTURE.md` — module ↔ agent ↔ paper-section map of the code as built.
-
-## Fidelity: what the case study actually shows
-
-The paper's worked example is **Procrustes-DS** (Appendix C). Its own cross-reference states:
-
-> "For an example of a rebuttal report obtained through a simulated peer-review process, since
-> **Procrustes-DS did not undergo this process**, the example of TABHARMONY is presented" — p.33
-
-So the observed artifact chain for Procrustes-DS is: limitations → proposal → experiments →
-ablations → critic feedback → reproduction/spec audits, plus a reviewer score (8.0 ScholarPeer /
-6.5 Stanford, p.5). **No rebuttal round is shown for it.** The rebuttal/rebuttal-report artifacts
-come from a *different* task (TABHARMONY).
-
-Consequently, in this repo:
-
-| Artifact | What it is |
+| 纯数值决策（模型无法翻转） | 模型可追加意见 |
 |---|---|
-| `examples/ood_frozen_encoder.json` | a **synthetic** fixture that borrows Procrustes-DS's task framing (OOD detection vs. a frozen encoder); its metrics are placeholders, not the paper's numbers |
-| `examples/meta_refine.json` + `examples/mock_script.json` | a **synthetic continuation** used to exercise §3.5 rebuttal and §3.6 meta-refinement, which the paper illustrates only via TABHARMONY. Pair them: `run examples/meta_refine.json --mock --script examples/mock_script.json`. Without the script the offline refinement does not measure better, so the system declines it (`meta.keep`) — both outcomes are pinned in `tests/test_meta_refinement.py` |
-| `examples/abort_case.json` | synthetic dead-end used to test the "0 Good after K rounds" abort |
+| `ResultComparison`（采纳，I2） | `SubsetCritic` / `FullSetCritic` 的理由 |
+| `Selector` 排序 | `AblationCritic`（可否决 GOOD） |
+| `SpecAuditor.hard_violations` | `SpecAuditor` 额外违规 |
+| `ReferenceAuditor.unknown_refs` | 额外违规 |
+| `MethodCodeAuditor.lexical_alignment` 下限 | 只能向上修正 |
+| `verify_scores` | — |
 
-No fixture claims to reproduce a published run, and `final.json` always records
-`runner: simulated` plus `accepted: false` unless every gate (review ≥ 8, meta `Accept`, clean
-integrity audit) genuinely passes.
+模型可以**阻止** promotion，但绝不能**导致** promotion。`accepted: true` 还要求
+peer score ≥ 阈值、meta `accept`、integrity 审计干净；否则导出 incumbent 并记录
+`export_reason`。`aborted: true` 表示科学上的死胡同或硬预算停止——这是诚实的
+结果，不是 harness 故障。
 
-## Fidelity notes
+离线模拟器约 20% 的失败率校准自论文报告的 80.4%（86/107）改进率，因此 mock
+run 会同时覆盖成功与失败分支。
 
-* The paper's numbers (`86/107` improved, `+25.2%` mean relative gain, ScholarPeer/Stanford review
-  scores) are **evaluation results of their infrastructure**, not reproducible here; this repo
-  reproduces the *mechanism*, and every deviation is annotated.
-* `docs/SPEC.md` marks each rule `[PAPER]` (quoted, with page) or `[CHOICE]` / `[INFERENCE]` /
-  `[EXTENSION]`.
+## 代码结构
+
+```text
+extensions/rsi.ts          Pi 扩展入口：工具 + /rsi 命令
+src/rsi/                   TypeScript 移植
+  core/                    orchestrator、state、Listing 1 stage
+  agents/                  §3.1–§3.6 agents、critics、integrity
+  providers/               Pi registry、Pi subagent、离线 mock、CLI OpenAI-compatible
+  runtime/                 budget、artifact/trace store、workspace runners
+  types.ts, config.ts      冻结模型、超参数
+skills/rsi/SKILL.md        agent 操作说明
+prompts/rsi-research.md    /rsi-research prompt 模板
+tests/                     node:test 套件（离线、无网络）
+container/                 Dockerfile、compose、Kiri 辅助脚本、pi-home 配置
+examples/                  Problem fixtures + mock script（含 dfm_ssm.json）
+integrations/dfm_ssm/      dfm-ssm 的 train + lm-eval 适配器（可选，不属于核心）
+scripts/                   仓库准备脚本
+docs/                      SPEC、ARCHITECTURE、PROVIDER、CONTAINER、论文分析
+legacy/python/             原 Python 实现（可执行规范）
+```
+
+## 测试
+
+```bash
+npm test            # 65 个离线测试：types、stage、mock、orchestrator、gates、replay
+npm run typecheck   # tsc --noEmit，使用 ambient Pi 类型，不复制宿主包
+```
+
+覆盖重点：严格改进语义、subset/full/ablation 门、engineering 预算范围、guidance
+门、review 循环、meta 改进、integrity 检查、artifact/replay 契约，以及成功和
+abort 两条路径。
+
+Python 参考实现仍可运行：
+
+```bash
+cd legacy/python
+PYTHONPATH=src python3 -m pytest -q      # 134 passed
+```
+
+## 保真边界：这不是什么
+
+- 论文中的数字（`86/107`、`+25.2%`、ScholarPeer/Stanford 分数）是其基础设施的
+  评测结果，不在此复现。本仓库复现的是**机制**，并逐条标注 `[PAPER]` /
+  `[CHOICE]` / `[INFERENCE]` / `[EXTENSION]`。
+- `examples/ood_frozen_encoder.json` 是**合成** fixture，借用 Procrustes-DS 的
+  任务框架；指标是占位值。
+- `examples/meta_refine.json` + `examples/mock_script.json` 是**合成续写**，用于
+  覆盖 §3.5 rebuttal 与 §3.6 meta-refinement。
+- 模拟 runner 不是科学基准。`runner: "subprocess"` 会执行目标仓库的
+  `run_experiment.py`；真实运行完全可能诚实地无法超过复现基线。
+- `final.json` 记录 `runner`、`accepted`、`export_reason`；不要把 `accepted`
+  理解为外部同行评审或论文录用。
+
+## 阅读顺序
+
+1. `docs/SPEC.md` — 契约：不变量、状态机、冻结模型、离线确定性规则。
+2. `docs/ARCHITECTURE.md` — 模块 ↔ agent ↔ 论文章节的对应关系。
+3. `docs/PROBLEM.md` — 在哪里定义指标、研究方向、研究代码路径。
+4. `docs/REMOTE.md` — rsync + SSH 到 GPU 服务器、GPU 选择、离线服务器。
+5. `docs/CONTAINER.md` / `docs/PROVIDER.md` — 运行 Pi 与 opencode-go。
+6. `docs/analysis/*.md` — 论文逐节提取。
+7. `legacy/python/README.md` — 可执行的 Python 参考实现。

@@ -1,0 +1,13 @@
+{
+  "defaultProvider": "opencode-go",
+  "defaultModel": "deepseek-v4.1-flash",
+  "defaultThinkingLevel": "high",
+  "defaultProjectTrust": "always",
+  "quietStartup": true,
+  "httpProxy": "",
+  "packages": [
+    "/workspace/RSI",
+    "npm:pi-web-search"
+  ],
+  "lastChangelogVersion": "1.5.2"
+}
