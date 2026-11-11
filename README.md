@@ -35,8 +35,8 @@ incumbent 的条件，是相对于**复现基线**的严格更优测量。论文
 | `rsi_inspect` 工具 | 汇总一次 run；运行中则返回协议状态，不把完整 state 灌进上下文 |
 | `rsi_replay` 工具 | 只用 traces 重建决策路径；不调用模型、不访问 workspace |
 | `/rsi` 命令 | `run`、`status`、`tickets`、`ticket`、`events`、`policy`、`answer`、`note`、`retry`、`stop`、`wait`、`inspect`、`replay`、`list`、`models`、`help` |
-| `rsi-superagent` skill | 前台 agent 的协议操作说明：接受、转述、回答、停止、策略 |
-| `rsi-research` skill | 快速上手与排错 |
+| `rsi-research` skill | RSI 总入口：运行、检查、replay、排错，以及 superagent 接单/转述/回答/策略 |
+| `rsi-adapter` skill | 根据 `examples/*.json` 为目标项目生成 benchmark adapter |
 | `/rsi-research` prompt | 一次性“派工 → 等待报告 → inspect → replay →（可选）真实运行”工作流 |
 
 ### 一个前台 agent + superagent 协议
@@ -607,8 +607,8 @@ src/rsi/                   TypeScript 移植
   providers/               Pi registry、PiWorker/SuperagentLLMProvider、离线 mock、CLI
   runtime/                 budget、artifact/trace store、workspace runners
   types.ts, config.ts      冻结模型、超参数
-skills/rsi-superagent/     前台 agent 的协议操作说明
-skills/rsi/SKILL.md        快速上手与排错
+skills/rsi-research/       RSI 总入口 + superagent 协议
+skills/rsi-adapter/        从 examples/*.json 生成目标项目 adapter + 安装脚本
 prompts/superagent/        orchestrator / worker / dispatch / replies / policy
 prompts/rsi-research.md    /rsi-research prompt 模板
 tests/                     node:test 套件（离线、无网络）

@@ -66,7 +66,8 @@ src/rsi/
   cli.ts                            `rsi run|replay|inspect|list`
 tests/                              node:test suite (offline, no network)
 examples/*.json                     offline fixtures
-skills/rsi/SKILL.md                 agent operating instructions
+skills/rsi-research/SKILL.md        agent operating instructions + superagent protocol
+skills/rsi-adapter/SKILL.md         generate a target-project benchmark adapter
 prompts/rsi-research.md             /rsi-research template
 container/                          pi-agent container + Kiri helpers
 legacy/python/                      original Python reference implementation
