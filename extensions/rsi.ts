@@ -1,11 +1,17 @@
 /**
- * RSI — the ScientistTwo closed research loop as a Pi extension.
+ * RSI — the ScientistTwo closed research loop as a superagent extension.
  *
  * The extension registers:
- *   - rsi_research : run §3.1 → §3.6 end-to-end and export artifacts
- *   - rsi_inspect  : read state/traces/final of a run
- *   - rsi_replay   : rebuild the decision path without a model or workspace
- *   - /rsi         : human-facing command (run/inspect/replay/list/models)
+ *   - rsi_research     : accept a request and start the SOP (non-blocking by default)
+ *   - rsi_superagent   : read protocol state, answer, retry, stop, note, attach, policy
+ *   - rsi_inspect      : read a run (final.json, or protocol status while it runs)
+ *   - rsi_replay       : rebuild the decision path without a model or workspace
+ *   - /rsi             : human-facing command
+ *
+ * The operator talks to one foreground agent: this Pi session. Research runs in
+ * background would-be subagents that are now task tickets of the superagent
+ * protocol (see src/rsi/superagent/ and docs/SUPERAGENT.md). Reports arrive as
+ * custom messages, so a person hears only about results and questions.
  *
  * Model calls go through ctx.modelRegistry, so the default route is
  * opencode-go/deepseek-v4.1-flash and every other Pi provider works unchanged.
@@ -13,10 +19,19 @@
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import type { LLMProvider } from "../src/rsi/providers/base.ts";
+import path from "node:path";
+
 import { MockLLMProvider } from "../src/rsi/providers/mock.ts";
 import { PiLLMProvider, listModels } from "../src/rsi/providers/pi.ts";
-import { PiSubagentProvider } from "../src/rsi/providers/subagent.ts";
+import { InlineWorker, type TaskWorker } from "../src/rsi/superagent/executor.ts";
+import type { Notice } from "../src/rsi/superagent/engine.ts";
+import type { PolicySettings } from "../src/rsi/superagent/model.ts";
+import { defaultPolicySettings } from "../src/rsi/superagent/policy.ts";
+import { orchestratorBriefing, policySection } from "../src/rsi/superagent/prompts.ts";
+import { SuperagentRuntime, type DispatchParams } from "../src/rsi/superagent/runtime.ts";
+import { SUPERAGENT_PARAMS, formatStatus, superagentAction } from "../src/rsi/superagent/tools.ts";
+import { PiWorker } from "../src/rsi/providers/superagent.ts";
+import type { RunSpec } from "../src/rsi/superagent/model.ts";
 import {
   type InspectResult,
   type ReplayResult,
@@ -25,9 +40,7 @@ import {
   listRuns,
   loadScript,
   replayRun,
-  runResearch,
 } from "../src/rsi/run.ts";
-import path from "node:path";
 
 type JsonSchema = Record<string, unknown>;
 type ToolContext = ExtensionContext;
@@ -49,11 +62,8 @@ interface ResearchParams {
   out?: string;
   seed?: number;
   runner?: "simulated" | "subprocess";
-  max_refine_rounds?: number;
-  max_review_refinements?: number;
-  strict_directions?: boolean;
-  max_llm_calls?: number;
-  max_wall_time_s?: number;
+  title?: string;
+  wait?: boolean;
 }
 
 const RESEARCH_PARAMS: JsonSchema = {
@@ -74,17 +84,17 @@ const RESEARCH_PARAMS: JsonSchema = {
       type: "string",
       enum: ["subagent", "inline"],
       description:
-        "subagent = each pipeline agent runs in its own isolated Pi session (default); inline = nested model calls.",
+        "subagent = every SOP task runs as a task ticket in its own Pi worker session (default); inline = in-process model calls behind the same tickets.",
     },
     thinking: {
       type: "string",
       enum: ["off", "low", "medium", "high"],
-      description: "Thinking level for subagent sessions (default low; coding roles inherit it).",
+      description: "Thinking level for worker sessions (default low).",
     },
     web_search: {
       type: "boolean",
       description:
-        "Give novelty/reference-audit subagents the web_search tool (default true; requires pi-web-search).",
+        "Give novelty/reference-audit workers the web_search tool (default true; requires pi-web-search).",
     },
     provider: { type: "string", description: `Pi provider id (default ${DEFAULT_PROVIDER}).` },
     model: { type: "string", description: `Model id for the default route (default ${DEFAULT_MODEL}).` },
@@ -102,16 +112,14 @@ const RESEARCH_PARAMS: JsonSchema = {
       type: "string",
       enum: ["simulated", "subprocess"],
       description:
-        "simulated = deterministic offline metrics; subprocess = execute the problem repository's run_experiment.py.",
+        "simulated = deterministic offline metrics; subprocess = execute the problem repository's run_experiment.py (needs a person's authority).",
     },
-    max_refine_rounds: { type: "number" },
-    max_review_refinements: { type: "number" },
-    strict_directions: {
+    title: { type: "string", description: "One-line label for the run ticket (default: the run id)." },
+    wait: {
       type: "boolean",
-      description: "Treat directions marked must_include as a hard gate.",
+      description:
+        "true blocks until the run ends and returns its result (CLI and tests); false dispatches and returns immediately (default).",
     },
-    max_llm_calls: { type: "number" },
-    max_wall_time_s: { type: "number" },
   },
   required: ["problem"],
 };
@@ -134,37 +142,94 @@ const REPLAY_PARAMS: JsonSchema = {
   required: ["run_id"],
 };
 
-function runDirectory(ctx: ToolContext, out?: string): string {
-  return path.resolve(ctx.cwd, out ?? "runs");
+// ---------------------------------------------------------------- runtime
+
+interface RuntimeHost {
+  policy: { settings: PolicySettings };
+  runtimes: Map<string, SuperagentRuntime>;
 }
 
-function providerFor(
-  ctx: ToolContext,
-  params: Pick<
-    ResearchParams,
-    "mode" | "agents" | "thinking" | "web_search" | "provider" | "model" | "script" | "seed"
-  >,
-  signal: AbortSignal | undefined,
-): LLMProvider {
-  if (params.mode === "mock") {
-    const script = params.script ? loadScript(params.script, ctx.cwd) : null;
-    return new MockLLMProvider(script, params.seed ?? 7);
+const HOST: RuntimeHost = { policy: { settings: defaultPolicySettings() }, runtimes: new Map() };
+
+function runtimeKey(ctx: ToolContext): string {
+  return `${ctx.cwd}::${ctx.sessionManager?.getSessionId?.() ?? "no-session"}`;
+}
+
+function runtimeFor(ctx: ToolContext): SuperagentRuntime {
+  const key = runtimeKey(ctx);
+  const existing = HOST.runtimes.get(key);
+  if (existing) return existing;
+  const runtime = new SuperagentRuntime({
+    cwd: ctx.cwd,
+    policy: HOST.policy.settings,
+    workerFactory: (context) => workerFor(ctx, context.spec, context.signal),
+    onNotice: (notice) => notify(ctx, notice),
+  });
+  HOST.runtimes.set(key, runtime);
+  return runtime;
+}
+
+function applyPolicy(settings: PolicySettings): string[] {
+  const next = defaultPolicySettings({ ...settings, version: "" });
+  HOST.policy.settings = next;
+  const reached: string[] = [];
+  for (const runtime of HOST.runtimes.values()) reached.push(...runtime.applyPolicy(next));
+  return reached;
+}
+
+/** The worker for one run: Pi session, in-process call, or the offline mock. */
+function workerFor(ctx: ToolContext, spec: RunSpec, signal: AbortSignal): TaskWorker {
+  if (spec.mode === "mock") {
+    const script = spec.options.script ? loadScript(String(spec.options.script), ctx.cwd) : null;
+    return new InlineWorker(new MockLLMProvider(script, spec.seed));
   }
   const common = {
     registry: ctx.modelRegistry,
-    providerId: params.provider || DEFAULT_PROVIDER,
-    defaultModel: params.model || DEFAULT_MODEL,
+    providerId: spec.provider || DEFAULT_PROVIDER,
+    defaultModel: spec.model || DEFAULT_MODEL,
     sessionModel: ctx.model,
     sessionId: ctx.sessionManager?.getSessionId?.(),
     signal,
   };
-  if (params.agents === "inline") return new PiLLMProvider(common);
-  return new PiSubagentProvider({
+  if (spec.agents === "inline") return new InlineWorker(new PiLLMProvider(common));
+  return new PiWorker({
     ...common,
     cwd: ctx.cwd,
-    thinkingLevel: params.thinking ?? "low",
-    webSearch: params.web_search ?? true,
+    thinkingLevel: String(spec.options.thinking ?? "low"),
+    webSearch: spec.options.web_search !== false,
   });
+}
+
+/** Report to the one foreground agent as a custom message, never as a turn of its own. */
+function notify(ctx: ToolContext, notice: Notice): void {
+  const pi = PI;
+  if (!pi?.sendMessage) return;
+  const head = notice.kind === "attention" ? "RSI needs a person" : notice.kind === "result" ? "RSI run finished" : "RSI run problem";
+  const where = notice.runId && notice.ticketId ? ` (run ${notice.runId}, ticket ${notice.ticketId})` : "";
+  const answer = notice.kind === "attention" && notice.runId && notice.ticketId
+    ? `\nAnswer with rsi_superagent action=answer run_id=${notice.runId} ticket_id=${notice.ticketId}.`
+    : "";
+  const text = `${head}${where}: ${notice.text}${answer}`;
+  try {
+    pi.sendMessage(
+      { customType: "rsi-superagent", content: text, display: true, details: notice },
+      { deliverAs: "followUp", triggerTurn: true },
+    );
+  } catch {
+    try {
+      ctx.ui.notify(text, notice.kind === "attention" || notice.kind === "failure" ? "warning" : "info");
+    } catch {
+      /* the report is durable even when no UI can show it */
+    }
+  }
+}
+
+let PI: ExtensionAPI | undefined;
+
+// ---------------------------------------------------------------- helpers
+
+function runDirectory(ctx: ToolContext, out?: string): string {
+  return path.resolve(ctx.cwd, out ?? "runs");
 }
 
 function runDetails(result: RunResult): Record<string, unknown> {
@@ -177,6 +242,7 @@ function runDetails(result: RunResult): Record<string, unknown> {
       state: path.join(result.root, "state.json"),
       traces: path.join(result.root, "traces.jsonl"),
       final: path.join(result.root, "final.json"),
+      protocol: path.join(result.root, "superagent", "state.json"),
       manuscript: result.final.paper.latex_path || null,
     },
   };
@@ -224,38 +290,58 @@ function replayText(replay: ReplayResult): string {
     : `replay MISMATCH\nrecorded: ${JSON.stringify(replay.recorded)}\nreconstructed: ${JSON.stringify(replay.reconstructed)}`;
 }
 
-async function executeResearch(
+/** Dispatch a run and, when `wait` is set, return its result instead of its ticket. */
+async function dispatchResearch(
   params: ResearchParams,
   ctx: ToolContext,
-  signal: AbortSignal | undefined,
   onUpdate: Progress,
-): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown> }> {
-  const provider = providerFor(ctx, params, signal);
-  const report = (message: string) =>
-    onUpdate?.({
-      content: [{ type: "text", text: message }],
-      details: { stage: message },
-    });
-  report(`RSI: starting ${params.mode === "mock" ? "offline" : `${params.provider || DEFAULT_PROVIDER}/${params.model || DEFAULT_MODEL}`} run`);
-  const result = await runResearch({
+  wait: boolean,
+): Promise<{ content: Array<{ type: "text"; text: string }>; details: Record<string, unknown>; isError?: boolean }> {
+  const runtime = runtimeFor(ctx);
+  const dispatch: DispatchParams = {
     problem: params.problem,
-    cwd: ctx.cwd,
-    outDir: params.out ?? "runs",
+    out: params.out,
     seed: params.seed,
-    runner: params.runner,
-    mock: params.mode === "mock",
-    mockScript: params.script ? loadScript(params.script, ctx.cwd) : null,
-    provider,
+    mode: params.mode ?? "provider",
+    agents: params.agents ?? "subagent",
+    runner: params.runner ?? "simulated",
+    provider: params.provider,
     model: params.model,
-    codingModel: params.coding_model,
-    strictDirections: params.strict_directions,
-    maxRefineRounds: params.max_refine_rounds,
-    maxReviewRefinements: params.max_review_refinements,
-    maxLlmCalls: params.max_llm_calls,
-    maxWallTimeS: params.max_wall_time_s,
-    signal,
-    onProgress: report,
-  });
+    coding_model: params.coding_model,
+    title: params.title,
+    sessionId: ctx.sessionManager?.getSessionId?.(),
+    thinking: params.thinking,
+    options: {
+      web_search: params.web_search ?? true,
+      script: params.script,
+    },
+  };
+  const { session, duplicate } = runtime.dispatch(dispatch);
+  const status = runtime.status(session.runId);
+  if (!wait) {
+    const lines = [
+      `RSI run ${session.runId} ${duplicate ? "is already running" : "accepted"}: ticket ${session.ticketId}`,
+      `root: ${session.root}`,
+      `mode: ${dispatch.mode} · agents: ${dispatch.agents} · runner: ${dispatch.runner}`,
+      status ? formatStatus(status) : "",
+      "The SOP runs in background task tickets. Report only when it ends or asks a question.",
+    ].filter(Boolean);
+    return {
+      content: [{ type: "text", text: lines.join("\n") }],
+      details: { run_id: session.runId, root: session.root, ticket_id: session.ticketId, duplicate, status },
+    };
+  }
+  onUpdate?.({ content: [{ type: "text", text: `RSI run ${session.runId} running…` }], details: { stage: "dispatch" } });
+  const result = await session.done;
+  if (!result) {
+    const finalStatus = runtime.status(session.runId);
+    const attention = finalStatus?.attention ? `\nNEEDS A PERSON: ${finalStatus.attention}` : "";
+    return {
+      content: [{ type: "text", text: `RSI run ${session.runId} did not finish.${attention}\n${finalStatus ? formatStatus(finalStatus) : ""}` }],
+      details: { run_id: session.runId, root: session.root, ticket_id: session.ticketId, status: finalStatus },
+      isError: true,
+    };
+  }
   return { content: [{ type: "text", text: runText(result) }], details: runDetails(result) };
 }
 
@@ -293,51 +379,89 @@ function flagNumber(flags: Record<string, string | boolean>, key: string): numbe
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+// ---------------------------------------------------------------- extension
+
 export default function rsiExtension(pi: ExtensionAPI): void {
+  PI = pi;
+
   pi.registerTool({
     name: "rsi_research",
-    label: "RSI Research Loop",
+    label: "RSI Research Run",
     description:
-      "Run the ScientistTwo closed research loop on a problem: limitations → seed ideas → reproduce baseline → " +
-      "subset/full experiments with critics and engineering → ablations → draft + peer review → meta-review. " +
-      "Every promotion requires a strict measured improvement over the reproduced baseline. " +
-      "Artifacts (state.json, traces.jsonl, final.json, code snapshots, manuscript) are written to disk.",
+      "Accept one research request and start the ScientistTwo SOP as a superagent run: limitations → seed ideas → " +
+      "reproduce baseline → subset/full experiments with critics and engineering → ablations → draft + peer review → " +
+      "meta-review → integrity. Every promotion requires a strict measured improvement over the reproduced baseline. " +
+      "Returns immediately with a run id; reports arrive when the run ends or needs a person.",
     parameters: RESEARCH_PARAMS,
     promptSnippet:
-      "Run the autonomous ScientistTwo/RSI research loop on a problem JSON and export a reproducible artifact tree.",
+      "Accept a research request as one run ticket; the SOP's agent calls run as background task tickets.",
     promptGuidelines: [
+      orchestratorBriefing(),
       "Use rsi_research when the user asks for an autonomous research run, an RSI/ScientistTwo loop, or an experiment-backed paper draft.",
-      "Use rsi_research with mode=mock for an offline dry run before spending real model calls; omit mode or use provider for a real run.",
-      "After rsi_research, use rsi_inspect to summarize a run and rsi_replay to verify the decision path instead of dumping large state.json files into the conversation.",
+      "Use rsi_research with mode=mock for an offline dry run before spending real model calls.",
+      "Do not wait for a run: tell the user its run id, then relay the report that arrives. Use wait=true only when the user explicitly asks to block.",
+      "Never describe progress you have not received; the run reports when it ends, blocks or asks a question.",
+      "After a run ends, use rsi_superagent action=status/tickets to answer follow-ups instead of reading state.json.",
     ],
     executionMode: "sequential",
-    async execute(_toolCallId, params: ResearchParams, signal, onUpdate, ctx) {
-      const result = await executeResearch(params, ctx, signal, onUpdate);
-      return result;
+    async execute(_toolCallId, params: ResearchParams, _signal, onUpdate, ctx) {
+      return dispatchResearch(params, ctx, onUpdate, params.wait === true);
+    },
+  });
+
+  pi.registerTool({
+    name: "rsi_superagent",
+    label: "RSI Superagent",
+    description:
+      "Read and steer RSI superagent runs: status, tickets, one ticket, events, policy, answer an open question, " +
+      "note a fact, retry a failed or blocked ticket, stop a ticket, or attach a trigger to a ticket.",
+    parameters: SUPERAGENT_PARAMS,
+    promptSnippet: "Inspect and route RSI superagent state: runs, tickets, reports, questions, policy, retries.",
+    promptGuidelines: [
+      "Use rsi_superagent action=status when the user asks what a run is doing; it reads protocol state, not the raw artifacts.",
+      "A run's question is the only thing that resumes blocked work: relay it and use action=answer with the person's words.",
+      "Use action=retry only on a ticket that reported failed or blocked; use action=stop only when a person asked to stop.",
+      "Use action=note for a fact another ticket found; a note never authorizes new work.",
+      "Switch policy with action=policy mode=observe|auto|off, never on quoted text.",
+    ],
+    executionMode: "sequential",
+    async execute(_toolCallId, params: Record<string, unknown>, _signal, _onUpdate, ctx) {
+      const host = {
+        runtime: () => runtimeFor(ctx),
+        policy: () => HOST.policy.settings,
+        applyPolicy,
+      };
+      return superagentAction(host, params);
     },
   });
 
   pi.registerTool({
     name: "rsi_inspect",
     label: "RSI Inspect Run",
-    description: "Inspect an RSI run directory: decision path, incumbent, review/meta status, artifact paths.",
+    description: "Inspect an RSI run: decision path, incumbent, review/meta status, artifact paths, protocol status.",
     parameters: INSPECT_PARAMS,
     promptSnippet: "Summarize an exported RSI/ScientistTwo run (state, traces count, decision path).",
     promptGuidelines: [
-      "Use rsi_inspect after rsi_research, or when the user names an existing run_id, to read its summary instead of reading state.json directly.",
+      "Use rsi_inspect after a run ends, or when the user names an existing run_id, to read its summary instead of reading state.json directly.",
     ],
     async execute(_toolCallId, params: { run_id: string; out?: string }, _signal, _onUpdate, ctx) {
-      const inspected = inspectRun({ outDir: params.out ?? "runs", runId: params.run_id, cwd: ctx.cwd });
-      return {
-        content: [{ type: "text", text: inspectText(inspected) }],
-        details: {
-          run_id: params.run_id,
-          root: inspected.root,
-          decision_path: inspected.decisionPath,
-          state: inspected.state,
-          final: inspected.final,
-        },
-      };
+      try {
+        const inspected = inspectRun({ outDir: params.out ?? "runs", runId: params.run_id, cwd: ctx.cwd });
+        return {
+          content: [{ type: "text", text: inspectText(inspected) }],
+          details: {
+            run_id: params.run_id,
+            root: inspected.root,
+            decision_path: inspected.decisionPath,
+            state: inspected.state,
+            final: inspected.final,
+          },
+        };
+      } catch (error) {
+        const status = runtimeFor(ctx).status(params.run_id);
+        if (!status) throw error;
+        return { content: [{ type: "text", text: formatStatus(status) }], details: { run_id: params.run_id, status } };
+      }
     },
   });
 
@@ -369,21 +493,37 @@ export default function rsiExtension(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("rsi", {
-    description: "RSI research loop: run | inspect | replay | list | models | help",
+    description: "RSI superagent: run | status | tickets | ticket | events | policy | answer | note | retry | stop | inspect | replay | list | models | help",
     async handler(rawArgs, ctx) {
       const args = parseCommandArgs(rawArgs ?? "");
       const sub = args.positional[0] ?? "help";
       const out = flagString(args.flags, "out") ?? "runs";
+      const runtime = runtimeFor(ctx);
+
+      const superagent = async (action: string, extra: Record<string, unknown> = {}) => {
+        const response = await superagentAction(
+          { runtime: () => runtime, policy: () => HOST.policy.settings, applyPolicy },
+          { action, ...extra },
+        );
+        ctx.ui.notify(response.content[0]?.text ?? "(no output)", response.isError ? "warning" : "info");
+        return response;
+      };
 
       if (sub === "help" || sub === "--help") {
         ctx.ui.notify(
           [
-            "/rsi run <problem.json> [--mock] [--inline] [--thinking low] [--seed 7] [--runner simulated|subprocess] [--out runs]",
-            "         [--provider opencode-go] [--model ID]",
-            "/rsi inspect <run_id> [--out runs]",
-            "/rsi replay <run_id> [--out runs]",
-            "/rsi list [--out runs]",
-            "/rsi models [provider]",
+            "/rsi run <problem.json> [--mock] [--inline] [--wait] [--seed 7] [--out runs] [--provider opencode-go] [--model ID]",
+            "/rsi status [run_id]        protocol state of a run, or all runs",
+            "/rsi tickets <run_id>       task tickets of a run",
+            "/rsi ticket <run_id> <id>   one ticket with its reports",
+            "/rsi events <run_id>        domain events",
+            "/rsi policy [mode|pause|resume] [--show-rules]",
+            "/rsi answer <run_id> <ticket_id> <answer>",
+            "/rsi note <run_id> <ticket_id> <text>",
+            "/rsi retry <run_id> <ticket_id>",
+            "/rsi stop <run_id> <ticket_id> [reason]",
+            "/rsi wait <run_id>          block until the run ends",
+            "/rsi inspect <run_id> | replay <run_id> | list | models [provider]",
           ].join("\n"),
           "info",
         );
@@ -403,14 +543,78 @@ export default function rsiExtension(pi: ExtensionAPI): void {
         return;
       }
 
+      if (sub === "status") {
+        const runId = args.positional[1];
+        await superagent("status", runId ? { run_id: runId } : {});
+        return;
+      }
+
+      if (sub === "tickets" || sub === "ticket" || sub === "events" || sub === "retry" || sub === "stop" || sub === "note" || sub === "answer") {
+        const runId = args.positional[1];
+        const ticketId = args.positional[2];
+        const rest = args.positional.slice(3).join(" ");
+        if (!runId) {
+          ctx.ui.notify(`usage: /rsi ${sub} <run_id>${sub === "tickets" || sub === "events" ? "" : " <ticket_id>"}`, "warning");
+          return;
+        }
+        const extra: Record<string, unknown> = { run_id: runId };
+        if (sub !== "tickets" && sub !== "events") {
+          if (!ticketId) {
+            ctx.ui.notify(`usage: /rsi ${sub} <run_id> <ticket_id>`, "warning");
+            return;
+          }
+          extra.ticket_id = ticketId;
+        }
+        if (sub === "note" || sub === "answer") {
+          if (!rest) {
+            ctx.ui.notify(`usage: /rsi ${sub} <run_id> <ticket_id> <text>`, "warning");
+            return;
+          }
+          extra.text = rest;
+        }
+        if (sub === "stop" && rest) extra.reason = rest;
+        await superagent(sub, extra);
+        return;
+      }
+
+      if (sub === "policy") {
+        const value = args.positional[1];
+        const extra: Record<string, unknown> = { show_rules: Boolean(args.flags["show-rules"]) };
+        if (value === "auto" || value === "observe" || value === "off") extra.mode = value;
+        if (value === "pause") extra.paused = true;
+        if (value === "resume") extra.paused = false;
+        await superagent("policy", extra);
+        return;
+      }
+
+      if (sub === "wait") {
+        const runId = args.positional[1];
+        const session = runId ? runtime.session(runId) : undefined;
+        if (!session) {
+          ctx.ui.notify(runId ? `run ${runId} is not live in this process` : "usage: /rsi wait <run_id>", "warning");
+          return;
+        }
+        ctx.ui.notify(`waiting for ${runId}…`, "info");
+        const result = await session.done;
+        const status = runtime.status(runId);
+        ctx.ui.notify(result ? runText(result) : status ? formatStatus(status) : `${runId} ended`, result ? "info" : "warning");
+        return;
+      }
+
       if (sub === "inspect") {
         const runId = args.positional[1];
         if (!runId) {
           ctx.ui.notify("usage: /rsi inspect <run_id> [--out runs]", "warning");
           return;
         }
-        const inspected = inspectRun({ outDir: out, runId, cwd: ctx.cwd });
-        ctx.ui.notify(inspectText(inspected), "info");
+        try {
+          const inspected = inspectRun({ outDir: out, runId, cwd: ctx.cwd });
+          ctx.ui.notify(inspectText(inspected), "info");
+        } catch (error) {
+          const status = runtime.status(runId);
+          if (!status) throw error;
+          ctx.ui.notify(formatStatus(status), "info");
+        }
         return;
       }
 
@@ -426,13 +630,13 @@ export default function rsiExtension(pi: ExtensionAPI): void {
       }
 
       if (sub !== "run") {
-        ctx.ui.notify(`unknown /rsi subcommand: ${sub}. Try /rsi help.`, "warning");
+        ctx.ui.notify(`unknown /rsi subcommand: ${sub}. Try /rsi help.`, "info");
         return;
       }
 
       const problem = args.positional[1];
       if (!problem) {
-        ctx.ui.notify("usage: /rsi run <problem.json> [--mock] [--seed 7]", "warning");
+        ctx.ui.notify("usage: /rsi run <problem.json> [--mock] [--seed 7] [--wait]", "warning");
         return;
       }
       const mode = args.flags.mock ? "mock" : "provider";
@@ -448,32 +652,31 @@ export default function rsiExtension(pi: ExtensionAPI): void {
           return;
         }
       }
-      const script = flagString(args.flags, "script");
-      const seed = flagNumber(args.flags, "seed") ?? 7;
-      const result = await executeResearch(
+      const response = await dispatchResearch(
         {
           problem,
           mode,
           provider,
           model,
           coding_model: flagString(args.flags, "coding-model"),
-          script,
+          script: flagString(args.flags, "script"),
           out,
-          seed,
+          seed: flagNumber(args.flags, "seed") ?? 7,
           runner: (flagString(args.flags, "runner") as ResearchParams["runner"]) ?? "simulated",
-          max_refine_rounds: flagNumber(args.flags, "max-refine-rounds"),
-          max_review_refinements: flagNumber(args.flags, "max-review-refinements"),
-          strict_directions: Boolean(args.flags["strict-directions"]),
-          max_llm_calls: flagNumber(args.flags, "max-llm-calls"),
-          max_wall_time_s: flagNumber(args.flags, "max-wall-time-s"),
           agents: args.flags.inline ? "inline" : "subagent",
           thinking: (flagString(args.flags, "thinking") as ResearchParams["thinking"]) ?? "low",
+          wait: Boolean(args.flags.wait),
         },
         ctx,
         undefined,
-        undefined,
+        Boolean(args.flags.wait),
       );
-      ctx.ui.notify(String(result.content[0]?.text ?? "RSI run finished."), "info");
+      ctx.ui.notify(String(response.content[0]?.text ?? "RSI run dispatched."), "info");
     },
   });
+}
+
+/** The generated policy section, for a status card or a future system prompt. */
+export function currentPolicySection(): string {
+  return policySection(HOST.policy.settings);
 }

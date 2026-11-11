@@ -30,19 +30,37 @@ incumbent 的条件，是相对于**复现基线**的严格更优测量。论文
 
 | 入口 | 作用 |
 |---|---|
-| `rsi_research` 工具 | 跑完 §3.1–§3.6，导出 `state.json`、`traces.jsonl`、`final.json`、候选代码 commit、LaTeX |
-| `rsi_inspect` 工具 | 汇总一次 run，不把完整 state 灌进上下文 |
+| `rsi_research` 工具 | 接受一次研究请求；立即返回 run id 与 ticket id，SOP 在后台 task ticket 中运行（`wait: true` 才阻塞） |
+| `rsi_superagent` 工具 | `status`、`tickets`、`ticket`、`events`、`policy`、`answer`、`note`、`retry`、`stop`、`attach` |
+| `rsi_inspect` 工具 | 汇总一次 run；运行中则返回协议状态，不把完整 state 灌进上下文 |
 | `rsi_replay` 工具 | 只用 traces 重建决策路径；不调用模型、不访问 workspace |
-| `/rsi` 命令 | `run`、`inspect`、`replay`、`list`、`models`、`help` |
-| `rsi-research` skill | 给 agent 的路由与操作说明 |
-| `/rsi-research` prompt | 一次性“dry run → inspect → replay →（可选）真实运行”工作流 |
+| `/rsi` 命令 | `run`、`status`、`tickets`、`ticket`、`events`、`policy`、`answer`、`note`、`retry`、`stop`、`wait`、`inspect`、`replay`、`list`、`models`、`help` |
+| `rsi-superagent` skill | 前台 agent 的协议操作说明：接受、转述、回答、停止、策略 |
+| `rsi-research` skill | 快速上手与排错 |
+| `/rsi-research` prompt | 一次性“派工 → 等待报告 → inspect → replay →（可选）真实运行”工作流 |
 
-### 用 subagent 实现多智能体
+### 一个前台 agent + superagent 协议
 
-默认 `agents=subagent`：每个流水线 agent 都在独立的 Pi 子会话中运行，有自己的
-system prompt、独立的内存历史和可选的工具白名单。critic 看不到生成器的私有
-推理，coding agent 也不会污染 drafting agent 的历史。`agents=inline` 保持同一
-流水线，但改用嵌套的 `modelRegistry.complete()` 调用。
+RSI 扩展本身就是
+[`dsh-superagent-prototype`](https://github.com/deepseek-ai/dsh-superagent-prototype)
+协议的宿主：你只和一个前台 agent（当前 Pi 会话）对话，它只做接单、路由和转述，
+不亲自跑研究。一次研究是一张 **run ticket**，由 SOP driver 以 §3.1–§3.6 推进；
+SOP 内部每一次 agent 调用都是 **task ticket**，由 worker（默认是独立 Pi 会话，
+`agents=inline` 时是同协议的进程内调用）执行并回传结构化 **report**。
+
+- **授权**：`policy` 有 `off` / `observe`（默认）/ `auto` 三种接单模式；只有明确
+  对人的请求才自动接单，自动观测（benchmark、review、定时任务）最多只能延续已
+  订阅的 run。`sop.spend` 需要明确请求，`sop.experiment` 需要人确认。
+- **报告**：只有 run 结束、受阻、失败或提问时才通知前台；task 级进度不打扰人。
+  问题会变成 **attention**，`rsi_superagent action=answer` 是唯一能让它继续的操作。
+- **数值门不可被模型翻转**：promotion 只能由“相对复现基线的严格实测提升”产生；
+  策略只能决定谁可以花钱、导出，不能决定哪个候选更好。
+- **持久化**：`runs/<run_id>/superagent/state.json`（ticket、mandate、decision）
+  与 `events.jsonl`（有序领域事件）；每个命令原子落盘。重启后不会假装恢复半个
+  SOP：run 会以 blocked + 恢复问题结束，由人决定是否新开一次 run。
+
+完整协议、概念与工具见 [`docs/SUPERAGENT.md`](docs/SUPERAGENT.md)，提示词与
+worker 契约在 `prompts/superagent/`。
 
 ## 快速开始（容器）
 
@@ -118,7 +136,7 @@ RSI_MODEL=glm-5.3-flash
 RSI_CODING_MODEL=kimi-k3     # coding / ablation / rebuttal / draft_enhancer
 ```
 
-`opencode-go` 需要 `x-opencode-session` 头；嵌套调用和 subagent 会话会自动
+`opencode-go` 需要 `x-opencode-session` 头；嵌套调用和 worker 会话会自动
 携带 Pi 的 session id。凭据复制、验证和排错见
 [`docs/PROVIDER.md`](docs/PROVIDER.md)。
 
@@ -132,7 +150,7 @@ provider 原生 web search（无需额外搜索 API key）。`web_search` 使用
 { "provider": "opencode-go", "model": "gpt-5.6-luna" }
 ```
 
-RSI 的 novelty 与 reference-audit subagent 会自动获得 `web_search` 工具，用来
+RSI 的 novelty 与 reference-audit worker 会自动获得 `web_search` 工具，用来
 检索真实文献；其他 agent 不联网，避免生成阶段被搜索结果污染。
 
 ## 探索方向引导（超出论文）
@@ -218,14 +236,18 @@ run 会同时覆盖成功与失败分支。
 ## 代码结构
 
 ```text
-extensions/rsi.ts          Pi 扩展入口：工具 + /rsi 命令
+extensions/rsi.ts          Pi 扩展入口：工具 + /rsi 命令（前台 agent）
 src/rsi/                   TypeScript 移植
+  superagent/              superagent 协议：model、store、policy、sop、engine、
+                           executor、runtime、tools、prompts
   core/                    orchestrator、state、Listing 1 stage
   agents/                  §3.1–§3.6 agents、critics、integrity
-  providers/               Pi registry、Pi subagent、离线 mock、CLI OpenAI-compatible
+  providers/               Pi registry、PiWorker/SuperagentLLMProvider、离线 mock、CLI
   runtime/                 budget、artifact/trace store、workspace runners
   types.ts, config.ts      冻结模型、超参数
-skills/rsi/SKILL.md        agent 操作说明
+skills/rsi-superagent/     前台 agent 的协议操作说明
+skills/rsi/SKILL.md        快速上手与排错
+prompts/superagent/        orchestrator / worker / dispatch / replies / policy
 prompts/rsi-research.md    /rsi-research prompt 模板
 tests/                     node:test 套件（离线、无网络）
 container/                 Dockerfile、compose、Kiri 辅助脚本、pi-home 配置
@@ -271,9 +293,10 @@ PYTHONPATH=src python3 -m pytest -q      # 134 passed
 ## 阅读顺序
 
 1. `docs/SPEC.md` — 契约：不变量、状态机、冻结模型、离线确定性规则。
-2. `docs/ARCHITECTURE.md` — 模块 ↔ agent ↔ 论文章节的对应关系。
-3. `docs/PROBLEM.md` — 在哪里定义指标、研究方向、研究代码路径。
-4. `docs/REMOTE.md` — rsync + SSH 到 GPU 服务器、GPU 选择、离线服务器。
-5. `docs/CONTAINER.md` / `docs/PROVIDER.md` — 运行 Pi 与 opencode-go。
-6. `docs/analysis/*.md` — 论文逐节提取。
-7. `legacy/python/README.md` — 可执行的 Python 参考实现。
+2. `docs/SUPERAGENT.md` — superagent 协议：概念映射、授权、报告、工具、持久化。
+3. `docs/ARCHITECTURE.md` — 模块 ↔ agent ↔ 论文章节的对应关系。
+4. `docs/PROBLEM.md` — 在哪里定义指标、研究方向、研究代码路径。
+5. `docs/REMOTE.md` — rsync + SSH 到 GPU 服务器、GPU 选择、离线服务器。
+6. `docs/CONTAINER.md` / `docs/PROVIDER.md` — 运行 Pi 与 opencode-go。
+7. `docs/analysis/*.md` — 论文逐节提取。
+8. `legacy/python/README.md` — 可执行的 Python 参考实现。

@@ -109,13 +109,35 @@ export class MockLLMProvider extends LLMProvider {
   }
 
   async complete(req: LLMRequest): Promise<LLMResponse> {
-    this.record(req);
+    const index = this.record(req);
     const data = await this.scripted(req);
+    if (data === undefined && req.schemaName) {
+      // A schema-named request is answered with a synthesized envelope, so a
+      // worker that only carries text (the protocol's inline worker) still gets
+      // the same deterministic output as `structured()`.
+      const { rng, prefix } = this.seeded(req, index);
+      return {
+        text: JSON.stringify(this.synthesize(req.schemaName, req, rng, prefix, index)),
+        model: "mock-scientist",
+        usage: {},
+        latencyS: 0,
+      };
+    }
     return {
       text: JSON.stringify(data ?? {}),
       model: "mock-scientist",
       usage: {},
       latencyS: 0,
+    };
+  }
+
+  /** The seeded generator one request uses, shared by `complete` and `structured`. */
+  private seeded(req: LLMRequest, index: number): { rng: () => number; prefix: string } {
+    const material = stableString([this.seed, req.task, req.meta]);
+    const digest = crc32(material);
+    return {
+      rng: mulberry32(digest),
+      prefix: `${cleanPrefix(req.task)}-${digest.toString(16).padStart(8, "0")}-${index}`,
     };
   }
 
@@ -128,10 +150,7 @@ export class MockLLMProvider extends LLMProvider {
       const raw = typeof scripted === "string" ? extractJson(scripted) : scripted;
       return spec.parse(raw);
     }
-    const material = stableString([this.seed, request.task, request.meta]);
-    const digest = crc32(material);
-    const rng = mulberry32(digest);
-    const prefix = `${cleanPrefix(request.task)}-${digest.toString(16).padStart(8, "0")}-${index}`;
+    const { rng, prefix } = this.seeded(request, index);
     const data = this.synthesize(spec.name, request, rng, prefix, index);
     try {
       return spec.parse(data);

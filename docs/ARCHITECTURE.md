@@ -10,13 +10,19 @@ executable reference; the field names and artifact contract are unchanged.
 ## 1. Layers
 
 ```
-Pi session (pi-agent)
+Pi session (pi-agent) = the one foreground agent
   └─ extensions/rsi.ts                         extension entry
-       ├─ rsi_research / rsi_inspect / rsi_replay   tools
+       ├─ rsi_research / rsi_superagent / rsi_inspect / rsi_replay   tools
        ├─ /rsi                                  command
+       ├─ src/rsi/superagent/                   the superagent protocol
+       │    ├─ model.ts store.ts policy.ts      domain, durability, gate
+       │    ├─ sop.ts                           §3.1–§3.6 as stages and rules
+       │    ├─ engine.ts                        tickets, assignments, reports
+       │    ├─ executor.ts runtime.ts           workers, SOP driver, run session
+       │    └─ tools.ts prompts.ts              foreground actions, prompts
        └─ src/rsi/run.ts                        shared run/inspect/replay API
+            ├─ providers/superagent.ts          PiWorker + SuperagentLLMProvider
             ├─ providers/pi.ts                  ctx.modelRegistry.complete()
-            ├─ providers/subagent.ts            createAgentSession() per agent
             ├─ providers/mock.ts                deterministic offline provider
             ├─ providers/openai.ts              CLI-only OpenAI-compatible transport
             └─ core/orchestrator.ts             the state machine
@@ -29,12 +35,17 @@ development.
 
 Model routing has two modes:
 
-- `agents=subagent` (default): `PiSubagentProvider` calls the Pi SDK and runs
-  each agent in its own session — separate system prompt, isolated in-memory
-  history, optional tool allowlist. `ideas.novelty` and `integrity.refs` get
-  `web_search` (provider-native, `pi-web-search`); all other agents stay offline.
-- `agents=inline`: `PiLLMProvider` calls `ctx.modelRegistry.complete()` with a
-  synthetic one-message context.
+- `agents=subagent` (default): every agent call opens one **task ticket** whose
+  Executor is `PiWorker` — a Pi session with its own system prompt, isolated
+  in-memory history, the `rsi_report` tool, and an optional tool allowlist.
+  `ideas.novelty` and `integrity.refs` get `web_search` (provider-native,
+  `pi-web-search`); all other workers stay offline.
+- `agents=inline`: the same task tickets get `InlineWorker`, which calls
+  `ctx.modelRegistry.complete()` in-process with a one-message context.
+
+A run is a **run ticket** executed by the SOP driver; both ticket kinds share
+one Engine, one policy and one durable store. `docs/SUPERAGENT.md` is the
+protocol reference.
 
 Both resolve the same route and credential through Pi, and both pass the Pi
 session id (opencode-go requires `x-opencode-session`).
