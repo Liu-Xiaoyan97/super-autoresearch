@@ -32,6 +32,17 @@ ensure_base() {
   fi
 }
 
+ensure_ssh() {
+  if [[ ! -f "$ROOT/container/ssh/config" ]]; then
+    "$ROOT/container/sync-ssh.sh" >/dev/null
+  fi
+}
+
+bootstrap_container() {
+  "${COMPOSE[@]}" exec -e "RSI_SUPERAGENT_POLICY=${RSI_SUPERAGENT_POLICY:-yolo}" \
+    pi-agent /workspace/RSI/container/bootstrap.sh >/dev/null 2>&1 || true
+}
+
 ensure_env() {
   if [[ ! -f "$ROOT/container/.env" ]]; then
     echo "error: container/.env is missing." >&2
@@ -53,19 +64,31 @@ case "$cmd" in
   run|up)
     ensure_base
     ensure_env
+    ensure_ssh
     "${COMPOSE[@]}" up -d "$@"
     ;;
   shell)
     ensure_env
+    ensure_ssh
+    bootstrap_container
     exec "${COMPOSE[@]}" exec -e "RSI_SUPERAGENT_POLICY=${RSI_SUPERAGENT_POLICY:-yolo}" pi-agent bash
     ;;
   exec)
     ensure_env
+    ensure_ssh
+    bootstrap_container
     exec "${COMPOSE[@]}" exec -e "RSI_SUPERAGENT_POLICY=${RSI_SUPERAGENT_POLICY:-yolo}" pi-agent "$@"
     ;;
   pi)
     ensure_env
+    ensure_ssh
+    bootstrap_container
     exec "${COMPOSE[@]}" exec -e "RSI_SUPERAGENT_POLICY=${RSI_SUPERAGENT_POLICY:-yolo}" pi-agent pi "$@"
+    ;;
+  bootstrap)
+    ensure_env
+    ensure_ssh
+    exec "${COMPOSE[@]}" exec pi-agent /workspace/RSI/container/bootstrap.sh
     ;;
   creds|credentials)
     exec "$ROOT/container/sync-credentials.sh" "$@"
@@ -83,7 +106,7 @@ case "$cmd" in
     "${COMPOSE[@]}" down "$@"
     ;;
   *)
-    echo "usage: $0 {build|run|shell|exec|pi|creds|auth|ssh|logs|down} ..." >&2
+    echo "usage: $0 {build|run|shell|exec|pi|bootstrap|creds|auth|ssh|logs|down} ..." >&2
     exit 2
     ;;
 esac

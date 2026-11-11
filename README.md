@@ -402,8 +402,8 @@ DFM_SSM_DIR=/Users/liuxiaoyan/workspace/dfm-ssm ./scripts/setup-dfm-ssm.sh
 ```
 
 注意：**当前正在运行的容器**是在这套 compose 配置之前创建的，没有 `/repos`
-挂载。要用外部仓库，需要先重建容器（并确保镜像内的 ssh/rsync/socat 已安装）；
-如果暂时不重建，继续用 `vendor/dfm-ssm` 的 fixture。
+挂载。要用外部仓库，需要先重建容器；SSH/rsync/socat 会在容器启动时由
+`container/bootstrap.sh` 自动安装，不需要手动 apt。
 
 ### 指定服务器 Python 环境
 
@@ -447,15 +447,23 @@ runs/<run_id>/
 
 `state.json` / `final.json` 的 `code.commit`、`code.branch` 是候选代码的真实身份。
 
-### 9. 当前容器的注意点
+### 9. 容器重建与 SSH 自动化
 
-`ssh` / `rsync` / `socat` 是装在当前运行容器里的；如果 `down` 后重建容器，需要重装：
+`ssh` / `rsync` / `socat` 不需要手动安装：
+
+- `container/bootstrap.sh` 在容器启动时运行；
+- `./container/up.sh shell|exec|pi` 在命令前也会运行一次（幂等）；
+- 缺失时通过 `host.docker.internal:7890` 代理执行 apt 安装；
+- `/root/.ssh` 由 compose 挂载 `container/ssh`（只读）；如果容器是旧配置，
+  bootstrap 会从 `/workspace/RSI/container/ssh` 复制一份；
+- `./container/up.sh run` 发现 `container/ssh/config` 不存在时会自动调用
+  `container/sync-ssh.sh` 从宿主 `~/.ssh` 生成。
+
+手动触发：
 
 ```bash
-./container/up.sh exec bash -lc '
-apt-get -o Acquire::http::Proxy=http://host.docker.internal:7890         -o Acquire::https::Proxy=http://host.docker.internal:7890 update -qq &&
-DEBIAN_FRONTEND=noninteractive apt-get   -o Acquire::http::Proxy=http://host.docker.internal:7890   -o Acquire::https::Proxy=http://host.docker.internal:7890   install -y -qq openssh-client rsync socat
-'
+./container/up.sh bootstrap
+./container/up.sh ssh        # 重新从本机 ~/.ssh 生成 container/ssh
 ```
 
 SSH key/config 在宿主 `container/ssh/`，已 gitignore，不会进入仓库。

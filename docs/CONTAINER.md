@@ -120,6 +120,38 @@ transport (the extension itself always uses Pi's registry):
   --max-llm-calls 40 --out runs'
 ```
 
+## Bootstrap (automatic)
+
+`container/bootstrap.sh` runs at container start and before
+`./container/up.sh shell|exec|pi`:
+
+- installs `openssh-client`, `rsync`, `socat` if missing (via the host proxy);
+- ensures `/root/.ssh` has the config/keys mounted from `container/ssh`;
+- is idempotent and does not block Pi if apt is unreachable.
+
+Manual triggers:
+
+```bash
+./container/up.sh bootstrap
+./container/up.sh ssh        # regenerate container/ssh from the host ~/.ssh
+```
+
+`container/ssh/` is gitignored. `./container/up.sh run` creates it from the host
+`~/.ssh` if it is missing.
+
+## External target repositories
+
+Set the host workspace and container mount in `container/.env`:
+
+```dotenv
+RSI_EXTERNAL_ROOT=/Users/liuxiaoyan/workspace
+RSI_TARGET_REPO=/repos/dfm-ssm
+```
+
+compose mounts `RSI_EXTERNAL_ROOT` at `/repos`. A fixture can then use
+`"repo": "${RSI_TARGET_REPO}"`, `remote.worktree`, and `remote.out`; see
+`examples/dfm_ssm_external.json` and `docs/REMOTE.md`.
+
 ## Tests and typecheck
 
 The extension has no runtime npm dependencies; Pi supplies its host packages.
@@ -214,6 +246,7 @@ Rebuild only when `container/Dockerfile` or the Pi version changes.
 | `error getting credentials ... docker-credential-desktop` | Use `./container/up.sh` (it sets a clean `DOCKER_CONFIG`) instead of bare `docker`. |
 | `no credential for opencode-go` | `./container/up.sh auth` and/or `./container/up.sh creds`, then start a new Pi session (or `down`/`run`). |
 | `pi: command not found` | You are on the host, not in the container: `./container/up.sh shell`. |
+| `ssh`/`rsync`/`socat` missing after a rebuild | `./container/up.sh bootstrap` (it installs via the host proxy). |
 | Extension not loading | Check `container/pi-home/settings.json` has `"packages": ["/workspace/RSI", "npm:pi-web-search"]`, then `/reload` in Pi or start a new session. |
 | `web_search` errors or returns nothing | Check `container/pi-home/web-search.json` uses a Responses model such as `opencode-go/gpt-5.6-luna`, and that the proxy is set. |
 | Model missing | `pi --list-models`, pass `provider`/`model` explicitly; see `docs/PROVIDER.md`. |
