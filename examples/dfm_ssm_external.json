@@ -43,7 +43,9 @@
       "RSI_DFM_LM_EVAL_BATCH_SIZE": "1",
       "RSI_DFM_EVAL_MAX_LENGTH": "512",
       "RSI_DFM_FLOW_TIME": "off",
-      "RSI_DFM_DATA_FORMAT": "auto"
+      "RSI_DFM_DATA_FORMAT": "auto",
+      "RSI_DFM_TRAIN_LAUNCHER": "/home/sl/miniconda3/envs/mamba/bin/accelerate launch --num_processes 1",
+      "RSI_DFM_TRAIN_SCRIPT": "scripts/finetune_dfm.py"
     },
     "timeout_s": 86400,
     "excludes": [

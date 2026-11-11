@@ -361,6 +361,14 @@ CLI 不经过 superagent 的 `person` 门，适合先验证远程链路。
   `selective_scan_cuda` 后可改 `native`。
 - `flow_time=off` 用 causal backbone 计算 lm-eval logits；改成 `1.0` 走
   DFM forward，需与你们的评测协议一致。
+- 训练可以用 `accelerate`，评测仍然是 Python：
+
+  ```jsonc
+  "RSI_DFM_TRAIN_LAUNCHER": "/home/sl/miniconda3/envs/mamba/bin/accelerate launch --num_processes 1",
+  "RSI_DFM_TRAIN_SCRIPT": "scripts/finetune_dfm.py"
+  ```
+
+  `bench/dfm_lm_eval.py` 仍然由 `remote.python` 以 Python 运行。
 
 ### 7. 换成真实模型/数据
 
@@ -494,6 +502,9 @@ backend 导入。`remote.setup` 在 `cd` 之后、benchmark 之前执行；adapt
 | `RSI_DFM_BACKEND` | `auto` / `native` / `reference`；`--backend` 默认值 |
 | `RSI_DFM_DEVICE` | `cuda` / `cpu` / `mps`；`--device` 默认值 |
 | `RSI_DFM_TRAIN_STEPS` | 训练步数；`--train-steps` 未显式给出时使用 |
+| `RSI_DFM_TRAIN_LAUNCHER` | 训练启动器，默认 `<python> -m`；可设 `accelerate launch --num_processes 1` |
+| `RSI_DFM_TRAIN_SCRIPT` | 传给启动器的模块/脚本；默认 `scripts.finetune_dfm`，accelerate 用 `scripts/finetune_dfm.py` |
+| `RSI_DFM_TRAIN_CMD` | 完整训练 shell 命令覆盖；设置后忽略 launcher/script，支持 `{python}`、`{repo}`、`{data}`、`{checkpoint}` 等占位符 |
 | `RSI_DFM_TRAIN_BATCH_SIZE` | 训练 batch size |
 | `RSI_DFM_GRAD_ACCUM` | 梯度累积步数 |
 | `RSI_DFM_MAX_LENGTH` | 训练最大序列长度 |

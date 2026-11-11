@@ -63,6 +63,40 @@ def run(
     )
 
 
+def run_shell(
+    command: str, cwd: Path, timeout: float | None, env: dict[str, str]
+) -> subprocess.CompletedProcess:
+    print("+", command, flush=True)
+    return subprocess.run(
+        command, cwd=str(cwd), timeout=timeout, capture_output=True, text=True,
+        env=env, shell=True, executable="/bin/bash",
+    )
+
+
+def expand_train_command(
+    command: str, args: argparse.Namespace, checkpoint: Path, data_path: str
+) -> str:
+    values = {
+        "{python}": sys.executable,
+        "{repo}": str(Path.cwd()),
+        "{data}": str(Path(data_path).expanduser()),
+        "{checkpoint}": str(checkpoint),
+        "{tokenizer}": args.tokenizer,
+        "{base_model}": args.base_model,
+        "{device}": args.device,
+        "{backend}": args.backend,
+        "{steps}": str(args.train_steps or os.environ.get("RSI_DFM_TRAIN_STEPS", SCOPE_TRAIN_STEPS[args.scope])),
+        "{train_batch_size}": str(args.train_batch_size),
+        "{grad_accum}": str(args.grad_accum),
+        "{max_length}": str(args.max_length),
+        "{block_length}": str(args.block_length),
+        "{seed}": str(args.seed),
+    }
+    for key, value in values.items():
+        command = command.replace(key, value)
+    return command
+
+
 def find_repo(explicit: str | None) -> Path:
     if explicit:
         return Path(explicit).expanduser().resolve()
@@ -108,6 +142,12 @@ def main() -> int:
     parser.add_argument("--tokenizer", default=os.environ.get("RSI_DFM_TOKENIZER", "EleutherAI/gpt-neox-20b"))
     parser.add_argument("--base-model", default=os.environ.get("RSI_DFM_BASE_MODEL", "state-spaces/mamba-130m"))
     parser.add_argument("--train-steps", type=int, default=0, help="0 = RSI_DFM_TRAIN_STEPS or scope default")
+    parser.add_argument("--train-command", default=os.environ.get("RSI_DFM_TRAIN_CMD") or None,
+                        help="full shell command override; replaces the default training invocation")
+    parser.add_argument("--train-launcher", default=os.environ.get("RSI_DFM_TRAIN_LAUNCHER") or None,
+                        help="training launcher prefix, e.g. 'accelerate launch --num_processes 1'; default '<python> -m'")
+    parser.add_argument("--train-script", default=os.environ.get("RSI_DFM_TRAIN_SCRIPT", "scripts.finetune_dfm"),
+                        help="module name or script path passed to the launcher")
     parser.add_argument("--train-batch-size", type=int, default=env_int("RSI_DFM_TRAIN_BATCH_SIZE", 2))
     parser.add_argument("--grad-accum", type=int, default=env_int("RSI_DFM_GRAD_ACCUM", 8))
     parser.add_argument("--max-length", type=int, default=env_int("RSI_DFM_MAX_LENGTH", 512))
@@ -155,10 +195,7 @@ def main() -> int:
                 return fail(out, f"training data not found: {data_path}")
             steps = args.train_steps or int(os.environ.get("RSI_DFM_TRAIN_STEPS", SCOPE_TRAIN_STEPS[args.scope]))
             checkpoint = work / f"checkpoint-{out.stem}"
-            train_cmd = [
-                sys.executable,
-                "-m",
-                "scripts.finetune_dfm",
+            train_args = [
                 "--base-model",
                 args.base_model,
                 "--tokenizer",
@@ -190,7 +227,14 @@ def main() -> int:
                 "--output",
                 str(checkpoint),
             ]
-            trained = run(train_cmd, repo, timeout, env)
+            if args.train_command:
+                command = expand_train_command(args.train_command, args, checkpoint, data_path)
+                trained = run_shell(command, repo, timeout, env)
+            else:
+                launcher = args.train_launcher or f"{sys.executable} -m"
+                launcher = launcher.replace("{python}", sys.executable)
+                train_cmd = [*shlex.split(launcher), args.train_script, *train_args]
+                trained = run(train_cmd, repo, timeout, env)
             if trained.returncode != 0:
                 return fail(
                     out,
