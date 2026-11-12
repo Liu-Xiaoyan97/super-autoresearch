@@ -67,7 +67,6 @@
       "runs",
       "thirdparty/lm_eval/__pycache__"
     ],
-    "worktree": "/home/sl/coral-rsi/projects/coral-{run_id}",
     "out": "/home/sl/coral-rsi/results/coral-{run_id}",
     "setup": "export CUDA_HOME=/usr/local/cuda-12.8; export PATH=\"$CUDA_HOME/bin:$PATH\"; export LD_LIBRARY_PATH=\"$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}\"; export PYTHONPATH=\"$PWD${PYTHONPATH:+:$PYTHONPATH}\""
   },

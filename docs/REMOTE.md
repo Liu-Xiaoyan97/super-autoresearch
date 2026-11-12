@@ -11,12 +11,12 @@ worktree 快照并执行 benchmark；不需要联网或访问 git remote。
         │
         │ GitWorkspace: 本地 worktree (唯一 checkout)
         ▼
-  rsync -az --delete  ──────────────►  GPU 服务器 /data/rsi/rsi/<run>/worktree
+  rsync -az --delete  ──────────────►  GPU 服务器 /data/rsi（复用目标根目录）
                                           │
                                           │ ssh: CUDA_VISIBLE_DEVICES=...
                                           │      <experiment_command>
                                           ▼
-  ◄──────────── ssh cat out.json ────  /data/rsi/rsi/<run>/out/process-N.json
+  ◄──────────── ssh cat out.json ────  /data/rsi/results/<run>/process-N.json
 ```
 
 ## 在 Problem 中配置
@@ -48,9 +48,9 @@ worktree 快照并执行 benchmark；不需要联网或访问 git remote。
 | 字段 | 作用 |
 |---|---|
 | `host` | SSH 目标；留空时读容器环境 `RSI_REMOTE_HOST` |
-| `dir` | 默认远程基础目录；每次 run 使用 `<dir>/rsi/<run_id>/` |
-| `worktree` | 远程项目路径模板；支持 `{run_id}`、`{repo}`。默认 `<dir>/rsi/<run_id>/worktree` |
-| `out` | 远程输出目录模板；默认远程 worktree 的兄弟目录 `out/` |
+| `dir` | 远程目标根目录；默认直接复用该目录，不再每次 run 复制一份项目 |
+| `worktree` | 可选：远程项目路径模板；支持 `{run_id}`、`{repo}`。默认 `<dir>`（复用目标根目录）；需要 run 级隔离时才配置成含 `{run_id}` 的路径 |
+| `out` | 可选：远程输出目录模板；默认 `<dir>/results/{run_id}`，每个 run 独立保留 |
 | `python` | 远程 Python；`experiment_command` 中用 `{python}` |
 | `setup` | `cd` 之后、命令之前执行的 shell 初始化（conda/module/venv） |
 | `ssh_args` | 额外 SSH 参数（端口、跳板机、BatchMode） |
@@ -66,8 +66,9 @@ worktree 快照并执行 benchmark；不需要联网或访问 git remote。
 仍先写 `cancel` 文件；worker 心跳失效时会直接杀 detached 进程组。若本地进程
 被 `SIGKILL` 或机器断电，任何客户端都无法再发信号，需要人工确认远程进程。
 
-默认还会排除：`.git`、`runs`、`patches`、`__pycache__`、`.pytest_cache`、
-`node_modules`、`.venv*`、`*.pyc`。
+默认还会排除：`.git`、`runs`、`results`、`patches`、`__pycache__`、`.pytest_cache`、
+`node_modules`、`.venv*`、`*.pyc`。`results` 必须排除，否则复用目标根目录时
+`rsync --delete` 会删掉已有 checkpoints 和评测证据。
 
 ## 外部项目与路径映射
 
@@ -89,7 +90,8 @@ compose 把宿主机 `RSI_EXTERNAL_ROOT` 挂载到容器 `/repos`。fixture：
 ```
 
 本地 git 仓库（宿主 `/Users/.../dfm-ssm`）仍是候选 commit/分支的唯一来源；
-服务器只收到当前候选 worktree 的 rsync 快照。
+服务器只收到当前候选 worktree 的 rsync 快照；默认快照直接覆盖目标根目录，
+不再创建 `projects/<run>` 副本。
 
 ## 指定服务器 Python 环境
 
@@ -145,7 +147,8 @@ RSI 只做 `rsync` + `ssh`，不会在服务器上 `pip install` 或 `git clone`
 ## 本地 git 版本管理
 
 - 每个候选仍是本地目标仓库里的 `rsi/<run_id>-<hash>/<label>-N` 分支 + commit。
-- 远程目录只是该 commit 的 worktree 快照，没有 `.git`。
+- 默认远程目录是目标根目录的源码快照；根目录的 `.git` 和 `results/` 被保留，
+  不参与 `rsync --delete`。
 - 远程执行失败/超时不会伪造 commit；`state.json` / `final.json` 的
   `code.commit` 仍是本地 git 的候选身份。
 - 远程日志在 `runs/<run_id>/artifacts/experiments/remote-*.json`，包含 host、
@@ -178,8 +181,9 @@ rsi_adapter_smoke { problem: "examples/<project>.json", repo: "/path/to/independ
 
 这是 Pi 原生扩展入口，无需 LLM；复用 GitWorkspace 和真实 RemoteRunner，完成
 新 worktree → 实际 rsync → SSH subset 实验 → 拉回原始 JSON → 指标键/数值/边界验证。
-`remote.worktree` 和 `remote.out` 若有配置，必须含 `{run_id}`，避免
-`rsync --delete` 覆盖服务器既有项目。默认新建 `runs/adapter-smoke-*`；显式
+`remote.worktree` 默认复用 `<dir>`；如果显式配置成 run 级目录，必须自行承担
+并发/清理责任。`remote.out` 默认 `<dir>/results/{run_id}`；无论是否配置，
+`results` 都不参与源码同步。默认新建 `runs/adapter-smoke-*`；显式
 `--out` / 工具 `out` 证据目录必须尚不存在。`--env` / 工具 `env` 对象只覆盖
 本次冒烟，不改正式 fixture，也不应含凭据；**不会自动缩短预算**，请明确设置
 目标实际支持的训练步数、batch、评测样本/长度等限制。

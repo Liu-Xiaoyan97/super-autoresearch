@@ -189,7 +189,10 @@ node src/rsi/cli.ts run examples/my_problem.json --mock --strict-directions
   实现并通过真实远程冒烟，才将实测 commit/ref 作为可用基线交付。示例中的
   `rsi-bench` 只是目标分支名，不由 RSI 安装或保证存在。
 - `remote.worktree` / `remote.out`：本地项目路径到服务器路径的映射模板，支持
-  `{run_id}`、`{repo}`。默认 `<remote.dir>/rsi/<run_id>/worktree`。
+  `{run_id}`、`{repo}`。`remote.worktree` 默认 `<remote.dir>`，复用目标根目录，
+  不再为每个 run 复制一份 `projects/<run>`；`remote.out` 默认
+  `<remote.dir>/results/{run_id}`，每个 run 独立保留。`results/` 永远不参与
+  源码同步。
 - `remote.python` / `remote.setup`：指定远程 Python 环境；`setup` 可执行
   `conda activate`、`module load` 等。
 - `diagnose_command`（可选）：在**已复现 baseline** 的 worktree 上执行只读测量分析，

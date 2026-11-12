@@ -99,7 +99,9 @@ test("RemoteRunner rsyncs the local worktree, runs over ssh, and fetches metrics
     assert.equal(result.status, "ok", result.stderr);
     assert.equal(result.metrics.word_ppl, 12.5);
     assert.equal(result.metrics.gpu, 2);
-    assert.ok(fs.existsSync(path.join(remote.dir, "rsi", "run-1", "worktree", "bench", "run.py")));
+    assert.ok(fs.existsSync(path.join(remote.dir, "bench", "run.py")), "the candidate is synced into the reused target root");
+    assert.equal(fs.existsSync(path.join(remote.dir, "projects", "coral-run-1")), false, "no extra per-run source copy");
+    assert.ok(fs.existsSync(path.join(remote.dir, "results", "run-1")), "results remain per run");
     const log = JSON.parse(fs.readFileSync(path.join(store.root, "artifacts", "experiments", "remote-0001.json"), "utf8"));
     assert.equal(log.mode, "remote");
     assert.equal(log.gpu_ids, "2");

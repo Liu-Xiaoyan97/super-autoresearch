@@ -42,6 +42,7 @@ export const DEFAULT_RSYNC_EXCLUDES = [
   "runs",
   "patches",
   "artifacts",
+  "results",
   "checkpoints",
   "pretrained",
   "data",
@@ -581,11 +582,15 @@ export class RemoteRunner implements Runner {
     const seq = ++this.sequence;
     const repoName = safeName(path.basename(path.resolve(req.repo.repo ?? req.repo.path)));
     const baseDir = this.remote.dir || "~/rsi";
-    const worktreeTemplate =
-      this.remote.worktree || path.posix.join(baseDir, "rsi", "{run_id}", "worktree");
+    // Reuse the target root by default. A per-run worktree is an explicit
+    // isolation choice, not the default: `--delete` keeps one source mirror
+    // current instead of copying the whole project for every run.
+    const worktreeTemplate = this.remote.worktree || baseDir;
     const remoteWorktree = expandRemoteTemplate(worktreeTemplate, this.runId, repoName);
+    // Results remain per run and are excluded from source synchronization, so
+    // reusing the worktree never deletes checkpoints or evaluation evidence.
     const outTemplate =
-      this.remote.out || path.posix.join(path.posix.dirname(remoteWorktree), "out");
+      this.remote.out || path.posix.join(baseDir, "results", "{run_id}");
     const remoteOutDir = expandRemoteTemplate(outTemplate, this.runId, repoName);
     const remoteOut = path.posix.join(remoteOutDir, `process-${String(seq).padStart(4, "0")}.json`);
     const logPath = this.store.artifact(`experiments/remote-${String(seq).padStart(4, "0")}.json`);

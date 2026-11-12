@@ -155,6 +155,10 @@ test("an aborted remote run kills the detached process group with a fresh SSH ca
   });
   const result = await runner.run({ ...req, repo: { ...req.repo, path: tempDir("rsi-remote-src-") } });
   assert.equal(result.status, "failed");
+  const mkdir = calls.find((call) => call.command.includes("mkdir -p"));
+  assert.ok(mkdir, "the run must create the remote target");
+  assert.match(mkdir!.command, /\/data\/rsi/);
+  assert.match(mkdir!.command, /\/data\/rsi\/results\/run-1/, "per-run results stay outside the reused source tree");
   const cleanup = calls.find((call) => call.command.includes("kill -TERM -- -$p"));
   assert.ok(cleanup, "the aborted run must clean up the remote group");
   assert.equal(cleanup!.signal, undefined, "cleanup must not reuse the aborted signal");
@@ -205,7 +209,7 @@ test("remote path templates and setup are applied", () => {
 });
 
 test("default rsync excludes cover VCS, caches, checkpoints and data", () => {
-  for (const pattern of [".git", "runs", "checkpoints", "pretrained", "data", "build", "*.pt", "*.parquet"]) {
+  for (const pattern of [".git", "runs", "results", "checkpoints", "pretrained", "data", "build", "*.pt", "*.parquet"]) {
     assert.ok(DEFAULT_RSYNC_EXCLUDES.includes(pattern), pattern);
   }
 });
