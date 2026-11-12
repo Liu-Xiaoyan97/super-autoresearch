@@ -13,12 +13,14 @@ import { MockLLMProvider, type MockScript, loadMockScript } from "./providers/mo
 import { Budget } from "./runtime/budget.ts";
 import { ArtifactStore, TraceStore, type TraceRecord } from "./runtime/store.ts";
 import { GitWorkspace } from "./runtime/workspace.ts";
+import { loadRunBaselines } from "./runtime/incumbent.ts";
 import {
   type FinalArtifacts,
   type MetricSpec,
   type Problem,
   type RemoteConfig,
   type ResearchDirection,
+  type BudgetPolicy,
   makeProblem,
   metricSpec,
 } from "./types.ts";
@@ -32,6 +34,8 @@ export interface RunOptions {
   runner?: "simulated" | "subprocess";
   /** Resume a previous run id in the same out dir, preserving its state/traces. */
   resumeFrom?: string;
+  /** Trusted baseline JSON/incumbent ledger; reused instead of reproducing. */
+  baseline?: string;
   /** Offline deterministic provider. */
   mock?: boolean;
   mockScript?: MockScript | null;
@@ -40,6 +44,10 @@ export interface RunOptions {
   providerName?: string;
   model?: string;
   codingModel?: string;
+  /** Explicit output cap for all roles; unset inherits native model policy. */
+  maxTokens?: number;
+  /** Optional override for coding, ablation, rebuttal and draft enhancement. */
+  codingMaxTokens?: number;
   strictDirections?: boolean;
   maxRefineRounds?: number;
   maxReviewRefinements?: number;
@@ -78,6 +86,23 @@ function parseMetric(raw: unknown): MetricSpec {
 
 function expandEnv(value: string): string {
   return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name: string) => process.env[name] ?? "");
+}
+
+function parseBudget(raw: unknown): BudgetPolicy | null {
+  const item = asRecord(raw);
+  if (!item) return null;
+  const full = num(item.full_steps, Number.NaN);
+  const fraction = num(item.subset_fraction, Number.NaN);
+  const max = num(item.subset_max_steps, Number.NaN);
+  const env = str(item.steps_env);
+  if (!Number.isFinite(full) || full <= 0 || !env) return null;
+  return {
+    full_steps: full,
+    subset_fraction: Number.isFinite(fraction) && fraction > 0 ? fraction : null,
+    subset_max_steps: Number.isFinite(max) && max > 0 ? max : null,
+    steps_env: env,
+    seed_env: str(item.seed_env) || null,
+  };
 }
 
 function parseRemote(raw: unknown): RemoteConfig | null {
@@ -137,7 +162,10 @@ export function parseProblem(raw: unknown): Problem {
     experiment_command: strArray(item.experiment_command).length
       ? strArray(item.experiment_command)
       : null,
+    diagnose_command: strArray(item.diagnose_command).length ? strArray(item.diagnose_command) : null,
+    job_worker: typeof item.job_worker === "string" && item.job_worker.trim() ? item.job_worker.trim() : null,
     remote: parseRemote(item.remote),
+    budget: parseBudget(item.budget),
     datasets: strArray(item.datasets),
     subset_datasets: strArray(item.subset_datasets),
     metrics,
@@ -181,7 +209,7 @@ export function assertRunId(runId: string): string {
   return runId;
 }
 
-function buildConfig(opts: RunOptions): Config {
+export function buildConfig(opts: RunOptions): Config {
   const overrides: Partial<Config> = { ...(opts.configOverrides ?? {}) };
   if (opts.seed !== undefined) overrides.seed = opts.seed;
   if (opts.runner) overrides.runner = opts.runner;
@@ -192,17 +220,26 @@ function buildConfig(opts: RunOptions): Config {
   if (opts.maxExperiments !== undefined) overrides.maxExperiments = opts.maxExperiments;
   if (opts.maxWallTimeS !== undefined) overrides.maxWallTimeS = opts.maxWallTimeS;
   const config = defaultConfig(overrides);
-  if (opts.model) {
+  if (opts.model || opts.providerName || opts.maxTokens !== undefined) {
     const routes = { ...config.modelRoutes };
     for (const key of Object.keys(routes)) {
-      routes[key] = modelRoute({ ...routes[key], model: opts.model });
+      routes[key] = modelRoute({
+        ...routes[key],
+        ...(opts.model ? { model: opts.model } : {}),
+        ...(opts.providerName ? { provider: opts.providerName } : {}),
+        ...(opts.maxTokens !== undefined ? { maxTokens: opts.maxTokens } : {}),
+      });
     }
     config.modelRoutes = routes;
   }
-  if (opts.codingModel) {
+  if (opts.codingModel || opts.codingMaxTokens !== undefined) {
     const routes = { ...config.modelRoutes };
     for (const key of ["coding", "ablation", "rebuttal", "draft_enhancer"]) {
-      routes[key] = modelRoute({ ...routes[key], model: opts.codingModel });
+      routes[key] = modelRoute({
+        ...(routes[key] ?? routes.default),
+        ...(opts.codingModel ? { model: opts.codingModel } : {}),
+        ...(opts.codingMaxTokens !== undefined ? { maxTokens: opts.codingMaxTokens } : {}),
+      });
     }
     config.modelRoutes = routes;
   }
@@ -213,6 +250,11 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
   const cwd = opts.cwd ?? process.cwd();
   const problem = loadProblem(opts.problem, cwd);
   const config = buildConfig(opts);
+  // No user-facing wall flag: a remote fixture's own execution limit is the
+  // real bound. Keep an internal safety margin for two experiments plus drafting.
+  if (opts.maxWallTimeS === undefined && opts.configOverrides?.maxWallTimeS === undefined && problem.remote?.timeout_s) {
+    config.maxWallTimeS = Math.max(config.maxWallTimeS, problem.remote.timeout_s * 2 + 7200);
+  }
   const outDir = path.resolve(cwd, opts.outDir ?? config.outDir);
   fs.mkdirSync(outDir, { recursive: true });
   const runId = opts.runId ? assertRunId(opts.runId) : newRunId(outDir, problem, config.seed);
@@ -244,6 +286,13 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
     );
   }
 
+  // A stored/manual baseline is the reference; reproduce only the scope that
+  // is missing. The promoted commit is the base for a missing scope.
+  const baselineSeeds = loadRunBaselines(problem, outDir, config.seed, opts.baseline);
+  const seedCommit = baselineSeeds.full?.evidence.code?.commit ?? baselineSeeds.subset?.evidence.code?.commit;
+  const baseCommit = resumedState?.baseline?.code?.commit ?? resumedState?.baselineFull?.code?.commit ?? seedCommit;
+  if (baseCommit) problem.repo_ref = baseCommit;
+
   const store = new ArtifactStore(root);
   const traces = new TraceStore(path.join(root, "traces.jsonl"));
   const budget = new Budget({
@@ -257,6 +306,7 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
     root,
     undefined,
     resumedState?.baseline?.code?.repo,
+    opts.signal,
   );
   const provider =
     opts.provider ??
@@ -281,6 +331,19 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
 
   try {
     const orchestrator = new Orchestrator(ctx, undefined, resumedState);
+    // Fill only the scopes the resumed state (or the caller) did not provide.
+    if (!orchestrator.state.baseline && baselineSeeds.subset) {
+      orchestrator.state.baseline = baselineSeeds.subset.evidence;
+      orchestrator.state.baselineSource = baselineSeeds.subset.source;
+      orchestrator.state.baselinePath = baselineSeeds.subset.path;
+    }
+    if (!orchestrator.state.baselineFull && baselineSeeds.full) {
+      orchestrator.state.baselineFull = baselineSeeds.full.evidence;
+      if (!baselineSeeds.subset) {
+        orchestrator.state.baselineSource = baselineSeeds.full.source;
+        orchestrator.state.baselinePath = baselineSeeds.full.path;
+      }
+    }
     const final = await orchestrator.run({ resume: Boolean(resumedState) });
     const state = orchestrator.stateDict();
     fs.writeFileSync(path.join(root, "state.json"), JSON.stringify(state, null, 2), "utf8");
@@ -334,6 +397,8 @@ export function summarize(
     aborted: final.aborted,
     abort_reason: final.abort_reason,
     accepted: Boolean(final.extra.accepted),
+    baseline_source: state.baseline_source ?? "reproduced",
+    baseline_path: state.baseline_path ?? "",
   };
 }
 

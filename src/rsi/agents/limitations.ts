@@ -2,7 +2,7 @@
 
 import { stableString } from "../json.ts";
 import { LimitationBatch, VerdictSpec } from "../schemas.ts";
-import type { Limitation, Verdict } from "../types.ts";
+import type { DiagnosisFinding, Limitation, Verdict } from "../types.ts";
 import { BaseAgent, guidance } from "./base.ts";
 
 function normalized(text: string): string {
@@ -13,8 +13,9 @@ export class LimitationExtractor extends BaseAgent {
   readonly NAME = "limitation_extractor";
   readonly task = "limitations.extract";
 
-  async extract(opts: { round?: number; existing?: Limitation[] } = {}): Promise<Limitation[]> {
+  async extract(opts: { round?: number; existing?: Limitation[]; findings?: DiagnosisFinding[] } = {}): Promise<Limitation[]> {
     const round = opts.round ?? 0;
+    const findings = [...(opts.findings ?? [])].sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
     const previous = [...(opts.existing ?? [])].sort((a, b) =>
       a.id === b.id ? normalized(a.text).localeCompare(normalized(b.text)) : a.id.localeCompare(b.id),
     );
@@ -23,7 +24,9 @@ export class LimitationExtractor extends BaseAgent {
       "Extract new, actionable limitations of the source method (§3.1). " +
       "Expand the existing set; never repeat its IDs or normalized text. " +
       "Only suggest limitations whose remedies are in scope. Do not propose " +
-      "or depend on any forbidden approach.\n" +
+      "or depend on any forbidden approach. Ground each limitation in a measured " +
+      "finding when one is supplied; label genuinely unmeasured gaps as hypotheses.\n" +
+      `Measured findings (primary first): ${stableString(findings)}\n` +
       `Problem: ${this.ctx.problem.statement}\n` +
       `Source: ${this.ctx.problem.source_paper}\n` +
       `Constraints: ${stableString([...this.ctx.problem.constraints].sort())}\n` +
@@ -37,6 +40,7 @@ export class LimitationExtractor extends BaseAgent {
         n: Math.max(1, this.ctx.config.minLimitations - previous.length),
         round,
         existing_ids: previous.map((item) => item.id).sort(),
+        finding_ids: findings.map((finding) => finding.id),
       },
     });
 

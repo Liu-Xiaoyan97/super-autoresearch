@@ -1,320 +1,251 @@
 ---
 name: rsi-adapter
-description: Generate a target-project benchmark adapter and Problem wiring from an examples/*.json fixture. Use when integrating a new repository into RSI, when examples/<project>.json has no working experiment_command, when the target repo needs a bench/run_experiment.py, or when an adapter must honor subset/full scopes, a metric contract, GPU env, and rsync/SSH remote execution.
+description: Complete a target repository's real training, checkpoint and evaluation paths, generate its target-owned benchmark adapter from a Problem fixture, then verify the entire small-budget train/save/reload/lm-eval pipeline on the remote execution host through native RSI Pi tools. Use for new or incomplete target integrations, CLI/data mapping failures, and adapter regeneration.
 ---
 
-# RSI adapter generator
+# Target-owned adapter integration for the RSI Pi extension
 
-An adapter is a **thin benchmark harness owned by the target project**. It
-turns one candidate checkout into one JSON metric report. RSI core stays
-generic: never import the target project into `src/rsi/`, never add a
-project-specific branch to the orchestrator, and never copy the target repo
-into this repository.
+RSI is a **Pi extension**, not a collection of project-specific launch scripts.
+This skill runs inside Pi and uses Pi's file/bash tools and native RSI tools.
+Generate all project-specific code **directly in the target repository**. Do not
+create `integrations/<project>` in RSI, import target code into `src/rsi/`, or
+require a standalone Node driver as the public workflow.
 
-The input is one `examples/*.json` Problem. The output is:
+The user authorizes this skill to modify the target repository: complete missing
+real data loading, CLI wiring, training, checkpoint save/reload, evaluation,
+metric artifacts and validation so it works with the current harness. Do not
+stop at "the project has no eval" if its specified metric can be implemented
+with the real official/existing evaluator. Do not invent a metric, split,
+checkpoint format, placeholder score or proxy. Ask only when the scientific
+protocol is genuinely unspecified or a resource decision is needed.
 
-```text
-integrations/<project>/
-  run_experiment.py       adapter entrypoint
-  README.md               target wiring and env reference
-  setup.sh                install adapter on the target's rsi-bench ref
-examples/<project>.json     updated experiment_command + remote.env
-```
+**Definition of done:** real data → complete small-budget training → newly
+saved checkpoint → load that checkpoint → real lm-eval (or the fixture's real
+equivalent) inference → finite, exact metric report, through actual rsync/SSH.
+`--help`, mock tests, an existing checkpoint, and checkpoint-only eval cannot
+satisfy this gate. Small budget means a complete short run, not skipped stages.
 
-## 1. Read the fixture contract first
+## 1. Read the fixture and inspect the target
 
-Read the whole JSON before touching the target repository. Extract:
+Read the entire Problem JSON first. Extract `repo`, `repo_ref`, the exact
+`experiment_command`, scopes/datasets, metric names/direction/bounds, forbidden
+changes, `remote` host/Python/GPU/env/setup/excludes/timeouts and output paths.
+Use fixture paths as hints, not proof that they match the actual target.
 
-| Field | Adapter consequence |
-|---|---|
-| `id`, `repo`, `repo_ref` | names and baseline checkout; `repo_ref` is what RSI reproduces |
-| `experiment_command` | the adapter path and the **only** allowed invocation shape |
-| `metrics[].name` | exact output keys; do not rename or add proxies |
-| `metrics[].direction` | `min` or `max`; adapter reports the raw value, RSI decides |
-| `metrics[].tolerance` | relative noise band; never bake it into the adapter |
-| `metrics[].bounds` | physical range; keep raw values inside it |
-| `datasets`, `subset_datasets` | subset must be a real, cheaper subset |
-| `constraints`, `forbidden` | hard boundaries; enforce where possible |
-| `remote` | GPU id, python, env, setup, worktree/out templates, timeout |
-| `reported_metrics` | human context only; reproduce the baseline yourself |
-
-Canonical command shape:
-
-```json
-[
-  "{python}",
-  "bench/rsi_<project>_train_eval.py",
-  "--repo",
-  "{repo}",
-  "--scope",
-  "{scope}",
-  "--out",
-  "{out}"
-]
-```
-
-The adapter must accept exactly these contract arguments:
+Inspect actual train/eval CLI, data loader/schema/split, model and checkpoint
+loader, metric implementation/artifact and existing tests **before writing**.
+Use structural navigation where available, then file reads/search. Record:
 
 ```text
---repo PATH      candidate worktree (may be the current directory)
---scope SCOPE    subset | full | ablation | rebuttal
---out PATH       JSON report destination
+source commit / dirty changes:
+real train command and required arguments:
+real eval command and metric JSON key:
+dataset schema, split and path on execution host:
+checkpoint save and reload format:
+tokenizer/model/cache assets on execution host:
+subset and full budgets / unchanged metric protocol:
+missing implementation and compatibility repairs:
 ```
 
-Put project knobs in `remote.env` (or the shell environment), not duplicated
-in `experiment_command`. Explicit command-line flags may override env, but the
-adapter's defaults and the fixture's env must not disagree.
+Never assume old HEAD matches the user's current working tree. Preserve dirty
+changes: use an independent integration branch/worktree. If current worktree
+and committed source differ materially, confirm which is the intended baseline.
+Snapshot authorized changes on the independent branch without resetting,
+cleaning, stashing or committing the source working tree.
 
-## 2. Inspect the target repository read-only
+## 2. Implement the target-owned pipeline
 
-Do this before writing code. Use `rg`, `find`, and `read`; do not run training
-yet.
-
-```bash
-rg -n "argparse|click|typer|def main|__main__" <target> -g '*.py'
-rg -n "train|finetune|evaluate|eval|metric|perplexity|accuracy" <target> -g '*.py'
-find <target> -maxdepth 3 -type f \( -name 'README*' -o -name 'pyproject.toml' \
-  -o -name 'requirements*.txt' -o -name '*.yaml' -o -name '*.yml' \) | sort
-```
-
-Record a short discovery table in your reply:
+Typical target layout (exact adapter path comes from `experiment_command`):
 
 ```text
-baseline commit:      <sha and branch>
-train entrypoint:     <script + required args>
-eval entrypoint:      <script + required args>
-checkpoint format:    <path/format>
-dataset location:     <local path or env var>
-metric source:        <file/stdout key that contains the real metric>
-subset definition:    <one dataset/split or smaller step budget>
-full definition:      <all datasets/splits>
-known baseline value: <from a real run, not invented>
+<target>/
+  bench/rsi_<project>_train_eval.py
+  bench/rsi_job_worker.py          detached job executor (protected, synced)
+  <project train/data/checkpoint/eval modules and tests>
+  .rsi/adapter/<project>.json     contract, protected protocol paths
+  .rsi/adapter/<project>.md       commands, env, repairs, acceptance evidence
 ```
 
-If the target has no usable eval, stop and say exactly what is missing. Do not
-invent a metric, a split, or a checkpoint loader.
-
-## 3. Scaffold, then fill the TODOs
-
-The skill ships a deterministic scaffold. It validates the fixture and writes
-a contract-compliant skeleton plus README, setup script, and manifest:
+Use the deterministic skeleton if useful (resolve this script relative to the
+skill directory; the command below assumes an RSI checkout):
 
 ```bash
 python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
   --problem examples/<project>.json \
-  --repo /path/to/target \
-  --name <project> \
-  --out integrations/<project>
+  --repo /path/to/independent/target --name <project>
 ```
 
-`--name` controls the slug and the generated `RSI_<PROJECT>_` env prefix; use
-the target's existing prefix (for dfm-ssm, `--name dfm` gives `RSI_DFM_`).
-If the target already has project-specific env names, keep those instead of
-renaming them to the scaffold's defaults.
+The helper writes directly into the **existing target git repository**; it does
+not install a second copy into RSI or create a `setup.sh`. A skeleton still has
+TODOs and is not implemented. Fill them and repair missing target code. Keep
+helper evaluators, project-specific regression tests and docs in the target.
 
-The scaffold is **not finished adapter code**. Replace its `train`,
-`evaluate`, and `parse_metrics` TODOs with the real target commands. A scaffold
-that still raises `NotImplementedError` must never be used for a real run.
+The adapter contract is:
 
-If you prefer to write from scratch, copy
-`skills/rsi-adapter/templates/run_experiment.py.tmpl` and keep the same
-contract.
+```text
+<remote.python> bench/rsi_<project>_train_eval.py --repo PATH --scope subset|full|ablation|rebuttal --out REPORT.json
+```
 
-## 4. Implement the adapter
+1. Resolve repo and run every target command with `cwd=repo`. Use
+   `sys.executable` for Python children; print shell-quoted commands. Verify
+   target imports resolve to the synced candidate, not an older server checkout.
+2. Put project knobs in `RSI_<PROJECT>_*` env (`remote.env` injects on execution
+   host); do not duplicate budget/path flags in `experiment_command`.
+3. Map scopes explicitly. Subset must be cheaper but retain metric definition,
+   tokenizer, context and test split. Full/rebuttal use declared full budgets;
+   unsupported ablation fails clearly. Both subset and full must actually work
+   under the harness's normal invocation, not require an undocumented smoke flag.
+4. Preserve training schedule meaning for short runs (e.g. early-stop budget
+   rather than invalidating warmup). Save the **requested final step**, not an
+   older convenient checkpoint. Reload it for evaluation and verify step/state
+   consistency. An explicit existing checkpoint is supplementary eval-only work.
+5. If an old evaluator hardcodes a training budget incompatible with legitimate
+   subset scope, add explicit validated per-scope budget configuration; record
+   actual budget. Keep the original real scoring math, task and normalization.
+   Never rename checkpoints or bypass integrity checks to make it pass.
+6. For lm-eval use the fixed real task and its own metric, e.g.
+   `results[task]["word_perplexity,none"]`, mapped to the exact fixture key.
+   Reject missing/extra keys, booleans, strings, nonfinite or out-of-bounds
+   values; do not clamp, reuse stale reports or substitute reported_metrics.
+7. Keep offline dependencies/assets local; no implicit network fallback. Respect
+   `CUDA_VISIBLE_DEVICES`; device indices are relative to the assigned devices.
+8. Write success and failure reports atomically; any failure exits nonzero with
+   empty metrics. Keep bounded command output and persisted train/eval logs
+   outside the candidate source. Handle timeout/cancellation without orphaning
+   GPU subprocesses.
 
-A good adapter is boring and strict:
-
-1. Resolve `--repo` to an absolute path and verify it is the candidate
-   checkout. Run every target command with `cwd=repo`.
-2. Use `sys.executable` for Python subprocesses so the remote
-   `remote.python` interpreter is honored.
-3. Build commands from env vars with an `RSI_<PROJECT>_` prefix. Print the
-   command with `shlex.join` so failures are reproducible.
-4. Map `scope` explicitly:
-   - `subset`: the fixture's `subset_datasets` / a genuinely cheaper budget.
-   - `full`: every dataset/split the fixture defines.
-   - `ablation`: the target's variant path; if unsupported, write a clear
-     failure report, not a full-scope number.
-   - `rebuttal`: same protocol as full unless the target says otherwise.
-5. Train only if a checkpoint is not supplied. If training fails, write
-   `status: "failed"` and exit non-zero.
-6. Evaluate with the target's own metric implementation. Never re-implement a
-   metric with a different tokenizer, context length, split, or normalization.
-7. Parse the exact keys in `METRICS`; reject missing, non-finite, or
-   out-of-bounds values. Do not clamp a metric to make a gate pass.
-8. Write the report atomically:
+Success report includes auditable pipeline details:
 
 ```json
 {
-  "metrics": { "<name>": 12.34 },
   "status": "ok",
+  "metrics": {"<exact-fixture-name>": 12.34},
   "details": {
     "scope": "subset",
-    "checkpoint": "/path/checkpoint",
-    "seed": 7,
-    "wall_time_s": 123.4
+    "training_skipped": false,
+    "executed_train_steps": 1,
+    "checkpoint": "/remote/output/train/checkpoint-1",
+    "checkpoint_step": 1,
+    "raw_metrics": "/remote/output/eval.json",
+    "logs": {"train": "/remote/output/train.log", "eval": "/remote/output/eval.log"}
   }
 }
 ```
 
-On any failure, still write JSON and exit non-zero:
+The numbers above are schema examples, never measurement evidence. On failure:
+`{"status":"failed","metrics":{},"error":"actual cause"}`.
 
-```json
-{ "metrics": {}, "status": "failed", "error": "training failed: ..." }
-```
+Also add a **real measured diagnosis** owned by the target:
+`bench/rsi_<project>_diagnose.py` (or an existing analysis command) that reads
+the reproduced baseline and writes `{"status":"ok","findings":[{"id","title",
+"axis","evidence","severity","actionable","measured","metric","value",
+"artifact"}]}`. It must measure actual signals on real data (loss decomposition,
+activation/gradient statistics, error slices, throughput, …), not restate the
+paper. At least one finding must be `measured: true`; explicitly label
+unmeasured ideas `measured: false`. Declare it in the fixture's
+`diagnose_command` with the same `{python}/{repo}/{out}` placeholders as
+`experiment_command`. Read-only and bounded; project math never moves into RSI.
+The stage runs after baseline reproduction and before limitations/seeds; the
+default depth policy then pursues only the highest-severity measured defect.
 
-9. Keep logs bounded: print commands and the last ~4 KB of stdout/stderr.
-   Write large logs under the `--out` parent, not into the candidate worktree.
-10. Respect `CUDA_VISIBLE_DEVICES` from RSI. Do not choose a different GPU,
-    and do not hardcode `cuda:0` in library calls. Use
-    `RSI_<PROJECT>_DEVICE` if the target needs a device string.
+Ship `bench/rsi_job_worker.py` (the skill template) unchanged: RSI submits a job,
+launches that worker with `setsid nohup`, and reads `events.jsonl` plus the atomic
+`result.json`. The worker owns claim/GPU-lock/heartbeat/timeout/cancel only; it
+contains no project math. Add it to `protected_paths`; candidates must not edit it.
 
-### Environment pattern
+Declare `env_prefix` and nonempty `protected_paths` in the target's
+`.rsi/adapter/<project>.json`: adapter,
+evaluation/scoring implementation, protocol configs and manifest. Freeze these
+for downstream optimization. Honor `<env_prefix>_SEED` (or generic `RSI_SEED`)
+and record the actual seed in report details; paired iteration rejects a seed
+that differs from the requested seed, rather than merely labeling it differently.
+Integration repairs happen before acceptance;
+candidates may not quietly change the acceptance test to manufacture gains.
+Do **not** freeze the entire research implementation: model and optimizer code
+normally remain mutable under the fixture's scientific constraints. List intended
+research files in `mutable_paths` for clarity, keep them out of `protected_paths`,
+and verify at least one meaningful allowed change is possible before handoff.
+If stronger checkpoint/trace validation is added, update positive mocked fixtures
+to provide those explicitly synthetic artifacts; negative tests must reach their
+intended failure stage. Failing contract tests are a blocker, not an acceptable
+"mock-only" caveat.
 
-```python
-PREFIX = "RSI_<PROJECT>"
+## 3. Preflight and commit a reproducible candidate
 
-def env_str(name: str, default: str = "") -> str:
-    return os.environ.get(f"{PREFIX}_{name}", default)
+Run target regression tests, syntax/help and missing-asset failure checks.
+On the **execution host**, verify SSH, actual Python imports and CLI, readable
+real data batches/schema/split, tokenizer/model/cache loading, writable output
+and free assigned GPU capacity. Existing path != loadable data. Never print
+credentials, install packages/download assets without authority, overwrite a
+server project or kill unrelated jobs.
 
-# Examples:
-# RSI_<PROJECT>_TRAIN_DATA, RSI_<PROJECT>_BASE_MODEL,
-# RSI_<PROJECT>_TRAIN_STEPS, RSI_<PROJECT>_BATCH_SIZE,
-# RSI_<PROJECT>_EVAL_TASK, RSI_<PROJECT>_OFFLINE
-```
+Remote sync uses `rsync --delete`: use unique normalized per-run worktree and
+output paths; output must be **outside** the synced worktree so later candidate
+syncs do not erase baseline evidence. Do not use path traversal or shared output
+filenames/directories across runs. Validate fixture excludes do not omit required
+source files; datasets/checkpoints are remote assets, not source to sync.
 
-Set only what the target needs. For offline servers, set
-`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_DATASETS_OFFLINE=1` and
-`TOKENIZERS_PARALLELISM=false` in the adapter, not scattered through the
-fixture. Never add networks calls as a fallback.
+Commit target code/tests/manifest on an independent **candidate integration**
+ref. Verify the resolved commit contains every required adapter/helper file.
+Untracked files in another checkout are not part of the deployed candidate.
+Use a candidate fixture/reference until acceptance; a candidate commit is not
+already a usable baseline.
 
-### Baseline and leakage rules
+## 4. Mandatory remote acceptance gate — native Pi tool
 
-- The baseline is a fresh run of `repo_ref` through the same adapter, not
-  `reported_metrics`.
-- Never train on validation/test data.
-- Never use extra evaluation data, a different tokenizer, or a different
-  context length to improve the number.
-- Never cache a result keyed only by scope or seed if the candidate commit can
-  change; invalidate on commit.
-- A crash is a failed experiment, not a zero-metric improvement.
-
-## 5. Wire the fixture
-
-Keep `experiment_command` to the invocation and placeholders. All knobs move
-to `remote.env` (or the adapter's documented env defaults):
-
-```json
-"experiment_command": [
-  "{python}",
-  "bench/rsi_<project>_train_eval.py",
-  "--repo", "{repo}",
-  "--scope", "{scope}",
-  "--out", "{out}"
-],
-"remote": {
-  "gpu_ids": "0",
-  "env": {
-    "RSI_<PROJECT>_TRAIN_DATA": "/data/...",
-    "RSI_<PROJECT>_BASE_MODEL": "/models/...",
-    "RSI_<PROJECT>_TRAIN_STEPS": "38000"
-  }
-}
-```
-
-`gpu_ids` is mandatory even for one GPU. Do not omit it or rely on a default.
-The adapter lives on the target repo's `rsi-bench` ref (or an equivalent
-committed harness). The generated `setup.sh` copies it there; RSI only rsyncs
-the candidate worktree.
-
-## 6. Validate before declaring done
-
-Run these checks and paste the evidence:
-
-```bash
-# 1. Syntax / contract help
-python3 integrations/<project>/run_experiment.py --help
-
-# 2. Failure path: missing required env must fail, not fabricate metrics
-env -u RSI_<PROJECT>_TRAIN_DATA python3 integrations/<project>/run_experiment.py \
-  --repo /path/to/target --scope subset --out /tmp/missing.json; echo "exit=$?"
-test ! -s /tmp/missing.json || python3 -m json.tool /tmp/missing.json
-
-# 3. Tiny real smoke (small checkpoint/data, one step if supported)
-python3 integrations/<project>/run_experiment.py \
-  --repo /path/to/target --scope subset --out /tmp/report.json
-python3 -m json.tool /tmp/report.json
-```
-
-Checks that must pass:
-
-- exact metric names, finite values, correct direction/bounds;
-- subset is cheaper than full but uses the same metric protocol;
-- rerunning with the same seed gives a comparable value;
-- nonzero exit + `status: "failed"` on missing data/checkpoint/eval;
-- no secrets, absolute local paths, or generated checkpoints committed;
-- `git status` in the target repo shows only the intended harness commit.
-
-### Local asset preflight
-
-`remote.env` is injected on the execution host, not in your local shell. Before
-a long remote run, validate every local asset **on that host**:
-
-```bash
-ssh <remote.host> 'test -e /path/to/data && test -e /path/to/model'
-ssh <remote.host> '<remote.python> - <<"PY"
-from transformers import AutoTokenizer
-t = AutoTokenizer.from_pretrained("/path/to/tokenizer", local_files_only=True)
-print(len(t))
-PY'
-```
-
-For gpt-neox-20b the expected vocab is `50277`. A tokenizer is a local asset
-just like data and checkpoints: if it is missing, download it or point
-`RSI_DFM_TOKENIZER` / the project's tokenizer env at the local directory. Do
-not silently fall back to a network download on an offline server.
-
-For remote runs, additionally:
-
-```bash
-ssh <remote.host> true
-rsync -az --dry-run --exclude-from=<excludes> <worktree>/ <host>:<remote.worktree>/
-ssh <remote.host> '<remote.setup>; cd <remote.worktree> && CUDA_VISIBLE_DEVICES=<gpu_ids> <python> bench/... --help'
-```
-
-Then run one RSI subprocess experiment with `--runner subprocess`, not
-`--mock`; mock never executes the adapter.
-
-## 7. Hand off
-
-Report:
-
-- the generated files and the installed target path;
-- the discovery table (entrypoints, metric parser, baseline);
-- the exact smoke command and observed JSON;
-- env vars the user must set;
-- remote host, `gpu_ids`, timeout, and whether the server is offline;
-- anything not validated (for example, full 38k-step training).
-
-Do not claim the adapter is scientifically valid from a tiny smoke run. It
-only proves the plumbing.
-
-## Files in this skill
+Call **`rsi_adapter_smoke`** in the current Pi session, or use the human command:
 
 ```text
-skills/rsi-adapter/SKILL.md
-skills/rsi-adapter/scripts/scaffold_adapter.py
-skills/rsi-adapter/templates/run_experiment.py.tmpl
-skills/rsi-adapter/templates/setup.sh.tmpl
+/rsi smoke examples/<project>.json --repo /path/to/target --timeout 900 --env RSI_<PROJECT>_TRAIN_STEPS=1 --env RSI_<PROJECT>_TRAIN_BATCH_SIZE=1
 ```
 
-## Anti-patterns
+Tool equivalent:
 
-- Editing `src/rsi/` for one project, or importing `integrations/` from core.
-- Returning `reported_metrics` or a constant as the experiment result.
-- Catching every exception and writing the baseline metric.
-- Adding a new dependency to the target repo without a lock/offline check.
-- Running the full benchmark for `subset` because it is easier.
-- Putting `--train-steps`, `--batch-size`, or model paths in both
-  `experiment_command` and `remote.env`.
-- Claiming a remote run works without an SSH/rsync smoke test.
+```json
+{
+  "problem": "examples/<project>.json",
+  "repo": "/path/to/target",
+  "timeout_s": 900,
+  "env": {"RSI_<PROJECT>_TRAIN_STEPS": "1", "RSI_<PROJECT>_TRAIN_BATCH_SIZE": "1"}
+}
+```
+
+Use only knobs implemented by the target. Explicitly configure a safe complete
+small training budget and supported evaluation limit when needed; never silently
+launch the fixture's full training schedule. A limited lm-eval inference still
+uses real test data and real metric math; identify it as plumbing-only, not a
+formal performance score. If no safe short run exists, ask for budget.
+
+This tool creates a fresh git worktree from `repo_ref`, performs actual rsync,
+executes one real SSH experiment and fetches the original report. No LLM or
+simulated runner produces the metric. The tool validates transport/report; the
+skill must additionally inspect evidence that training was not skipped, the
+new checkpoint exists and was reloaded, and real lm-eval inference ran.
+
+Retain `artifacts/smoke-summary.json`, `artifacts/smoke-report.json`, expanded
+remote invocation and target train/eval/checkpoint metadata. Test missing assets
+**remotely** too: require nonzero exit and failed/empty-metrics report. On error,
+fix target code/wiring, commit and rerun in a fresh output directory.
+
+Acceptance states are separate: `scaffolded` → `implemented` → `candidate
+committed` → **`remote-smoke-passed`**. Do not proceed to downstream optimization
+or promote a usable `repo_ref` before the entire gate passes. SSH/GPU/assets or
+ambiguous scientific protocol blockers are `blocked / remote not verified`, with
+exact failed command/error, not "done; user can test later".
+
+## 5. Handoff and regeneration test
+
+Report the target-only files/repairs/tests, exact validated commit/ref, host/GPU,
+small-budget settings, measured JSON, evidence locations and untested scope.
+After acceptance identify/promote the **same tested commit** as the usable ref.
+A tiny smoke proves compatibility, not scientific validity/full training quality.
+
+If asked to delete and regenerate, back up evidence, delete only generated
+adapter files in an independent target checkout from inside the container, then
+invoke this skill afresh through Pi. Do not restore/copy the old adapter as the
+"regeneration". Reinspect target APIs, generate/implement again, commit and rerun
+real train → checkpoint save/reload → lm-eval before the regenerated version is
+usable. Do not delete source/user changes, datasets, checkpoints or prior evidence.
+
+RSI optimization is then invoked through the native Pi extension with a real
+provider and subprocess runner, never mock, and the accepted target-owned ref.

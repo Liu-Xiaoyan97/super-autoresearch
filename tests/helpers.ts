@@ -67,3 +67,6 @@ export function makeContext(over: {
 export function readJson(file: string): any {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
+
+// Keep project-global baseline writes out of the developer home during tests.
+process.env.RSI_BASELINE_DIR ??= tempDir("rsi-baseline-home-");

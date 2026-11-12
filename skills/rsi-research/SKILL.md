@@ -1,6 +1,6 @@
 ---
 name: rsi-research
-description: Run, inspect, replay, and manage the ScientistTwo/RSI closed research loop (limitations → ideas → experiments → ablations → paper) with the rsi_research, rsi_superagent, rsi_inspect, and rsi_replay tools. Use when the user asks for an autonomous research run, an experiment-backed paper draft, a reproducible artifact tree, an audit/replay, or wants to know what a run is doing, answer its question, or change the superagent policy.
+description: Run real RSI research through native Pi tools, either one bounded small-budget optimization iteration or the full ScientistTwo closed research loop, and inspect/manage its evidence and superagent state. Use for real optimization, autonomous research, paper runs, audit/replay, run status, questions and policy.
 ---
 
 # RSI research loop
@@ -10,32 +10,104 @@ ScientistTwo-style loop, an experiment-backed manuscript, or an audit/replay of
 an existing run. It also covers the superagent protocol for an active run:
 accepting, routing, reporting, answering questions, and policy.
 
-The pipeline is implemented by this Pi package; model calls go through
-`opencode-go` (default `deepseek-v4.1-flash`). An adapter for a new target
-project is generated with the separate `rsi-adapter` skill.
+The pipeline is implemented by this native Pi package; model calls use Pi's
+registry and inherit the current session's selected provider/model/thinking
+unless the user explicitly overrides them. An adapter for a new target
+project is generated directly in the target repository with the separate
+`rsi-adapter` skill. Before any real optimization, require its accepted commit
+and actual remote real-data training → saved checkpoint → reload → lm-eval
+inference evidence. Neither a mock nor a local --help check makes a target ready.
+
+## Measured diagnosis (default when declared)
+
+When the Problem declares `diagnose_command`, the SOP reproduces the baseline
+first, then runs that **read-only** target-owned analysis (same local/rsync+SSH
+surface as experiments) before extracting limitations or ideas. Findings must
+carry evidence and at least one must be `measured: true`; a failed diagnosis
+aborts as `diagnosis_failed` instead of silently falling back to paper-only
+speculation. The default `searchPolicy: "depth"` pursues only the
+highest-severity measured defect with one seed and one candidate; `"breadth"`
+restores the multi-seed search. Literature retrieval is then aimed at the
+selected defect. Project math stays in the target repository.
+
+## One bounded real optimization iteration
+
+For an explicit request for **one small-budget real iteration**, use native
+`rsi_iteration` (human command `/rsi iterate`), not the full paper SOP. It uses
+the session's real Pi model registry, one immutable subset baseline, one idea,
+one genuinely changed candidate and a measured comparison against the stored
+incumbent. The bounded flow has **no user-facing LLM or wall-time flags**: it is a fixed
+pipeline (idea, code, up to two repairs). Internal safety stops sit far above
+actual use, and the experiment timeout comes from the target fixture's own
+`remote.timeout_s`. Do not add artificial caps to the command. By default only the candidate runs; promotion advances the
+incumbent commit. Use `baseline_mode: "paired"` when drift or noise control is
+worth re-measuring the baseline. A missing/invalid/protocol-mismatched
+incumbent falls back to a measured baseline. It never escalates to full training, ablation or manuscript work.
+
+Use the accepted target-owned commit/ref and pass `adapter_acceptance`, the
+native `smoke-summary.json` receipt for that **exact commit**, plus explicit
+identical budget/env for baseline and candidate. A missing, failed or mismatched
+receipt must block execution before model/GPU spend. Both must run complete small-budget real training,
+checkpoint save/reload and actual lm-eval inference. Preserve the fixed
+metric/test/tokenizer/context and protected target adapter/evaluator paths.
+Mock tests are allowed to verify code but cannot replace the user's real run.
+Report both commits, diff, actual metrics, accepted/rejected outcome and evidence.
+An evaluated but rejected candidate is a completed iteration, not an improvement.
+No-op/invalid/protocol-changing patches must fail before candidate GPU execution.
+Provide complete committed mutable source to idea/coding requests, not misleading
+file prefixes. Native Pi thinking settings must reach inner model calls. If a
+reasoning model exhausts output before producing code, report the truncation;
+never accept thinking as a patch or retry identical parameters blindly. Use an
+explicit `max_tokens` / `--max-tokens` cap for all roles, or the more specific
+`coding_max_tokens` / `--coding-max-tokens` coding override when needed. Both
+are optional positive integers bounded by the selected model, with no fixed RSI
+coding ceiling. Omitted caps use ordinary Pi native policy, not an RSI 8192 cap;
+never use `0` / `null` as a magical maximum. Configured DeepSeek 1M context /
+384000 max output capability stays unchanged. Native Pi 1.5.2 defaults to that
+model limit and lowers it only as native context fitting/configuration requires;
+generation need not fill the allowance. Do not force 384k globally
+or confuse capability with required output length. These options do not increase
+the training budget, wall/call authority or task-specific tool rights. Limited training/inference results carry no formal
+scientific performance claim.
+
+## Output style (STE-RSI)
+
+All non-code agent text follows STE-RSI: one term for one thing, one claim per
+sentence (descriptive <=25 words, actions <=20), active and explicit wording.
+Identifiers and metric names are copied exactly. A comparison needs the metric
+and a measured value; unmeasured statements are labelled `hypothesis`. Code
+patch outputs are exempt. The manuscript lints only `claims` and their
+`evidence_ref`. A violation gets one repair attempt, then the task fails; the
+trace records `style.ok` / `style.violation`.
 
 ## Tools
 
 | Tool | Purpose |
 |---|---|
+| `rsi_adapter_smoke` | Verify an implemented target adapter via real remote training/checkpoint/evaluation and retained report metadata; inspect underlying evidence before readiness |
+| `rsi_iteration` | Execute exactly one real small-budget baseline/candidate subset optimization pair; no full training or paper SOP |
 | `rsi_research` | Accept one request as a superagent run; returns a run and ticket id immediately (`wait: true` blocks) and the SOP runs as task tickets |
 | `rsi_superagent` | `status`, `resume`, `tickets`, `ticket`, `events`, `policy`, `answer`, `note`, `retry`, `stop`, `attach` |
 | `rsi_inspect` | Summarize a run: incumbent, decision path, review/meta, artifact paths, or protocol status while it runs |
 | `rsi_replay` | Rebuild the decision path from traces only (no model, no workspace) and compare |
-| `/rsi` | Human command: `run`, `status`, `tickets`, `ticket`, `events`, `policy`, `answer`, `note`, `retry`, `stop`, `wait`, `inspect`, `replay`, `list`, `models`, `help` |
+| `/rsi` | Human command: `smoke`, `iterate`, `run`, `status`, `tickets`, `ticket`, `events`, `policy`, `answer`, `note`, `retry`, `stop`, `wait`, `inspect`, `replay`, `list`, `models`, `help` |
 
 ## Recommended workflow
 
-1. **Dry run first.** Call `rsi_research` with `mode: "mock"` and the fixture
-   path. This is deterministic, free, and reaches experiments in seconds. It
-   returns a `run_id` immediately; do not wait unless the user asked you to.
+1. **Choose the requested scope.** For one real small-budget iteration use
+   `rsi_iteration` after target acceptance. For a full SOP an optional
+   `rsi_research mode: "mock"` checks orchestration only; it is not adapter
+   acceptance and must never substitute for a requested real run.
 2. **Report when it ends.** When the report arrives, call
    `rsi_superagent action=status` with the `run_id`, then confirm `h_best`,
    review scores, and the decision path. Answer a run's question with
    `action=answer`; never start a new run to answer it.
-3. **Real run.** Only after the dry run, call `rsi_research` with
-   `mode: "provider"` (or omit `mode`). Set an explicit budget, for example
-   `max_llm_calls: 60`, `max_wall_time_s: 1800`, `thinking: "low"`.
+3. **Real full SOP.** Only after real target acceptance and authority for its
+   full-scope costs, call `rsi_research` with `mode: "provider"`,
+   `runner: "subprocess"`. There is no user-facing LLM/wall cap: internal
+   safety bounds come from the research defaults and the fixture's
+   `remote.timeout_s`. Inherit session thinking unless the user explicitly
+   requests a different level.
    Real runs take ~10–60 s per agent call depending on model and thinking.
 4. **Replay.** Call `rsi_replay` to prove the decision path is reproducible
    from traces alone.
@@ -198,11 +270,15 @@ the user asks whether a run is reproducible.
 
 ## Cost and model control
 
-- Provider: `opencode-go` by default; override with `provider`.
-- Default model: `deepseek-v4.1-flash`; coding-heavy roles can use
-  `coding_model` (e.g. `kimi-k3`).
-- `thinking`: subagent thinking level (default `low`; high values are slower).
-- Budgets: `max_llm_calls`, `max_wall_time_s`, `max_refine_rounds`,
+- Provider/model/thinking: inherit the active Pi session; explicit `provider`,
+  `model`, `thinking`, `coding_model` or user environment route preferences
+  (`RSI_MODEL`, `RSI_CODING_MODEL`) remain valid overrides, not forced defaults.
+- Both research and iteration tools expose optional `max_tokens` (all-role cap)
+  and `coding_max_tokens` (coding override); native `/rsi run` / `/rsi iterate`
+  expose `--max-tokens N` / `--coding-max-tokens N`. Native workers and inline
+  calls honor explicit caps consistently within selected-model capability.
+  The former inline/bounded 8k cap was not an actual `PiWorker` child ceiling.
+- Budgets: `max_refine_rounds`,
   `max_review_refinements`.
 - `agents: "subagent"` (default) isolates each agent in its own Pi worker
   session, one task ticket each; `agents: "inline"` keeps the same tickets and

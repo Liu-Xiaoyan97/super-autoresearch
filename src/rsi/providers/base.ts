@@ -3,9 +3,12 @@
 import { asArray, asRecord } from "../json.ts";
 
 export class LLMError extends Error {
-  constructor(message: string) {
+  readonly diagnostics?: Record<string, unknown>;
+
+  constructor(message: string, diagnostics?: Record<string, unknown>) {
     super(message);
     this.name = "LLMError";
+    this.diagnostics = diagnostics;
   }
 }
 
@@ -15,9 +18,13 @@ export interface LLMRequest {
   user: string;
   provider?: string;
   model?: string;
-  temperature: number;
-  maxTokens: number;
+  /** Unset preserves native/model sampling defaults. */
+  temperature?: number;
+  /** Unset delegates output budgeting to the provider's native policy. */
+  maxTokens?: number;
   schemaName?: string;
+  /** Per-call cancellation/deadline, in addition to any provider-wide signal. */
+  signal?: AbortSignal;
   meta: Record<string, unknown>;
 }
 
@@ -26,7 +33,16 @@ export interface LLMResponse {
   model: string;
   usage: Record<string, number>;
   latencyS: number;
+  /** Safe configuration/usage metadata, never generated content or credentials. */
+  diagnostics?: Record<string, unknown>;
   raw?: unknown;
+}
+
+/** Validate explicit budgets without imposing an application-wide output cap. */
+export function validateMaxTokens(maxTokens: number | undefined): void {
+  if (maxTokens !== undefined && (!Number.isSafeInteger(maxTokens) || maxTokens <= 0)) {
+    throw new LLMError("maxTokens must be a positive safe integer when specified");
+  }
 }
 
 /** A default-constructible output envelope plus a tolerant parser. */

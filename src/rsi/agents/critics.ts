@@ -16,6 +16,8 @@ function valid(evidence: Evidence, baseline: Evidence, names: string[]): boolean
   return (
     evidenceOk(evidence) &&
     evidenceOk(baseline) &&
+    samplesOk(evidence) &&
+    samplesOk(baseline) &&
     names.length > 0 &&
     names.every(
       (name) =>
@@ -27,6 +29,11 @@ function valid(evidence: Evidence, baseline: Evidence, names: string[]): boolean
   );
 }
 
+/** All screened seeds must finish; a single failed seed is a code repair, not a verdict. */
+function samplesOk(evidence: Evidence): boolean {
+  return !evidence.samples?.length || evidence.samples.every((sample) => sample.result === null || sample.result?.status === "ok");
+}
+
 export class SubsetCritic extends BaseAgent {
   readonly NAME = "subset_critic";
   readonly task = "critic.subset";
@@ -34,17 +41,36 @@ export class SubsetCritic extends BaseAgent {
   async judge(evidence: Evidence, opts: { baseline: Evidence }): Promise<Verdict> {
     const specs = this.ctx.problem.metrics;
     const deltas = metricDeltas(evidence.metrics, opts.baseline.metrics, specs);
+    const primary = specs[0];
+    const samples = evidence.samples ?? [];
+    // Multi-seed rule: a candidate is bad only when every seed is worse than
+    // the subset baseline on the primary metric. One bad seed is a reason to
+    // engineer, not to prune the idea.
+    const allWorse = !!primary && samples.length > 0 && samples.every((sample) => {
+      const delta = metricDeltas(sample.metrics, opts.baseline.metrics, [primary])[primary.name];
+      return Number.isFinite(delta) && delta < -primary.tolerance;
+    });
     let decision: Verdict["decision"];
     let feedback: string;
     if (!valid(evidence, opts.baseline, specs.map((spec) => spec.name))) {
+      // A failed execution is usually an implementation/interface bug, not a
+      // scientific refutation. Enter the coding repair loop and do not consume
+      // an engineering round; only exhausted repair budget becomes BAD.
+      return makeVerdict({
+        decision: "engineer",
+        invalid: true,
+        feedback:
+          "Subset run failed or lacks valid paired metrics. Repair the implementation " +
+          "(patch, command, output contract) and re-run the identical subset protocol; " +
+          "this repair does not consume an engineering round.",
+        metrics: deltas,
+      });
+    } else if (allWorse) {
       decision = "bad";
-      feedback = "Subset run failed or lacks valid paired metrics.";
-    } else if (specs.some((spec) => (deltas[spec.name] ?? 0) < -spec.tolerance)) {
-      decision = "bad";
-      feedback = "Subset metrics regress beyond tolerance; prune the idea.";
+      feedback = `All ${samples.length} subset seeds are worse than the baseline on ${primary.name}; prune the idea.`;
     } else if (
       isStrictlyBetter(evidence.metrics, opts.baseline.metrics, specs) &&
-      (deltas[specs[0].name] ?? 0) >= this.ctx.config.subsetMargin
+      (deltas[primary.name] ?? 0) >= this.ctx.config.subsetMargin
     ) {
       decision = "good";
       feedback = "Subset primary gain meets the margin with no material regression.";
@@ -69,8 +95,15 @@ export class FullSetCritic extends BaseAgent {
     let decision: Verdict["decision"];
     let feedback: string;
     if (!valid(evidence, opts.baseline, specs.map((spec) => spec.name))) {
-      decision = "bad";
-      feedback = "Full-set run failed or lacks valid paired metrics.";
+      return makeVerdict({
+        decision: "engineer",
+        invalid: true,
+        feedback:
+          "Full-set run failed or lacks valid paired metrics. Repair the implementation " +
+          "(scaling patch, command, output contract) and re-run the identical full protocol; " +
+          "this repair does not consume an engineering round.",
+        metrics: deltas,
+      });
     } else if (isStrictlyBetter(evidence.metrics, opts.baseline.metrics, specs)) {
       decision = "good";
       feedback = "Full benchmark strictly improves on the reproduced baseline.";

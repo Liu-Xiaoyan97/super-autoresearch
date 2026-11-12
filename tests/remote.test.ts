@@ -9,6 +9,9 @@ import {
   GitWorkspace,
   RemoteRunner,
   shellQuote,
+  subsetBudgetEnv,
+  type ExperimentRequest,
+  type RemoteTransport,
 } from "../src/rsi/runtime/workspace.ts";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -16,8 +19,7 @@ import path from "node:path";
 import { defaultConfig } from "../src/rsi/config.ts";
 import { loadProblem } from "../src/rsi/run.ts";
 import { fixture, tempDir } from "./helpers.ts";
-import type { ExperimentRequest } from "../src/rsi/runtime/workspace.ts";
-import type { RemoteConfig } from "../src/rsi/types.ts";
+import { makeProblem, metricSpec, type RemoteConfig } from "../src/rsi/types.ts";
 
 const remote: RemoteConfig = {
   host: "gpu-node",
@@ -51,6 +53,40 @@ const req: ExperimentRequest = {
   idea: null,
   label: "h1-full",
 };
+
+test("the subset screen uses min(10% of full, 200) real steps", () => {
+  const problem = makeProblem({
+    id: "budget",
+    budget: { full_steps: 954, subset_fraction: 0.1, subset_max_steps: 200, steps_env: "RSI_CORAL_TRAIN_STEPS", seed_env: "RSI_CORAL_SEED" },
+    metrics: [metricSpec({ name: "word_ppl", direction: "min" })],
+  });
+  const config = defaultConfig();
+  assert.deepEqual(subsetBudgetEnv(problem, config, "subset"), { RSI_CORAL_TRAIN_STEPS: "95" });
+  assert.deepEqual(subsetBudgetEnv(problem, config, "ablation"), { RSI_CORAL_TRAIN_STEPS: "95" });
+  assert.deepEqual(subsetBudgetEnv(problem, config, "full"), {});
+  assert.deepEqual(
+    subsetBudgetEnv(makeProblem({ ...problem, budget: { ...problem.budget!, full_steps: 3815 } }), config, "subset"),
+    { RSI_CORAL_TRAIN_STEPS: "200" },
+    "the 200-step cap wins over 10% of a large full budget",
+  );
+  assert.deepEqual(
+    subsetBudgetEnv(makeProblem({ ...problem, budget: null }), config, "subset"),
+    {},
+    "without a declared budget the target keeps its own default",
+  );
+});
+
+test("scope-specific budget env reaches the remote command", () => {
+  const invocation = buildRemoteInvocation(
+    { ...remote, env: { HF_HOME: "/data/hf" } },
+    ["{python}", "bench/eval.py", "--scope", "{scope}"],
+    { ...req, env: { RSI_CORAL_TRAIN_STEPS: "95" } },
+    "/remote/worktree",
+    "/remote/out.json",
+  );
+  assert.match(invocation.inner, /RSI_CORAL_TRAIN_STEPS=95/);
+  assert.match(invocation.inner, /HF_HOME=\/data\/hf/);
+});
 
 test("remote invocation exports GPU/env and expands placeholders", () => {
   const invocation = buildRemoteInvocation(
@@ -92,6 +128,38 @@ test("remote invocation requires an explicit GPU id", () => {
       ),
     /remote\.gpu_ids is required/,
   );
+});
+
+test("an aborted remote run kills the detached process group with a fresh SSH call", async () => {
+  const controller = new AbortController();
+  const calls: Array<{ binary: string; command: string; signal?: AbortSignal }> = [];
+  const transport: RemoteTransport = async (binary, args, opts) => {
+    const command = String(args.at(-1) ?? "");
+    calls.push({ binary, command, signal: opts.signal });
+    if (binary === "rsync") return { code: 0, stdout: "", stderr: "", killed: false };
+    if (command.includes("mkdir -p")) return { code: 0, stdout: "", stderr: "", killed: false };
+    if (command.includes("wait $!")) {
+      controller.abort();
+      return { code: 1, stdout: "", stderr: "Aborted", killed: true };
+    }
+    if (command.includes("kill -TERM")) return { code: 0, stdout: "", stderr: "", killed: false };
+    return { code: 1, stdout: "", stderr: "Aborted", killed: true };
+  };
+  const runner = new RemoteRunner(tempDir("rsi-remote-abort-"), {
+    remote: { ...remote, worktree: "", out: "" },
+    command: ["{python}", "bench/eval.py", "--scope", "{scope}"],
+    runId: "run-1",
+    timeoutS: 60,
+    signal: controller.signal,
+    transport,
+  });
+  const result = await runner.run({ ...req, repo: { ...req.repo, path: tempDir("rsi-remote-src-") } });
+  assert.equal(result.status, "failed");
+  const cleanup = calls.find((call) => call.command.includes("kill -TERM -- -$p"));
+  assert.ok(cleanup, "the aborted run must clean up the remote group");
+  assert.equal(cleanup!.signal, undefined, "cleanup must not reuse the aborted signal");
+  assert.match(cleanup!.command, /p=\$\(cat .*\.rsi-0001\.pid/);
+  assert.ok(calls.indexOf(cleanup!) < calls.length - 1, "cleanup runs before the result fetch");
 });
 
 test("a Problem with remote selects RemoteRunner", () => {

@@ -51,6 +51,29 @@ One run has one `run` ticket. Its Executor is the **SOP driver**, which runs
 the SOP is a `task` ticket whose Executor is one worker: the subagent of old, now
 with a mandate, an assignment, an attempt count and a structured report.
 
+## Native Pi model inheritance
+
+The superagent preserves ordinary Pi's model capabilities and native request
+policy. Workers inherit the active session's provider, model and thinking unless
+explicit run options or user route preferences (`RSI_MODEL` / `RSI_CODING_MODEL`)
+override them; RSI does not force Flash or `low` thinking.
+
+`rsi_research` / `rsi_iteration` accept optional `max_tokens` (all-role output cap)
+and `coding_max_tokens` (coding override); `/rsi run` / `/rsi iterate` use
+`--max-tokens N` / `--coding-max-tokens N`. Omit them for native Pi policy, not an
+RSI 8192 cap or arbitrary 131072 ceiling. Explicit positive-integer caps apply
+consistently to inline calls and `PiWorker` children within model capability;
+the old inline/bounded 8k path did not impose that ceiling on actual children,
+which previously ignored the payload cap.
+
+An inherited DeepSeek model configured for 1M context / 384000 max output keeps
+that metadata unmodified. Audited Pi 1.5.2 defaults to model.maxTokens and fits
+output to remaining context; capacity is not mandatory generated length. It does not force
+384k requests globally or require every source file in each task's context.
+History isolation, protected protocols and task-specific tools remain; model
+inheritance is not blanket shell/GPU permission. Training budgets (even two
+steps), wall/call budgets and the authority gates below are independent.
+
 ## Authorization
 
 The gate answers who may originate work. The policy is versioned; a change
@@ -117,8 +140,16 @@ A worker returns one envelope:
 ```
 
 or `state: "blocked"` with one `question`, or `state: "failed"` with the real
-error. A `ready` or `dropped` report ends the task ticket; `blocked` and
-`failed` hold it open for a retry or an answer.
+error. The answer is the JSON object the task asks for, carried as text in
+`output.text`; STE-RSI applies to the string values inside that JSON, not to the
+envelope. A worker that puts the answer's fields directly in `output` is still
+accepted: the harness serializes that object back to JSON text. A `ready` or
+`dropped` report ends the task ticket; `blocked` and `failed` hold it open for a
+retry or an answer.
+
+If a report reaches `rsi_report` without an answer, the tool rejects it in the
+same turn and tells the model what to fix. A retry after a rejected report adds
+the rejection reason to the prompt instead of repeating the same request blind.
 
 A question becomes an **Attention** on the ticket. It survives later progress
 reports and clears only when a person answers (`rsi_superagent action=answer`)
@@ -142,11 +173,20 @@ something. Task-level progress stays internal — it is in
 Dispatch is idempotent per session and request; a second identical call returns
 the existing run. `retry` starts a new assignment on the same ticket; for a run
 ticket that means re-running the SOP in the same directory. `stop` is a person's
-stop and withdraws the mandate. A run that ended remains immutable. An
-aborted or failed run can be continued with `resume`: a new `-rN` attempt
-restores the persisted state/traces, records `resumed_from`, and keeps the old
-ticket as the audit record. A partially completed stage is rerun; this is not
+stop and withdraws the mandate; a stopped run stays final and is not resumable.
+A run that ended remains immutable. An aborted or failed run can be continued
+with `resume`: a new `-rN` attempt restores the persisted state/traces, records
+`resumed_from`, and keeps the old ticket as the audit record. A failed report
+keeps its run ticket open (`person/failed`) instead of setting `ended`, so that
+state is resumable too. A partially completed stage is rerun; this is not
 automatic mid-turn replay.
+
+`status` stage rows are a deliverable view, not a ticket count. A task ticket is
+one model call; the stage's deliverable (a reproduced baseline, a manuscript)
+continues on the run ticket after that call returns. A stage shows `done` only
+when its decision-path token exists (`limits.ok`, `seeds:`, `baseline.ok`, ...).
+The count is the SOP's declared task list, so a subset+full baseline shows
+`1/1`, not `2/2`.
 
 ## Durability and recovery
 
@@ -162,6 +202,13 @@ Every command is one atomic snapshot write, so a crash never leaves half a
 decision behind. On restart, a live assignment is recorded as interrupted: a
 `run` ticket reports `blocked` with a recovery question, task tickets report
 `failed`. Nothing is silently replayed.
+
+Deleting a run directory removes its evidence; it is not a termination
+primitive. `stop` ends the ticket and releases its executor, and it still works
+after the directory is gone: the ticket ends in memory and the status is
+retired without recreating the artifacts. To stop new dispatches across
+processes, pause the policy (`mode=off` or `paused`). A later dispatch is new
+work with a new ticket lifecycle, not a replay of the stopped one.
 
 ## Prompt assembly
 

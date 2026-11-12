@@ -13,6 +13,8 @@ test("offline happy path runs §3.1–§3.6 and exports artifacts", async () => 
   assert.ok(state.limitations.length >= 3);
   assert.ok(state.seeds.length > 0);
   assert.ok(state.best_idea && state.best_evidence);
+  assert.ok(state.baseline_full, "a candidate reached full, so the lazy full baseline was measured");
+  assert.ok(result.final.decision_path.includes("baseline.full.ok"));
   assert.ok(state.ablations.length > 0);
   assert.ok(state.review && state.meta_review);
   assert.ok(result.final.decision_path.length > 0);
@@ -34,6 +36,8 @@ test("offline happy path runs §3.1–§3.6 and exports artifacts", async () => 
     "manuscript_validation",
     "implementation_instruction",
     "integrity",
+    "style.ok",
+    "style.violation",
   ]);
   for (const record of result.records) {
     assert.ok(allowed.has(record.kind) || record.kind.startsWith("stage."), record.kind);
@@ -47,6 +51,25 @@ test("offline happy path runs §3.1–§3.6 and exports artifacts", async () => 
   assert.ok(fs.existsSync(path.join(result.root, "patches")));
   assert.ok(fs.existsSync(path.join(result.root, "worktree")));
   assert.ok(fs.readFileSync(path.join(result.root, "patches", "h4-subset.diff"), "utf8").length > 0);
+});
+
+test("the full baseline is lazy and is not measured when no candidate reaches full", async () => {
+  const result = await mockRun({ configOverrides: { subsetMargin: 10 } });
+  const state = result.state as any;
+  assert.ok(state.baseline, "the subset baseline is still measured");
+  assert.equal(state.baseline_full, null);
+  assert.equal(result.final.decision_path.includes("baseline.full.ok"), false);
+  assert.equal(result.final.decision_path.includes("baseline.full.bad"), false);
+  assert.equal(result.final.aborted, true);
+  assert.equal(result.final.abort_reason, "no_good_ideas");
+});
+
+test("the data gate blocks paper writing without multi-round evidence", async () => {
+  const result = await mockRun({ configOverrides: { minGoodTraces: 99 } });
+  assert.equal(result.final.aborted, true);
+  assert.equal(result.final.abort_reason, "data_gate_not_met");
+  assert.equal((result.state as any).manuscript, null);
+  assert.equal(result.final.decision_path.some((token) => token.startsWith("peer.")), false);
 });
 
 test("abort case dead-ends with no_good_ideas and still exports", async () => {

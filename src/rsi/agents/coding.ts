@@ -14,9 +14,11 @@ import {
   type AblationPlan,
   type AblationResult,
   type Evidence,
+  type ExperimentResult,
   type Idea,
   type MetricSpec,
   type RebuttalTask,
+  type SeedSample,
   type RepoRef,
   type Scope,
   type Trace,
@@ -25,6 +27,7 @@ import {
   makeTrace,
 } from "../types.ts";
 import { BaseAgent, type AgentContext } from "./base.ts";
+import { LLMError } from "../providers/base.ts";
 import { askUnifiedDiff } from "./patch.ts";
 import { FullSetCritic, SubsetCritic } from "./critics.ts";
 import { FullSetEngineer, SubsetEngineer } from "./engineering.ts";
@@ -50,6 +53,48 @@ function clampSpec(value: number, spec: MetricSpec): number {
   return clampMetric(value, spec);
 }
 
+/** Independent seeds for the subset screen; full/rebuttal stay single-seed. */
+export function subsetSeeds(config: { seed: number; subsetSeeds: number }): number[] {
+  const count = Math.max(1, Math.trunc(config.subsetSeeds) || 1);
+  return Array.from({ length: count }, (_, index) => config.seed + index);
+}
+
+/** Mean over the seeds that reported a finite value for each metric. */
+export function meanMetrics(samples: SeedSample[]): Record<string, number> {
+  const sums: Record<string, { total: number; count: number }> = {};
+  for (const sample of samples) {
+    for (const [name, value] of Object.entries(sample.metrics)) {
+      if (!Number.isFinite(value)) continue;
+      const item = sums[name] ?? { total: 0, count: 0 };
+      item.total += value;
+      item.count += 1;
+      sums[name] = item;
+    }
+  }
+  const out: Record<string, number> = {};
+  for (const [name, item] of Object.entries(sums)) out[name] = item.total / item.count;
+  return out;
+}
+
+/** Run one subset candidate with every screen seed and aggregate its metrics. */
+export async function runSeeded<T extends { run(repo: any, scope: any, idea?: any, seed?: number): Promise<ExperimentResult> }>(
+  runner: T,
+  repo: any,
+  idea: Idea | null,
+  seeds: number[],
+  charge: () => void,
+  scope: Scope = "subset",
+): Promise<{ metrics: Record<string, number>; samples: SeedSample[]; result: ExperimentResult | null }> {
+  const samples: SeedSample[] = [];
+  let result: ExperimentResult | null = null;
+  for (const seed of seeds) {
+    charge();
+    result = await runner.run(repo, scope, idea, seed);
+    samples.push({ seed, metrics: result.metrics, result });
+  }
+  return { metrics: meanMetrics(samples), samples, result };
+}
+
 export class BaselineCoder extends BaseAgent {
   readonly NAME = "baseline_coder";
   readonly task = "code.baseline";
@@ -57,21 +102,56 @@ export class BaselineCoder extends BaseAgent {
 
   async reproduce(opts: { scope?: Scope } = {}): Promise<Evidence> {
     const requestedScope = opts.scope ?? "subset";
-    const out = await this.ask(BaselinePatch, {
-      user: stableString(this.ctx.problem),
-      meta: { scope: requestedScope },
-    });
+    // The baseline is the authorized snapshot itself, never a model patch.
+    // Keep the task ticket/report as the protocol audit point, but ignore its
+    // patch: the measured code is always the latest commit at repo_ref.
+    try {
+      await this.ask(BaselinePatch, {
+        user:
+          "This task reproduces the baseline from the problem's authorized repository snapshot. " +
+          "The snapshot at the problem's repo_ref is the unmodified reference. Use it as-is: " +
+          "do not explore or modify the repository, and do not invent code. " +
+          'Return {"patch":""}. A baseline patch is never applied.\n\n' +
+          stableString(this.ctx.problem),
+        meta: { scope: requestedScope },
+      });
+    } catch (error) {
+      // A worker that cannot answer must not block the deterministic base-commit
+      // run. Blocked reports, aborts and budget errors still propagate.
+      const message = (error as Error)?.message ?? String(error);
+      if (!(error instanceof LLMError) || /reported blocked\b/.test(message)) throw error;
+      this.log("baseline.patch.skipped", { reason: message.slice(0, 500) });
+    }
     let repo = await this.ctx.workspace.baselineRepo();
-    repo = await this.ctx.workspace.writePatch(repo, out.patch, `baseline-${requestedScope}`);
-    this.ctx.budget.chargeExperiment();
-    const result = await this.ctx.workspace.run(repo, requestedScope);
+    repo = await this.ctx.workspace.writePatch(repo, "", `baseline-${requestedScope}`);
+    let result: ExperimentResult | null = null;
+    let samples: SeedSample[] = [];
+    let metrics: Record<string, number> = {};
+    if (requestedScope === "subset") {
+      const measured = await runSeeded(
+        this.ctx.workspace,
+        repo,
+        null,
+        subsetSeeds(this.ctx.config),
+        () => this.ctx.budget.chargeExperiment(),
+      );
+      metrics = measured.metrics;
+      samples = measured.samples;
+      result = measured.samples.map((sample) => sample.result).find((item) => item?.status === "ok") ?? measured.result;
+    } else {
+      this.ctx.budget.chargeExperiment();
+      result = await this.ctx.workspace.run(repo, requestedScope);
+      metrics = result.metrics;
+      samples = [{ seed: this.ctx.config.seed, metrics: result.metrics, result }];
+    }
     const evidence = makeEvidence({
       idea_id: "baseline",
       scope: requestedScope,
-      metrics: result.metrics,
+      metrics,
       code: repo,
       result,
       label: repo.label,
+      samples,
     });
     if (requestedScope === "subset") this.ctx.scratch.baseline = evidence;
     else this.ctx.scratch.baseline_full = evidence;
@@ -84,7 +164,8 @@ export class SubsetCoder extends BaseAgent {
   readonly task = "code.subset";
   readonly role = "coding";
 
-  async implement(idea: Idea, opts: { base: Evidence }): Promise<Evidence> {
+  async implement(idea: Idea, opts: { base: Evidence; scope?: Scope; seeds?: number[] }): Promise<Evidence> {
+    const scope = opts.scope ?? "subset";
     const brief = this.ctx.workspace.brief?.(codeOf(opts.base), `${idea.mechanism} ${idea.hypothesis}`) ?? "";
     const out = await askUnifiedDiff(this, SubsetPatch, {
       user:
@@ -93,17 +174,25 @@ export class SubsetCoder extends BaseAgent {
       meta: { idea_id: idea.id },
     });
     const patch = `${out.patch}\nHypothesis: ${idea.hypothesis}\nMechanism: ${idea.mechanism}\n`;
-    const repo = await this.ctx.workspace.writePatch(codeOf(opts.base), patch, `${idea.id}-subset`);
-    this.ctx.budget.chargeExperiment();
-    const result = await this.ctx.workspace.run(repo, "subset", idea);
+    const repo = await this.ctx.workspace.writePatch(codeOf(opts.base), patch, `${idea.id}-${scope}`);
+    const seeds = scope === "subset" ? (opts.seeds ?? [this.ctx.config.seed]) : [this.ctx.config.seed];
+    const measured = await runSeeded(
+      this.ctx.workspace,
+      repo,
+      idea,
+      seeds,
+      () => this.ctx.budget.chargeExperiment(),
+      scope,
+    );
     return makeEvidence({
       idea_id: idea.id,
-      scope: "subset",
-      metrics: result.metrics,
+      scope,
+      metrics: measured.metrics,
       baseline_metrics: { ...opts.base.metrics },
       code: repo,
-      result,
+      result: measured.samples.map((sample) => sample.result).find((item) => item?.status === "ok") ?? measured.result,
       label: repo.label,
+      samples: measured.samples,
     });
   }
 }
@@ -152,10 +241,19 @@ export class AblationCoder extends BaseAgent {
     });
     const patch = `${out.patch}\nMechanism: ${idea.mechanism}\n${stableString(plan)}\n`;
     const repo = await this.ctx.workspace.writePatch(codeOf(opts.best), patch, `${idea.id}-ablation-${plan.id}`);
-    this.ctx.budget.chargeExperiment();
-    const result = await this.ctx.workspace.run(repo, "ablation", idea);
-    const metrics = this.applyComponentModel(idea, plan, opts.best, { ...result.metrics });
-    if (stableString(metrics) !== stableString(result.metrics)) result.metrics = metrics;
+    // Same subset data, 95-step budget, hyperparameters and seeds as the
+    // candidate subset control; never a full 954-step run.
+    const measured = await runSeeded(
+      this.ctx.workspace,
+      repo,
+      idea,
+      subsetSeeds(this.ctx.config),
+      () => this.ctx.budget.chargeExperiment(),
+      "ablation",
+    );
+    const metrics = this.applyComponentModel(idea, plan, opts.best, { ...measured.metrics });
+    const result = measured.samples.map((sample) => sample.result).find((item) => item?.status === "ok") ?? measured.result;
+    if (result && stableString(metrics) !== stableString(measured.metrics)) result.metrics = metrics;
     const evidence = makeEvidence({
       idea_id: idea.id,
       scope: "ablation",
@@ -164,8 +262,10 @@ export class AblationCoder extends BaseAgent {
       code: repo,
       result,
       label: plan.id,
+      samples: measured.samples,
     });
-    return { plan_id: plan.id, component: plan.component, metrics, evidence, ok: result.status === "ok" };
+    const ok = measured.samples.length > 0 && measured.samples.every((sample) => sample.result?.status === "ok");
+    return { plan_id: plan.id, component: plan.component, metrics, evidence, ok };
   }
 
   applyComponentModel(
@@ -177,7 +277,10 @@ export class AblationCoder extends BaseAgent {
     if (this.ctx.config.runner !== "simulated" || !Object.keys(best.metrics).length) return metrics;
     let contribution = componentContribution(plan.component || plan.id);
     if (isDeadComponent(idea, plan)) contribution = 0;
-    if (contribution <= 0) return metrics;
+    // A dead component's removal is a no-op: it must match the subset control,
+    // not the raw simulated run. This is the negative-control case the critic
+    // should reject as "no measured contribution".
+    if (contribution <= 0) return { ...best.metrics };
     const out = { ...metrics };
     for (const spec of this.ctx.problem.metrics) {
       const base = best.metrics[spec.name];
@@ -270,22 +373,36 @@ export class IdeaImplementer extends BaseAgent {
       this.ctx.scratch.baseline = baseline;
     }
     const trace = makeTrace({ idea, round });
-    if (baseline.result && baseline.result.status !== "ok") {
+    const baselineFailed =
+      (baseline.result && baseline.result.status !== "ok") ||
+      (baseline.samples ?? []).some((sample) => sample.result && sample.result.status !== "ok");
+    if (baselineFailed) {
       trace.feedback = "Baseline reproduction failed; candidate cannot be compared.";
       trace.lessons.push(trace.feedback);
       return trace;
     }
 
-    let current = await this.subsetCoder.implement(idea, { base: baseline });
+    let current = await this.subsetCoder.implement(idea, { base: baseline, seeds: subsetSeeds(this.ctx.config) });
     trace.evidence.push(current);
     let verdict = await this.subsetCritic.judge(current, { baseline });
     trace.lessons.push(verdict.feedback);
 
     const perStage = this.ctx.config.engineeringBudgetScope === "per_stage";
     const budget = this.ctx.config.maxEngRounds;
+    const maxRepairs = this.ctx.config.maxRepairs;
     let subsetUsed = 0;
-    while (verdict.decision === "engineer" && subsetUsed < budget) {
-      subsetUsed += 1;
+    let subsetRepairs = 0;
+    while (verdict.decision === "engineer") {
+      // Invalid execution (patch, command or output contract) is a repair, not
+      // a scientific engineering round. It is separately bounded so a broken
+      // implementation cannot consume maxEngRounds.
+      if (verdict.invalid) {
+        if (subsetRepairs >= maxRepairs) break;
+        subsetRepairs += 1;
+      } else {
+        if (subsetUsed >= budget) break;
+        subsetUsed += 1;
+      }
       current = await this.subsetEngineer.refine(idea, { evidence: current, feedback: verdict.feedback });
       trace.evidence.push(current);
       verdict = await this.subsetCritic.judge(current, { baseline });
@@ -297,23 +414,31 @@ export class IdeaImplementer extends BaseAgent {
       return trace;
     }
 
+    // The full baseline is lazy: measure it before the first full candidate so
+    // a subset-only run never pays for a 954-step baseline.
+    const fullBaseline = this.ctx.ensureBaselineFull
+      ? await this.ctx.ensureBaselineFull()
+      : ((this.ctx.scratch.baseline_full as Evidence | undefined) ?? baseline);
     current = await this.fullSetCoder.scale(idea, { subset: current });
-    const fullBaseline = (this.ctx.scratch.baseline_full as Evidence | undefined) ?? baseline;
     current = { ...current, baseline_metrics: { ...fullBaseline.metrics } };
     trace.evidence.push(current);
 
     let fullUsed = 0;
+    let fullRepairs = 0;
     const totalAttempts = () => (perStage ? fullUsed : subsetUsed + fullUsed);
     verdict = await this.fullCritic.judge(current, {
       baseline: fullBaseline,
       attempts: totalAttempts(),
     });
     trace.lessons.push(verdict.feedback);
-    while (
-      verdict.decision === "engineer" &&
-      (perStage ? fullUsed < budget : subsetUsed + fullUsed < budget)
-    ) {
-      fullUsed += 1;
+    while (verdict.decision === "engineer") {
+      if (verdict.invalid) {
+        if (fullRepairs >= maxRepairs) break;
+        fullRepairs += 1;
+      } else {
+        if (perStage ? fullUsed >= budget : subsetUsed + fullUsed >= budget) break;
+        fullUsed += 1;
+      }
       const refined = await this.fullEngineer.refine(idea, {
         evidence: current,
         feedback: verdict.feedback,

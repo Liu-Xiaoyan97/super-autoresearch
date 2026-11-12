@@ -113,8 +113,6 @@ async function main(argv: string[]): Promise<number> {
         strictDirections: Boolean(args.flags["strict-directions"]),
         maxRefineRounds: flagNumber(args, "max-refine-rounds"),
         maxReviewRefinements: flagNumber(args, "max-review-refinements"),
-        maxLlmCalls: flagNumber(args, "max-llm-calls"),
-        maxWallTimeS: flagNumber(args, "max-wall-time-s"),
       };
       if (args.flags.script) opts.mockScript = loadScript(String(args.flags.script));
       if (!mock) {

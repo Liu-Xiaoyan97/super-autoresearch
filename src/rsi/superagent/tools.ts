@@ -88,7 +88,7 @@ export function formatStatus(status: RunStatus): string {
   const attention = status.attention ? `\nNEEDS A PERSON: ${status.attention}` : "";
   const ended = status.ended ? `\nended: ${status.ended.outcome}${status.ended.reason ? ` (${status.ended.reason})` : ""}` : "";
   const stages = status.stages.length
-    ? status.stages.map((stage) => `  ${stage.section} ${stage.title}: ${stage.state} (${stage.done}/${stage.tasks} tasks done)`).join("\n")
+    ? status.stages.map((stage) => `  ${stage.section} ${stage.title}: ${stage.state} (${stage.done}/${stage.tasks} SOP tasks)`).join("\n")
     : "  no stage has run yet";
   const ticketLines = status.tickets.length
     ? [

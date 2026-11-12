@@ -28,15 +28,27 @@ function boundedScore(score: number, maximum: number): number {
   return Number.isFinite(score) ? Math.min(maximum, Math.max(1, score)) : 1;
 }
 
+const REVIEWER_FOCUS = [
+  "Methodological novelty: is the mechanism genuinely new and clearly different from the baseline?",
+  "Empirical validity: baseline fairness, significance of the measured gain, and completeness of the comparison.",
+  "Reproducibility and attribution: seeds, ablations, component attribution, and whether claims match the evidence.",
+] as const;
+
 export class PeerReviewer extends BaseAgent {
   readonly NAME = "peer_reviewer";
   readonly task = "review.peer";
 
-  async review(manuscript: Manuscript, opts: { round?: number } = {}): Promise<Review> {
+  async review(
+    manuscript: Manuscript,
+    opts: { round?: number; reviewer?: number; focus?: string } = {},
+  ): Promise<Review> {
     const round = opts.round ?? 0;
+    const reviewer = opts.reviewer ?? 0;
+    const focus = opts.focus ?? REVIEWER_FOCUS[reviewer % REVIEWER_FOCUS.length];
     const config = this.ctx.config;
     const output = await this.ask(ReviewSpec, {
       user:
+        `You are independent reviewer ${reviewer + 1}. ${focus}\n` +
         "Review the current manuscript in ScholarPeer style. Assess methodological novelty, " +
         "baseline fairness, empirical validity, component attribution and reproducibility. " +
         "Return at least one strength, specific weaknesses, targeted experimental questions, " +
@@ -49,7 +61,7 @@ export class PeerReviewer extends BaseAgent {
           manuscript,
           structural_violations: validateManuscript(manuscript, config, this.ctx.problem),
         }),
-      meta: { manuscript_id: manuscript.id, round },
+      meta: { manuscript_id: manuscript.id, round, reviewer },
     });
     const score = boundedScore(output.score, config.reviewScaleMax);
     const strengths = nonempty(output.strengths).length

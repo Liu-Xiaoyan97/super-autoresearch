@@ -57,6 +57,8 @@ test("a worker prompt is the task's own system text plus the report contract", (
   const text = workerSystem({ task: "limits.extract", system: "Extract the limitations." });
   assert.ok(text.startsWith("Extract the limitations."));
   assert.match(text, /rsi_report/);
+  assert.match(text, /output\.text/);
+  assert.match(text, /string values inside that JSON/i);
 });
 
 test("the foreground briefing carries orchestrator, dispatch and replies", () => {

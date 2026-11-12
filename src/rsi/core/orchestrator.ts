@@ -11,6 +11,9 @@ import {
   IdeaImplementer,
   RebuttalCoder,
   SubsetCoder,
+  codeOf,
+  meanMetrics,
+  subsetSeeds,
 } from "../agents/coding.ts";
 import { FullSetCritic, ResultComparison, Selector, SubsetCritic } from "../agents/critics.ts";
 import { FullSetEngineer, SubsetEngineer } from "../agents/engineering.ts";
@@ -32,19 +35,31 @@ import { LimitationExtractor, LimitationVerifier } from "../agents/limitations.t
 import { MetaReviewer, PeerReviewer, RebuttalPlanner } from "../agents/review.ts";
 import { InitialDrafter, PaperEnhancer } from "../agents/writing.ts";
 import { BudgetExceeded } from "../runtime/budget.ts";
+import { incumbentFileFor, ledgerFromEvidence, protocolFingerprint, writeIncumbent } from "../runtime/incumbent.ts";
+import { runDiagnosis, type DiagnosisResult } from "../runtime/diagnosis.ts";
 import {
   type AblationResult,
+  type Diagnosis,
   type Evidence,
   type FinalArtifacts,
   type Idea,
   type IntegrityReport,
   type Manuscript,
+  type Problem,
+  type RepoRef,
+  type Review,
   type Scope,
+  type SeedSample,
   type Trace,
+  type Verdict,
   evidenceOk,
+  finalEvidence,
   isStrictlyBetter,
+  makeEvidence,
   makeFinal,
+  makeLimitation,
   makeManuscript,
+  makeReview,
   verdictAccepted,
 } from "../types.ts";
 import { ResearchState } from "./state.ts";
@@ -139,7 +154,10 @@ const ABORT_REASONS = new Set([
   "no_good_ideas",
   "no_eligible_seeds",
   "baseline_failed",
+  "diagnosis_failed",
+  "diagnosis_requires_baseline",
   "limitations_exhausted",
+  "data_gate_not_met",
 ]);
 
 function byId<T extends { id: string }>(items: T[]): T[] {
@@ -150,19 +168,29 @@ function g(value: number): string {
   return String(value);
 }
 
+export type DiagnoseFn = (
+  problem: Problem,
+  repo: RepoRef,
+  store: AgentContext["store"],
+  opts: { timeoutS: number; signal?: AbortSignal },
+) => Promise<DiagnosisResult>;
+
 export class Orchestrator {
   readonly ctx: AgentContext;
   readonly agents: AgentBundle;
   readonly state: ResearchState;
   private specReports = new Map<string, IntegrityReport>();
+  private readonly diagnoseFn: DiagnoseFn;
 
-  constructor(ctx: AgentContext, agents?: AgentBundle, state?: ResearchState) {
+  constructor(ctx: AgentContext, agents?: AgentBundle, state?: ResearchState, diagnoseFn: DiagnoseFn = runDiagnosis) {
     this.ctx = ctx;
     this.agents = agents ?? buildAgents(ctx);
     this.state = state ?? new ResearchState(ctx.problem, ctx.config);
+    this.diagnoseFn = diagnoseFn;
   }
 
   async run(opts: { resume?: boolean } = {}): Promise<FinalArtifacts> {
+    this.ctx.ensureBaselineFull = () => this.ensureBaselineFull();
     const resume = opts.resume === true;
     if (resume) {
       this.state.aborted = false;
@@ -173,14 +201,32 @@ export class Orchestrator {
     }
     try {
       this.ctx.budget.check();
+      // A declared diagnosis needs a reproduced baseline first: defects are
+      // measured on the baseline commit, never on an assumed number.
+      if (this.ctx.problem.diagnose_command) {
+        await this.baseline();
+        await this.diagnose();
+      }
       const limitsDone = this.state.decisionPath.some((token) => token.startsWith("limits.ok"));
       if (!resume || !limitsDone) await this.limitations();
       if (!resume || !this.state.seeds.length) await this.seedIdeas();
-      await this.baseline();
+      if (!this.ctx.problem.diagnose_command) await this.baseline();
       await this.ideaSearch();
+      const needsPaper = !resume || !this.state.manuscript || !this.state.review;
+      if (needsPaper) {
+        const gate = this.dataGate();
+        if (!gate.ok) {
+          this.transition("stage.gate", `data.gate:${gate.reason}`, { reason: gate.reason });
+          throw new ScientificAbort("data_gate_not_met");
+        }
+      }
       if (!resume || !this.state.bestIdea) await this.select();
       if (!resume || !this.state.ablations.length) await this.ablations();
-      if (!resume || !this.state.manuscript || !this.state.review) await this.draftAndReview();
+      if (needsPaper && !this.attributionGate()) {
+        this.transition("stage.gate", "data.gate:attribution", { reason: "attribution" });
+        throw new ScientificAbort("data_gate_not_met");
+      }
+      if (needsPaper) await this.draftAndReview();
       if (!resume || !this.state.metaReview) await this.metaReview();
     } catch (error) {
       if (error instanceof BudgetExceeded) {
@@ -203,12 +249,80 @@ export class Orchestrator {
     this.persist();
   }
 
+  /**
+   * The code loop must produce multiple independent full-set winners before the
+   * paper loop may start. Depth mode deliberately tests one measured defect, so
+   * it keeps its single-candidate contract.
+   */
+  private dataGate(): { ok: boolean; reason: string } {
+    const depth = this.depthSearch();
+    const required = depth ? 1 : Math.max(1, this.ctx.config.minGoodTraces);
+    const good = this.state
+      .goodTraces()
+      .filter((trace) => finalEvidence(trace)?.scope === "full");
+    const rounds = new Set(good.map((trace) => trace.round)).size;
+    const enough = good.length >= required && (depth || rounds >= Math.min(2, required));
+    return {
+      ok: enough,
+      reason: enough ? "ok" : `evidence:${good.length}/${required},rounds:${rounds}`,
+    };
+  }
+
+  /** Attribution is the other half of the data gate: a gain must survive ablations. */
+  private attributionGate(): boolean {
+    if (this.state.ablationVerdict) return verdictAccepted(this.state.ablationVerdict);
+    return this.state.decisionPath.some((token) => token === "ablation.good" || token === "ablation.accept");
+  }
+
   private persist(): void {
     this.ctx.store.writeJson("../state.json", this.state.toDict());
   }
 
+  /** Run the target-declared read-only analysis on the reproduced baseline. */
+  private async diagnose(): Promise<void> {
+    if (!this.ctx.problem.diagnose_command) return;
+    if (this.state.diagnosis?.findings.length) return;
+    progress(this.ctx, "diagnose: measuring the reproduced baseline");
+    const code = this.state.baseline?.code;
+    if (!this.ctx.problem.repo || !code?.repo || !code.commit) {
+      throw new ScientificAbort("diagnosis_requires_baseline");
+    }
+    const timeoutS = Math.max(30, Math.min(this.ctx.config.maxWallTimeS, 1800));
+    const result = await this.diagnoseFn(this.ctx.problem, code, this.ctx.store, {
+      timeoutS,
+      signal: this.ctx.signal,
+    });
+    if (result.status !== "ok" || !result.findings.length) {
+      this.transition("stage.diagnose", "diagnose.failed", { error: result.error, log_path: result.log_path });
+      throw new ScientificAbort("diagnosis_failed");
+    }
+    const diagnosis: Diagnosis = {
+      findings: result.findings,
+      log_path: result.log_path,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      wall_time_s: result.wall_time_s,
+    };
+    this.state.diagnosis = diagnosis;
+    const measured = diagnosis.findings.map((finding, index) => makeLimitation({
+      id: `D${index + 1}`,
+      text: `${finding.title} (${finding.evidence})`,
+      axis: finding.axis,
+      evidence: finding.evidence,
+      severity: Math.min(1, Math.max(0, finding.severity)),
+      actionable: finding.actionable,
+    }));
+    const known = new Set(this.state.limitations.map((item) => item.id));
+    this.state.limitations = [...measured.filter((item) => !known.has(item.id)), ...this.state.limitations]
+      .sort((a, b) => a.id.localeCompare(b.id));
+    this.transition("stage.diagnose", `diagnose.ok:${result.findings.length}`, {
+      findings: result.findings.map((finding) => ({ id: finding.id, severity: finding.severity, measured: finding.measured })),
+    });
+  }
+
   private async limitations(): Promise<void> {
     progress(this.ctx, "§3.1 extracting limitations");
+    const findings = this.findings();
     const rounds = Math.min(16, this.ctx.config.maxLimitationRounds);
     for (let index = 0; index < rounds; index++) {
       checkAborted(this.ctx);
@@ -216,6 +330,7 @@ export class Orchestrator {
       const fresh = await this.agents.limitationExtractor.extract({
         round: index,
         existing: this.state.limitations,
+        findings,
       });
       this.state.limitations = [...this.state.limitations, ...fresh].sort((a, b) => a.id.localeCompare(b.id));
       const verdict = await this.agents.limitationVerifier.verify(this.state.limitations, { round: index });
@@ -231,26 +346,43 @@ export class Orchestrator {
     throw new ScientificAbort("limitations_exhausted");
   }
 
+  private findings() {
+    return [...(this.state.diagnosis?.findings ?? [])]
+      .sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
+  }
+
+  /** A measured diagnosis and the default depth policy allow one defect at a time. */
+  private depthSearch(): boolean {
+    return !!this.state.diagnosis?.findings.length && this.ctx.config.searchPolicy === "depth";
+  }
+
   private async seedIdeas(): Promise<void> {
     progress(this.ctx, "§3.1 generating seed ideas");
-    const initial = await this.agents.initialIdeaGenerator.generate(this.state.limitations);
-    const pool: Idea[] = [await this.agents.noveltyChecker.score(initial)];
-    const attempts = Math.max(2 * this.ctx.config.nSeed, 1);
+    const findings = this.findings();
+    const depth = this.depthSearch();
+    const nSeed = depth ? 1 : this.ctx.config.nSeed;
+    const initial = await this.agents.initialIdeaGenerator.generate(this.state.limitations, { findings });
+    if (depth && initial.target_limitations.length === 0) {
+      initial.target_limitations = [this.state.limitations.find((item) => /^D\d+$/.test(item.id))?.id ?? "D1"];
+    }
+    const pool: Idea[] = [await this.agents.noveltyChecker.score(initial, { findings })];
+    const attempts = depth ? 0 : Math.max(2 * this.ctx.config.nSeed, 1);
     for (let i = 0; i < attempts; i++) {
       checkAborted(this.ctx);
       this.ctx.budget.check();
-      if (pool.length >= this.ctx.config.nSeed) break;
+      if (pool.length >= nSeed) break;
       const extra = await this.agents.ideaGenerator.generate({
         limitations: this.state.limitations,
         existing: pool,
-        n: this.ctx.config.nSeed - pool.length,
+        n: nSeed - pool.length,
+        findings,
       });
       const ids = new Set(pool.map((idea) => idea.id));
       const clean = byId(extra).filter((idea) => !ids.has(idea.id));
       if (!clean.length) break;
-      for (const idea of clean.slice(0, this.ctx.config.nSeed - pool.length)) {
+      for (const idea of clean.slice(0, nSeed - pool.length)) {
         this.ctx.budget.check();
-        pool.push(await this.agents.noveltyChecker.score(idea));
+        pool.push(await this.agents.noveltyChecker.score(idea, { findings }));
       }
     }
     const eligible = pool.filter(
@@ -264,7 +396,7 @@ export class Orchestrator {
     this.transition("stage.seeds", `seeds:${this.state.seeds.length}`, {
       ids: this.state.seeds.map((idea) => idea.id),
     });
-    if (pool.length < this.ctx.config.nSeed) {
+    if (pool.length < nSeed) {
       this.transition("stage.seeds", `seeds.partial:${pool.length}`);
     }
     if (!this.state.seeds.length) throw new ScientificAbort("no_eligible_seeds");
@@ -278,35 +410,73 @@ export class Orchestrator {
       evidenceOk(this.state.baseline) &&
       Object.keys(this.state.baseline.metrics).length > 0;
     if (!baselineOk) {
-      // A previous attempt may have recorded a failed baseline. Rerun it from
-      // the same base commit instead of trusting empty metrics.
+      // A previous attempt may have recorded a failed subset baseline. Rerun
+      // only that scope; a valid full baseline is still reusable.
       this.state.baseline = null;
-      this.state.baselineFull = null;
       this.state.baseline = await this.agents.baselineCoder.reproduce({ scope: "subset" });
     }
     const fullOk =
       !!this.state.baselineFull &&
       evidenceOk(this.state.baselineFull) &&
       Object.keys(this.state.baselineFull.metrics).length > 0;
-    if (!fullOk) {
-      const full = await this.agents.baselineCoder.reproduce({ scope: "full" });
-      this.state.baselineFull = full;
-      this.ctx.scratch.baseline_full = full;
-      this.transition("stage.baseline", evidenceOk(full) ? "baseline.full.ok" : "baseline.full.bad", {
-        metrics: full.metrics,
-      });
-    } else {
-      this.ctx.scratch.baseline_full = this.state.baselineFull;
+    if (!baselineOk || !fullOk) {
+      this.state.baselineSource = baselineOk || fullOk ? "mixed" : "reproduced";
+      this.state.baselinePath = "";
     }
+    // Full baseline is lazy: measured by ensureBaselineFull() only when a
+    // candidate first reaches the full protocol. A subset-only run therefore
+    // never pays a full 954-step baseline measurement.
+    this.ctx.scratch.baseline_full = fullOk ? this.state.baselineFull : null;
     const baseline = this.state.baseline;
     if (!baseline) throw new ScientificAbort("baseline_failed");
     this.ctx.scratch.baseline = baseline;
+    // Persist the initial measurement into the project baseline store. Future
+    // runs for this project reuse it even when no candidate was promoted.
+    this.persistBaseline("subset", baseline, null);
     this.transition("stage.baseline", evidenceOk(baseline) ? "baseline.ok" : "baseline.bad", {
       metrics: baseline.metrics,
+      source: this.state.baselineSource,
+      ...(this.state.baselinePath ? { path: this.state.baselinePath } : {}),
     });
     if (!evidenceOk(baseline) || !Object.keys(baseline.metrics).length) {
       throw new ScientificAbort("baseline_failed");
     }
+  }
+
+  /**
+   * Lazy full baseline. Called by IdeaImplementer immediately before the first
+   * full candidate and by select on resume. A reused full baseline is returned
+   * without an experiment; otherwise the authorized repo_ref snapshot is
+   * measured once at the full protocol.
+   */
+  private async ensureBaselineFull(): Promise<Evidence> {
+    const existing = this.state.baselineFull;
+    if (existing && evidenceOk(existing) && Object.keys(existing.metrics).length > 0) {
+      this.ctx.scratch.baseline_full = existing;
+      return existing;
+    }
+    const cached = this.ctx.scratch.baseline_full as Evidence | undefined;
+    if (cached && evidenceOk(cached) && Object.keys(cached.metrics).length > 0) {
+      this.state.baselineFull = cached;
+      return cached;
+    }
+    this.ctx.budget.check();
+    const full = await this.agents.baselineCoder.reproduce({ scope: "full" });
+    this.state.baselineFull = full;
+    this.ctx.scratch.baseline_full = full;
+    // Persist the lazy full measurement project-wide too.
+    this.persistBaseline("full", full, null);
+    if (this.state.baselineSource === "manual" || this.state.baselineSource === "incumbent") {
+      this.state.baselineSource = "mixed";
+    }
+    this.transition("stage.baseline", evidenceOk(full) ? "baseline.full.ok" : "baseline.full.bad", {
+      metrics: full.metrics,
+      lazy: true,
+    });
+    if (!evidenceOk(full) || !Object.keys(full.metrics).length) {
+      throw new ScientificAbort("baseline_failed");
+    }
+    return full;
   }
 
   private async auditTrace(trace: Trace): Promise<void> {
@@ -360,8 +530,11 @@ export class Orchestrator {
   }
 
   private async ideaSearch(): Promise<void> {
-    await this.evaluate(this.state.nextSeeds(this.ctx.config.n0), 0);
-    for (let round = 1; round <= this.ctx.config.maxRefineRounds; round++) {
+    // Depth: one measured defect, one candidate, measured once. Breadth keeps
+    // the original N0 seed batch and evolution rounds.
+    const depth = this.depthSearch();
+    await this.evaluate(this.state.nextSeeds(depth ? 1 : this.ctx.config.n0), 0);
+    for (let round = 1; !depth && round <= this.ctx.config.maxRefineRounds; round++) {
       checkAborted(this.ctx);
       this.ctx.budget.check();
       if (this.state.goodTraces().length >= this.ctx.config.successTarget) break;
@@ -397,11 +570,34 @@ export class Orchestrator {
       if (evidence && evidence.scope === ("full" as Scope)) valid.push(trace);
     }
     if (!valid.length) throw new ScientificAbort("no_valid_full_evidence");
-    const selected = await this.agents.selector.select(valid, { baseline: this.state.baseline });
+    // Full-set candidates compare against the formal full baseline; a promoted
+    // full candidate replaces it for later rounds, while state.baseline keeps
+    // the original reproduced subset reference.
+    const comparison = await this.ensureBaselineFull();
+    const selected = await this.agents.selector.select(valid, { baseline: comparison });
     const evidence = selected.evidence.length ? selected.evidence[selected.evidence.length - 1] : null;
+    const subset = [...selected.evidence].reverse().find((item) => item.scope === "subset") ?? null;
     this.transition("stage.select", `select:${selected.idea.id}`, { idea_id: selected.idea.id });
-    if (!evidence || !(await this.adopt(selected.idea, evidence, this.state.baseline, "select"))) {
+    if (!evidence || !(await this.adopt(selected.idea, evidence, comparison, "select"))) {
       throw new ScientificAbort("selection_not_better_than_baseline");
+    }
+    // §3.4 compares component removals against the subset control, never a full
+    // 954-step run. Keep the candidate's last subset evidence alongside the
+    // full incumbent.
+    this.state.bestSubset = subset;
+    // Promote the selected candidate's subset baseline too, so the project
+    // store keeps one coherent incumbent instead of a promoted full scope
+    // paired with the previous initial subset scope.
+    if (subset && evidenceOk(subset)) {
+      const prior = this.state.baseline;
+      this.promoteBaseline("subset", subset, prior);
+      this.state.baseline = subset;
+      this.state.baselineSource = "promoted";
+      this.transition("state.adopt", `adopt.select-subset:${selected.idea.id}`, {
+        idea_id: selected.idea.id,
+        metrics: subset.metrics,
+        baseline_scope: "subset",
+      });
     }
   }
 
@@ -413,48 +609,114 @@ export class Orchestrator {
       isStrictlyBetter(evidence.metrics, base.metrics, this.ctx.problem.metrics);
     if (better) {
       this.state.adopt(idea, evidence);
+      // A full refinement after select (meta) invalidates the subset control;
+      // the ablation stage re-measures it from the new code.
+      if (evidence.scope === "full" && reason !== "select") this.state.bestSubset = null;
+      // Only a measured subset/full baseline is promoted. Ablation and other
+      // local evidence updates the incumbent but must not replace a baseline.
+      const scope: "subset" | "full" | null = evidence.scope === "full" ? "full" : evidence.scope === "subset" ? "subset" : null;
+      const promotedPath = scope ? this.promoteBaseline(scope, evidence, base) : "";
       this.transition("state.adopt", `adopt.${reason}:${idea.id}`, {
         idea_id: idea.id,
         metrics: evidence.metrics,
+        ...(scope ? { baseline_scope: scope } : {}),
+        ...(promotedPath ? { baseline_path: promotedPath } : {}),
       });
     }
     return better;
   }
 
-  private async ablations(): Promise<void> {
-    progress(this.ctx, "§3.4 running ablations");
-    for (let index = 0; index <= this.ctx.config.maxAblationRounds; index++) {
+  private promoteBaseline(scope: "subset" | "full", evidence: Evidence, base: Evidence): string {
+    if (scope === "full") this.state.baselineFull = evidence;
+    else this.state.baseline = evidence;
+    this.state.baselineSource = "promoted";
+    return this.persistBaseline(scope, evidence, base);
+  }
+
+  /** A promoted candidate becomes the next baseline; persist it for reuse. */
+  private persistBaseline(scope: "subset" | "full", evidence: Evidence, prior: Evidence | null): string {
+    const file = incumbentFileFor(this.ctx.config.outDir, this.ctx.problem, scope);
+    const protocol = protocolFingerprint(
+      this.ctx.problem,
+      this.ctx.problem.remote?.env ?? {},
+      this.ctx.config.seed,
+      scope,
+    );
+    const history = prior?.code?.commit
+      ? [{ commit: prior.code.commit, metrics: prior.metrics, at: new Date().toISOString() }]
+      : [];
+    const ledger = ledgerFromEvidence(this.ctx.problem, scope, evidence, protocol, history);
+    if (!ledger) return "";
+    try {
+      writeIncumbent(file, ledger);
+      this.state.baselinePath = file;
+      return file;
+    } catch {
+      // A ledger write is provenance, not the scientific gate; keep the run.
+      return "";
+    }
+  }
+
+  private async ablations(): Promise<Verdict> {
+    progress(this.ctx, "§3.4 running subset component ablations");
+    checkAborted(this.ctx);
+    const [idea, full] = this.incumbent();
+    // The control is the incumbent measured under the subset protocol. Reuse
+    // the candidate's subset evidence when select captured it; after a full
+    // refinement (meta) measure the new code at the same subset budget.
+    const best = await this.incumbentSubset(idea, full);
+    this.ctx.budget.check();
+    this.state.ablationRound = 0;
+    const plans = await this.agents.ablationPlanner.plan(idea, {
+      best,
+      n: this.ctx.config.nAblationPlans,
+    });
+    const results: AblationResult[] = [];
+    for (const plan of byId(plans)) {
       checkAborted(this.ctx);
       this.ctx.budget.check();
-      this.state.ablationRound = index;
-      const [idea, best] = this.incumbent();
-      const plans = await this.agents.ablationPlanner.plan(idea, {
-        best,
-        n: this.ctx.config.nAblationPlans,
-      });
-      const results: AblationResult[] = [];
-      for (const plan of byId(plans)) {
-        this.ctx.budget.check();
-        results.push(await this.agents.ablationCoder.runPlan(idea, plan, { best }));
-      }
-      this.state.ablations = results;
-      const verdict = await this.agents.ablationCritic.judge(idea, results, { best });
-      this.transition("stage.ablation", `ablation.${verdict.decision}`, { round: index, verdict });
-      if (verdictAccepted(verdict) || (verdict.decision !== "refine" && verdict.decision !== "engineer")) {
-        return;
-      }
-      if (index >= this.ctx.config.maxAblationRounds) return;
-      this.ctx.budget.check();
-      const revised = await this.agents.fullSetEngineer.refine(idea, {
-        evidence: best,
-        feedback: verdict.feedback,
-        reason: "ablation",
-      });
-      if (!(await this.adopt(revised.idea, revised.evidence, best, "ablation"))) {
-        this.transition("stage.ablation", "ablation.keep");
-        return;
-      }
+      results.push(await this.agents.ablationCoder.runPlan(idea, plan, { best }));
     }
+    this.state.ablations = results;
+    const verdict = await this.agents.ablationCritic.judge(idea, results, { best });
+    this.state.ablationVerdict = verdict;
+    this.transition("stage.ablation", `ablation.${verdict.decision}`, { round: 0, verdict });
+    if (!verdictAccepted(verdict)) {
+      // Attribution is a subset-level diagnostic. Never launch a hidden full
+      // 954-step refinement from this stage; the data gate decides the paper.
+      this.transition("stage.ablation", "ablation.keep", { reason: "subset_only" });
+    }
+    return verdict;
+  }
+
+  /**
+   * Measure the incumbent at the subset protocol when select did not leave a
+   * usable subset control (resume, meta refinement). Same code, data, steps,
+   * hyperparameters and seeds as the ablation variants.
+   */
+  private async incumbentSubset(idea: Idea, full: Evidence): Promise<Evidence> {
+    if (this.state.bestSubset && evidenceOk(this.state.bestSubset)) return this.state.bestSubset;
+    const seeds = subsetSeeds(this.ctx.config);
+    const samples: SeedSample[] = [];
+    for (const seed of seeds) {
+      checkAborted(this.ctx);
+      this.ctx.budget.check();
+      this.ctx.budget.chargeExperiment();
+      const result = await this.ctx.workspace.run(codeOf(full), "subset", idea, seed);
+      samples.push({ seed, metrics: result.metrics, result });
+    }
+    const control = makeEvidence({
+      idea_id: idea.id,
+      scope: "subset",
+      metrics: meanMetrics(samples),
+      baseline_metrics: { ...full.baseline_metrics },
+      code: full.code,
+      result: samples.map((sample) => sample.result).find((item) => item?.status === "ok") ?? null,
+      label: `${full.label}-subset-control`,
+      samples,
+    });
+    this.state.bestSubset = control;
+    return control;
   }
 
   private async draftAndReview(reviewerFeedback = ""): Promise<void> {
@@ -463,6 +725,7 @@ export class Orchestrator {
     this.state.peerRound = 0;
     this.state.reviewRefinements = 0;
     this.state.rebuttals = [];
+    this.state.reviews = [];
     this.state.manuscript = await this.agents.initialDrafter.draft({
       idea,
       best,
@@ -470,19 +733,17 @@ export class Orchestrator {
       round: this.state.metaRound,
       reviewerFeedback,
     });
-    this.state.review = await this.agents.peerReviewer.review(this.state.manuscript, { round: 0 });
-    this.transition("stage.review", `peer.r0:${g(this.state.review.score)}`, {
-      score: this.state.review.score,
-    });
+    await this.reviewPanel(0);
     while (
-      !(this.state.review.score >= this.ctx.config.reviewThreshold) &&
+      !this.reviewsPass() &&
       this.state.peerRound < this.ctx.config.maxPeerRounds &&
       this.state.reviewRefinements < this.ctx.config.maxReviewRefinements
     ) {
       checkAborted(this.ctx);
       this.ctx.budget.check();
-      const tasks = await this.agents.rebuttalPlanner.plan(this.state.review, {
-        n: Math.max(1, this.state.review.questions.length),
+      // The aggregate review carries every reviewer's questions and weaknesses.
+      const tasks = await this.agents.rebuttalPlanner.plan(this.state.review!, {
+        n: Math.max(1, this.state.review!.questions.length),
       });
       const rebuttal: Evidence[] = [];
       for (const task of byId(tasks)) {
@@ -497,18 +758,50 @@ export class Orchestrator {
       }
       this.state.manuscript = await this.agents.paperEnhancer.enhance({
         manuscript: this.state.manuscript,
-        review: this.state.review,
+        review: this.state.review!,
         rebuttal,
       });
       this.state.peerRound += 1;
       this.state.reviewRefinements += 1;
-      this.state.review = await this.agents.peerReviewer.review(this.state.manuscript, {
-        round: this.state.peerRound,
-      });
-      this.transition("stage.review", `peer.r${this.state.peerRound}:${g(this.state.review.score)}`, {
-        score: this.state.review.score,
-      });
+      await this.reviewPanel(this.state.peerRound);
     }
+  }
+
+  /** Call the independent panel and reduce it to the all-reviewer gate. */
+  private async reviewPanel(round: number): Promise<void> {
+    if (!this.state.manuscript) throw new ScientificAbort("missing_manuscript");
+    const size = Math.max(1, this.ctx.config.reviewPanelSize);
+    const reviews: Review[] = [];
+    for (let reviewer = 0; reviewer < size; reviewer++) {
+      this.ctx.budget.check();
+      reviews.push(await this.agents.peerReviewer.review(this.state.manuscript, { round, reviewer }));
+    }
+    const unique = (items: string[]): string[] => [...new Set(items.map((item) => item.trim()).filter(Boolean))];
+    const score = Math.min(...reviews.map((review) => review.score));
+    this.state.reviews = reviews;
+    this.state.review = makeReview({
+      manuscript_id: this.state.manuscript.id,
+      strengths: unique(reviews.flatMap((review) => review.strengths)),
+      weaknesses: unique(reviews.flatMap((review) => review.weaknesses)),
+      questions: unique(reviews.flatMap((review) => review.questions)),
+      score: Number.isFinite(score) ? score : 1,
+      scale_max: this.ctx.config.reviewScaleMax,
+      summary: `Panel minimum ${Number.isFinite(score) ? score : 1} across ${reviews.length} independent reviewers.`,
+      round,
+    });
+    this.transition("stage.review", `peer.r${round}:${g(this.state.review.score)}`, {
+      score: this.state.review.score,
+      scores: reviews.map((review) => review.score),
+      reviewers: reviews.length,
+    });
+  }
+
+  private reviewsPass(): boolean {
+    const size = Math.max(1, this.ctx.config.reviewPanelSize);
+    return (
+      this.state.reviews.length >= size &&
+      this.state.reviews.every((review) => review.score >= this.ctx.config.reviewThreshold)
+    );
   }
 
   private async metaReview(): Promise<void> {

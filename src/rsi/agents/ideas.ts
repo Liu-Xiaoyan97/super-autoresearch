@@ -3,6 +3,7 @@
 import { stableString } from "../json.ts";
 import { IdeaBatch, IdeaLibrary } from "../schemas.ts";
 import {
+  type DiagnosisFinding,
   type Idea,
   type Limitation,
   type Problem,
@@ -86,12 +87,16 @@ export class InitialIdeaGenerator extends BaseAgent {
   readonly NAME = "initial_idea_generator";
   readonly task = "ideas.initial";
 
-  async generate(limitations: Limitation[]): Promise<Idea> {
+  async generate(limitations: Limitation[], opts: { findings?: DiagnosisFinding[] } = {}): Promise<Idea> {
+    const findings = [...(opts.findings ?? [])].sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
     const batch = await this.ask(IdeaBatch, {
       user:
         "Generate exactly one initial idea h0, with a testable hypothesis " +
-        "and concrete mechanism addressing the limitations. Record target_limitations " +
-        "and direction_ids. Never use a forbidden approach.\n" +
+        "and concrete mechanism addressing the limitations. When measured findings " +
+        "are supplied, target the highest-severity measured defect; a mechanism that " +
+        "cannot be justified from those findings is a hypothesis, not a measured claim. " +
+        "Record target_limitations and direction_ids. Never use a forbidden approach.\n" +
+        `Measured findings (primary first): ${stableString(findings)}\n` +
         `Problem: ${this.ctx.problem.statement}\n` +
         `Limitations: ${stableString([...limitations].sort((a, b) => a.id.localeCompare(b.id)))}\n` +
         `Forbidden: ${stableString([...this.ctx.problem.forbidden].sort())}\n` +
@@ -108,15 +113,17 @@ export class NoveltyChecker extends BaseAgent {
   readonly NAME = "novelty_checker";
   readonly task = "ideas.novelty";
 
-  async score(idea: Idea, opts: { round?: number } = {}): Promise<Idea> {
+  async score(idea: Idea, opts: { round?: number; findings?: DiagnosisFinding[] } = {}): Promise<Idea> {
     const round = opts.round ?? 0;
+    const findings = [...(opts.findings ?? [])].sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
     const count = this.ctx.config.noveltyRefs;
     const library = await this.ask(IdeaLibrary, {
       user:
         "Evaluate novelty against prior literature and domain alignment, " +
         "both in [0,1]. Return the scored idea and top-level novelty_score, " +
         "domain_fit, direction_ids and novelty_refs. " +
-        `Retrieve exactly ${count} relevant reference papers; never invent citations. ` +
+        `Measured defect to address: ${stableString(findings.slice(0, 1))}. ` +
+        `Retrieve exactly ${count} relevant reference papers for that defect; never invent citations. ` +
         "If a web_search tool is available, use it to find real papers and cite their titles/URLs; " +
         "if search fails, mark the slot as 'Reference unavailable' instead of guessing.\n" +
         `Idea: ${stableString(idea)}\nGuidance:\n${guidance(this.ctx)}`,
@@ -148,8 +155,9 @@ export class IdeaGenerator extends BaseAgent {
   readonly NAME = "idea_generator";
   readonly task = "ideas.expand";
 
-  async generate(opts: { limitations: Limitation[]; existing: Idea[]; n: number }): Promise<Idea[]> {
+  async generate(opts: { limitations: Limitation[]; existing: Idea[]; n: number; findings?: DiagnosisFinding[] }): Promise<Idea[]> {
     const { limitations, existing, n } = opts;
+    const findings = [...(opts.findings ?? [])].sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
     if (n <= 0) return [];
     const batch = await this.ask(IdeaBatch, {
       user:
@@ -157,6 +165,7 @@ export class IdeaGenerator extends BaseAgent {
         "Do not repeat existing hypotheses or IDs. Address limitations, " +
         "supply direction_ids, and avoid all forbidden approaches.\n" +
         `Problem: ${this.ctx.problem.statement}\n` +
+        `Measured findings (primary first): ${stableString(findings)}\n` +
         `Limitations: ${stableString([...limitations].sort((a, b) => a.id.localeCompare(b.id)))}\n` +
         `Existing: ${stableString([...existing].sort((a, b) => a.id.localeCompare(b.id)))}\n` +
         `Forbidden: ${stableString([...this.ctx.problem.forbidden].sort())}\n` +

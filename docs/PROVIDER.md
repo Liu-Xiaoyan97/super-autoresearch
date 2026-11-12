@@ -1,8 +1,10 @@
 # Provider configuration
 
-The container uses Pi's **built-in `opencode-go` provider** with
-`deepseek-v4.1-flash` as the default model. No `models.json` entry is needed:
-the provider catalogue and request routing ship with Pi.
+RSI uses Pi's provider registry and, unless explicitly overridden, inherits the
+**current Pi session's selected provider, model and thinking level**. It does not
+force `opencode-go`, Flash or `low` thinking. The container configuration below
+is one explicit startup preference; Pi's built-in `opencode-go` catalogue needs
+no additional `models.json` entry.
 
 ## What was copied
 
@@ -11,7 +13,7 @@ the provider catalogue and request routing ship with Pi.
 | API key | `~/.pi/agent/auth.json` → `opencode-go.key` | `container/.env` → `OPENCODE_API_KEY` (mode 600, gitignored) |
 | Full auth | `~/.pi/agent/auth.json` | `container/pi-home/auth.json` (mode 600, gitignored) via `./container/up.sh auth` |
 | Provider id | `opencode-go` | same |
-| Default model | — | `container/pi-home/settings.json` → `deepseek-v4.1-flash` |
+| Container startup preference | — | `container/pi-home/settings.json` → `deepseek-v4.1-flash` (RSI follows the active session) |
 | Catalogue | built into Pi | built into Pi |
 
 The host proxy is copied too. Inside the Kiri VM, `127.0.0.1` is the container,
@@ -35,7 +37,7 @@ Pi's `opencode-go` provider reads `OPENCODE_API_KEY` automatically. The
 credential's SHA-256 prefix inside the container matches the host's
 `auth.json`, so this is the same subscription, not a new key.
 
-## Default settings (container)
+## Example startup settings (container)
 
 `container/pi-home/settings.json` is bind-mounted to `/root/.pi/agent/settings.json`:
 
@@ -67,11 +69,13 @@ Or edit `container/.env` directly, then restart the container.
 
 ## Choose another model
 
-Three equivalent layers, from broadest to narrowest:
+Selection starts with the active Pi session (`/model` and `/thinking`). Container
+startup settings only select initial preferences, not a fixed RSI route.
+Explicit user overrides remain available:
 
-1. **Container default** — edit `container/pi-home/settings.json`
-   (`defaultProvider` / `defaultModel`), then restart Pi.
-2. **RSI routes** — environment variables read by the extension:
+1. **Pi startup preference** — edit `container/pi-home/settings.json`
+   (`defaultProvider` / `defaultModel` / `defaultThinkingLevel`), then restart Pi.
+2. **RSI route preferences** — explicit environment overrides read by the extension:
    ```bash
    RSI_MODEL=glm-5.3-flash
    RSI_CODING_MODEL=kimi-k3      # coding / ablation / rebuttal / draft_enhancer
@@ -97,14 +101,44 @@ List the authenticated catalogue with:
   in-memory history. Model and credential resolution stay inside Pi.
 * `agents=inline`: nested `ctx.modelRegistry.complete()` calls with no subagent
   session (faster startup, shared context budget).
-* Provider id, model, thinking level, and tool access are per run.
+* Provider id, model and thinking inherit the current session unless overridden.
+  Tool access remains task-specific; model inheritance grants no blanket shell,
+  GPU or experiment rights.
 * `opencode-go` requires the `x-opencode-session` header; the extension passes
   Pi's session id on every nested call and subagent session.
+
+## Output capacity and explicit caps
+
+`rsi_research` and `rsi_iteration` accept optional positive-integer `max_tokens`
+(all-role output cap) and `coding_max_tokens` (more specific coding-role override).
+The native Pi commands `/rsi run` and `/rsi iterate` expose `--max-tokens N` and
+`--coding-max-tokens N`. Omit them to use **the same Pi native request policy and
+model capability as ordinary Pi**: RSI adds neither an 8192 default cap nor a
+fixed 131072 coding ceiling. `0` / `null` are not “use the maximum” settings.
+
+For the user's DeepSeek configuration, 1M context and `maxTokens=384000` remain
+unchanged on the inherited model object. This metadata is capability, not a
+required output length. The audited Pi 1.5.2 SDK defaults to model.maxTokens,
+then fits output to remaining context. This model therefore allows 384000 on a
+short request; less context room can lower it, and generation may end early.
+Other models retain their own configured limits, not a global 384000 override. An explicit `8192` or `384000` cap is honored within the selected model's
+output capability, never used to expand that capability or change its context.
+
+The old inline/bounded request path imposed 8k; the actual `PiWorker` child
+previously ignored that payload cap. Do not describe that as an 8k ceiling on all
+workers. Explicit caps now apply consistently to native workers and inline calls;
+without a cap the inherited model object is left unaltered.
+
+Task history isolation, selective source loading, protected evaluation/training
+protocols, tool allowlists, model-call/wall-clock budgets and spending/experiment
+authority remain intact. A two-step GPU training budget is independent of LLM
+capacity. See `docs/SPEC.md` for regression expectations; these are not claims
+that a new real DeepSeek/GPU verification has already passed.
 
 ## Web search model
 
 `pi-web-search` is installed and uses a dedicated provider-native search model,
-so the conversation model can stay `deepseek-v4.1-flash`:
+independently of the active conversation model:
 
 ```json
 // container/pi-home/web-search.json

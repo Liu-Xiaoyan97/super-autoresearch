@@ -1,21 +1,27 @@
 {
   "engineer.full": [
     {
-      "patch": "Offline fixture: test an intentionally ineffective ablation refinement while preserving the benchmark protocol.",
-      "hypothesis": "An ineffective alignment variant must not displace the validated incumbent.",
-      "mechanism": "calibrated-geometric-alignment-604"
-    },
-    {
       "patch": "Offline fixture: implement the calibrated geometric alignment variant requested by meta-review and repeat the full benchmark.",
       "hypothesis": "Calibrated geometric alignment improves the frozen detector under matched evaluation.",
       "mechanism": "calibrated-geometric-alignment-3919"
+    },
+    {
+      "patch": "Offline fixture: test an intentionally ineffective ablation refinement while preserving the benchmark protocol.",
+      "hypothesis": "An ineffective alignment variant must not displace the validated incumbent.",
+      "mechanism": "calibrated-geometric-alignment-604"
     }
   ],
   "review.peer": {
     "score": 9.0,
-    "strengths": ["The offline fixture provides full-set and component experiment artifacts."],
-    "weaknesses": ["These simulated results require independent real-benchmark validation."],
-    "questions": ["Does the calibration mechanism retain its advantage across held-out datasets?"],
+    "strengths": [
+      "The offline fixture provides full-set and component experiment artifacts."
+    ],
+    "weaknesses": [
+      "These simulated results require independent real-benchmark validation."
+    ],
+    "questions": [
+      "Does the calibration mechanism retain its advantage across held-out datasets?"
+    ],
     "summary": "Pinned offline reviewer output, not an independent scientific assessment."
   },
   "review.meta": [
@@ -29,5 +35,11 @@
       "critique": "The revised simulated method has measured full-set evidence and component ablations. This is fixture acceptance only.",
       "score": 9.0
     }
-  ]
+  ],
+  "ablation.critic": {
+    "decision": "good",
+    "feedback": "The ablation attributes the full-set gain to the core mechanism.",
+    "metrics": {},
+    "notes": "Offline fixture: accepted attribution with no real scientific claim."
+  }
 }

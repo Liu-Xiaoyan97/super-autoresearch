@@ -255,7 +255,7 @@ class SopDriver implements RunDriver {
         engine,
         runTicketId: ticket.id,
         worker: this.opts.worker,
-        thinkingLevel: str(spec.options.thinking, "low"),
+        thinkingLevel: typeof spec.options.thinking === "string" ? spec.options.thinking : undefined,
         signal,
       });
       const result = await runResearch({
@@ -268,13 +268,17 @@ class SopDriver implements RunDriver {
         runner: spec.runner,
         mock: spec.mode === "mock",
         provider,
+        providerName: spec.provider,
         model: spec.model,
         codingModel: spec.codingModel,
+        maxTokens: tokenCap(spec.options.max_tokens),
+        codingMaxTokens: tokenCap(spec.options.coding_max_tokens),
         strictDirections: spec.options.strict_directions === true,
         maxRefineRounds: numberOrUndefined(spec.options.max_refine_rounds),
         maxReviewRefinements: numberOrUndefined(spec.options.max_review_refinements),
         maxLlmCalls: numberOrUndefined(spec.options.max_llm_calls),
         maxWallTimeS: numberOrUndefined(spec.options.max_wall_time_s),
+        ...(typeof spec.options.baseline === "string" ? { baseline: spec.options.baseline } : {}),
         signal,
         onProgress: (message) => this.progress(ticket.id, message),
       });
@@ -371,7 +375,7 @@ export class SuperagentRuntime {
         run_id: runId,
         session_id: params.sessionId,
         actor: params.actor,
-        thinking: params.thinking,
+        ...(params.thinking !== undefined ? { thinking: params.thinking } : {}),
         strict_directions: params.options?.strict_directions,
         max_refine_rounds: params.options?.max_refine_rounds,
         max_review_refinements: params.options?.max_review_refinements,
@@ -417,7 +421,45 @@ export class SuperagentRuntime {
 
   /** Stop a ticket on a person's instruction. Live runs only. */
   stop(runId: string, ticketId: string, reason = "stopped by a person"): Ticket {
-    return this.live(runId).engine.stop(ticketId, reason);
+    const session = this.live(runId);
+    const dir = storeDir(session.root);
+    if (this.inMemory || fs.existsSync(dir)) {
+      try {
+        const ticket = session.engine.stop(ticketId, reason);
+        // A run stop releases the whole executor, including in-flight task
+        // workers; otherwise a hung worker keeps the session alive.
+        if (ticket.kind === "run") session.close();
+        return ticket;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    // The evidence directory can vanish under a live engine (a person deleted
+    // it). There is nowhere left to write the stop, so end the ticket in
+    // memory, release the executor, and retire the status. Never recreate the
+    // artifacts: deleting evidence is not the same as granting a new run.
+    const ticket = session.engine.ticket(ticketId);
+    const at = new Date().toISOString();
+    if (ticket && !ticket.ended) {
+      ticket.ended = { at, by: "person", outcome: "stopped", reason };
+      ticket.updatedAt = at;
+      for (const assignment of ticket.assignments) {
+        if (assignment.state !== "ended") {
+          assignment.state = "ended";
+          assignment.endedAt = at;
+          assignment.endedReason = reason;
+        }
+      }
+    }
+    this.retired.set(runId, session.status());
+    this.sessions.delete(runId);
+    try {
+      session.close();
+    } catch {
+      /* the store is already gone; release whatever remains */
+    }
+    if (!ticket) throw new Error(`run ${runId} has no ticket ${ticketId}`);
+    return ticket;
   }
 
   /** Answer an open question; the only thing that resumes blocked work. */
@@ -506,14 +548,8 @@ export class SuperagentRuntime {
     const live = this.sessions.get(runId);
     const spec = live?.spec ?? this.runSpec(runId);
     if (!spec) throw new Error(`no run spec found for ${runId}`);
-    const oldStatus = live?.status();
-    const ended = oldStatus?.ended ?? this.status(runId)?.ended;
-    if (live) {
-      if (!ended) throw new Error(`run ${runId} is still live; wait for it to end`);
-      this.retired.set(runId, oldStatus!);
-      this.sessions.delete(runId);
-      live.close();
-    }
+    const oldStatus = live?.status() ?? this.status(runId);
+    const ended = oldStatus?.ended;
     const outDir = spec.out;
     const root = spec.root || path.join(outDir, runId);
     const finalFile = path.join(root, "final.json");
@@ -524,8 +560,19 @@ export class SuperagentRuntime {
     } catch {
       /* no final artifact; the run may have failed before export */
     }
-    if (!aborted && ended?.outcome !== "failed" && ended?.outcome !== "dropped") {
+    // A failed report keeps the run ticket open for a retry, so the normal
+    // failed-run state has no `ended` entry. Accept the failed report itself;
+    // `ended` is set only by a stop or a host finish, and a stop stays final.
+    const failedOpen = !ended && (oldStatus?.progress?.state === "failed" || oldStatus?.state === "person/failed");
+    const resumable = aborted || ended?.outcome === "failed" || ended?.outcome === "dropped" || failedOpen;
+    if (!resumable) {
+      if (live && !ended) throw new Error(`run ${runId} is still live; wait for it to end`);
       throw new Error(`run ${runId} ended ${ended?.outcome ?? "without a final state"}; only aborted/failed runs can resume`);
+    }
+    if (live) {
+      this.retired.set(runId, oldStatus!);
+      this.sessions.delete(runId);
+      live.close();
     }
     let index = 1;
     let newId = `${runId}-r${index}`;
@@ -606,7 +653,7 @@ export function statusOfSnapshot(snapshot: Snapshot, runId: string, root: string
     attention: run?.attention?.question,
     mode: run?.run?.mode,
     runner: run?.run?.runner,
-    stages: stageRows(snapshot.tickets),
+    stages: stageRows(snapshot.tickets, run, readRunFacts(root)),
     tickets: snapshot.tickets.filter((ticket) => ticket.kind === "task").map(ticketCard),
     progress: run ? latestReport(run) : undefined,
     policy: { version: snapshot.policy.version, mode: snapshot.policy.acceptMode, paused: snapshot.policy.paused },
@@ -627,27 +674,139 @@ export function statusOf(engine: Engine, runId: string): RunStatus {
     attention: run?.attention?.question,
     mode: run?.run?.mode,
     runner: run?.run?.runner,
-    stages: stageRows(engine.tickets()),
+    stages: stageRows(engine.tickets(), run, readRunFacts(run?.run?.root)),
     tickets: tickets.filter((ticket) => ticket.kind === "task").map(ticketCard),
     progress: run ? latestReport(run) : undefined,
     policy: { version: engine.policySettings().version, mode: engine.policySettings().acceptMode, paused: engine.policySettings().paused },
   };
 }
 
-function stageRows(tickets: Ticket[]): RunStatus["stages"] {
+interface RunFacts {
+  decisionPath: string[];
+  baseline: boolean;
+  baselineFull: boolean;
+  manuscript: boolean;
+  seeds: number;
+  limitations: number;
+  traces: number;
+  ablations: number;
+}
+
+const EMPTY_FACTS: RunFacts = {
+  decisionPath: [],
+  baseline: false,
+  baselineFull: false,
+  manuscript: false,
+  seeds: 0,
+  limitations: 0,
+  traces: 0,
+  ablations: 0,
+};
+
+/** Read the run's own state.json; it records the stage transitions and deliverables. */
+function readRunFacts(root: string | undefined): RunFacts {
+  if (!root) return EMPTY_FACTS;
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(root, "state.json"), "utf8")) as Record<string, unknown>;
+    const length = (value: unknown) => (Array.isArray(value) ? value.length : 0);
+    return {
+      decisionPath: Array.isArray(raw.decision_path) ? raw.decision_path.map(String) : [],
+      baseline: raw.baseline != null,
+      baselineFull: raw.baseline_full != null,
+      manuscript: raw.manuscript != null,
+      seeds: length(raw.seeds),
+      limitations: length(raw.limitations),
+      traces: length(raw.traces),
+      ablations: length(raw.ablations),
+    };
+  } catch {
+    return EMPTY_FACTS;
+  }
+}
+
+function hasToken(facts: RunFacts, ...tokens: string[]): boolean {
+  return facts.decisionPath.some((item) => tokens.some((token) => item === token || item.startsWith(token)));
+}
+
+/** A stage is done only when its decision-path deliverable exists. */
+function stageCompleted(stage: Stage, facts: RunFacts): boolean {
+  switch (stage) {
+    case "run":
+      return hasToken(facts, "run.");
+    case "diagnose":
+      return hasToken(facts, "diagnose.ok");
+    case "limits":
+      return hasToken(facts, "limits.ok");
+    case "seeds":
+      return facts.seeds > 0 && hasToken(facts, "seeds:", "seeds.partial:");
+    case "baseline":
+      // baseline.ok is emitted only after the subset (and full) repro finished.
+      return facts.baseline && hasToken(facts, "baseline.ok");
+    case "search":
+      return hasToken(facts, "select:", "adopt.select:");
+    case "select":
+      return hasToken(facts, "adopt.");
+    case "ablations":
+      return hasToken(facts, "peer.", "meta.", "run.");
+    case "draft":
+      return facts.manuscript || hasToken(facts, "peer.", "meta.", "run.");
+    case "review":
+      return hasToken(facts, "meta.", "run.");
+    case "meta":
+      return hasToken(facts, "run.");
+    case "integrity":
+    case "export":
+      return hasToken(facts, "run.");
+  }
+}
+
+/** Which stage the run is in, from the last progress report the SOP emitted. */
+function stagesFromProgress(summary: string | undefined, facts: RunFacts): Set<Stage> {
+  const text = (summary ?? "").toLowerCase();
+  if (!text) return new Set();
+  if (text.startsWith("diagnose")) return new Set<Stage>(["diagnose"]);
+  if (text.includes("extracting limitations")) return new Set<Stage>(["limits"]);
+  if (text.includes("generating seed ideas")) return new Set<Stage>(["seeds"]);
+  if (text.includes("reproducing the baseline")) return new Set<Stage>(["baseline"]);
+  if (text.includes("searching ideas") || text.startsWith("§3.2 round")) return new Set<Stage>(["search"]);
+  if (text.includes("selecting the incumbent")) return new Set<Stage>(["select"]);
+  if (text.includes("running ablations")) return new Set<Stage>(["ablations"]);
+  if (text.includes("drafting") || text.includes("peer review")) {
+    return new Set<Stage>(facts.manuscript ? ["review"] : ["draft"]);
+  }
+  if (text.includes("meta-review")) return new Set<Stage>(["meta"]);
+  return new Set();
+}
+
+/**
+ * Stage rows are a display view, not a task-ticket count. A task ticket is one
+ * model call; the stage's real deliverable (a reproduced baseline, a manuscript)
+ * runs on the run ticket after that call returns. Mark a stage done only from
+ * the run's decision_path, and use the SOP's declared task list for the count.
+ */
+function stageRows(tickets: Ticket[], run: Ticket | undefined, facts: RunFacts): RunStatus["stages"] {
   const stages = new Set<Stage>();
   for (const ticket of tickets) if (ticket.kind === "task") stages.add(ticket.stage);
+  const lastProgress = [...(run?.reports ?? [])].reverse().find((report) => report.state === "progress");
+  const current = stagesFromProgress(lastProgress?.summary, facts);
+  for (const stage of current) stages.add(stage);
+  const latest = run ? latestReport(run) : undefined;
+  const failed = latest?.state === "failed" || run?.ended?.outcome === "failed";
+  const stopped = run?.ended?.outcome === "stopped";
   return [...stages]
     .map((stage) => {
-      const tasks = tickets.filter((item) => item.kind === "task" && item.stage === stage);
-      return {
-        stage,
-        section: stageSpec(stage).section,
-        title: stageSpec(stage).title,
-        state: tasks.some((item) => liveTicket(item)) ? "working" : "done",
-        tasks: tasks.length,
-        done: tasks.filter((item) => item.ended?.outcome === "completed").length,
-      };
+      const spec = stageSpec(stage);
+      const stageTickets = tickets.filter((item) => item.kind === "task" && item.stage === stage);
+      const declared = spec.tasks;
+      // Count the SOP's declared tasks, not runtime retries or subset/full calls.
+      const tasks = declared.length || stageTickets.length;
+      const done = declared.length
+        ? declared.filter((task) => stageTickets.some((ticket) => ticket.task === task && ticket.ended?.outcome === "completed")).length
+        : stageTickets.filter((ticket) => ticket.ended?.outcome === "completed").length;
+      const completed = stageCompleted(stage, facts);
+      const active = current.has(stage) || stageTickets.some((ticket) => liveTicket(ticket));
+      const state = completed ? "done" : active ? (failed ? "failed" : stopped ? "stopped" : "working") : "pending";
+      return { stage, section: spec.section, title: spec.title, state, tasks, done };
     })
     .sort((a, b) => a.stage.localeCompare(b.stage));
 }
@@ -675,6 +834,15 @@ function runSummary(result: RunResult): string {
   const state = result.final.aborted ? "aborted" : accepted ? "accepted" : "exported the incumbent";
   const scores = Array.isArray(summary.review_scores) ? summary.review_scores.join(",") : "n/a";
   return `${result.runId}: ${state}; review ${scores}/10`.slice(0, 300);
+}
+
+/** Budget options are not coerced: a missing cap inherits; an invalid explicit cap fails. */
+function tokenCap(value: unknown): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError("output token cap must be a positive safe integer when specified");
+  }
+  return value;
 }
 
 function numberOrUndefined(value: unknown): number | undefined {

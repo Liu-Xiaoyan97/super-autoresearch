@@ -6,7 +6,7 @@ import { FullSetEngineeringPatch, SubsetEngineeringPatch } from "../schemas.ts";
 import { type Evidence, type Idea, makeEvidence } from "../types.ts";
 import { BaseAgent } from "./base.ts";
 import { askUnifiedDiff } from "./patch.ts";
-import { codeOf } from "./coding.ts";
+import { codeOf, runSeeded, subsetSeeds } from "./coding.ts";
 
 export class SubsetEngineer extends BaseAgent {
   readonly NAME = "subset_engineer";
@@ -26,16 +26,22 @@ export class SubsetEngineer extends BaseAgent {
       `${out.patch}\nCritique: ${opts.feedback}\n`,
       `${idea.id}-subset-engineered`,
     );
-    this.ctx.budget.chargeExperiment();
-    const result = await this.ctx.workspace.run(repo, "subset", idea);
+    const measured = await runSeeded(
+      this.ctx.workspace,
+      repo,
+      idea,
+      subsetSeeds(this.ctx.config),
+      () => this.ctx.budget.chargeExperiment(),
+    );
     return makeEvidence({
       idea_id: idea.id,
       scope: "subset",
-      metrics: result.metrics,
+      metrics: measured.metrics,
       baseline_metrics: { ...opts.evidence.baseline_metrics },
       code: repo,
-      result,
+      result: measured.samples.map((sample) => sample.result).find((item) => item?.status === "ok") ?? measured.result,
       label: repo.label,
+      samples: measured.samples,
     });
   }
 }

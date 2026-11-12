@@ -1,679 +1,400 @@
-# RSI — 作为 Pi 扩展的 ScientistTwo
+# RSI — ScientistTwo on Pi
 
-这是对以下论文的忠实、可运行实现：
+RSI 是 [ScientistTwo](https://arxiv.org/abs/2609.19644) 的 Pi 扩展实现：一个前台
+agent 接单、路由和转述；后台按 §3.1–§3.6 推进研究。它不是独立应用，所有研究
+命令都在容器内的 Pi 会话中执行。
 
-> **ScientistTwo: Pioneering the Human Knowledge Frontier with Autonomous AI**
-> Nam, Yoon, Pan, Wang, Meng, Ranganathan, Pfister — Google Cloud AI Research
-> [arXiv:2609.19644](https://arxiv.org/abs/2609.19644)
+当前 README 只描述**容器内的使用方式**，并以 `coral-rsi` 项目为例。
 
-实现形态是 **Pi（pi-agent）包 / 扩展**，而不是独立应用。闭环
-`candidate → critic → refine` 在 Pi 内运行；模型调用走 Pi 的 provider
-注册表，默认路由为 `opencode-go/deepseek-v4.1-flash`。
+## 项目简介
 
-论文的核心是一个闭环、自我改进的多智能体研究系统。唯一允许把假设提升为
-incumbent 的条件，是相对于**复现基线**的严格更优测量。论文和代码库是输出，
-闭环本身才是目的。
+### 研究闭环
 
-| 论文 | 本包实现 |
-|---|---|
-| §3.1 limitations → seed ideas → novelty filter | `src/rsi/agents/limitations.ts`、`agents/ideas.ts` |
-| §3.2 subset → critic → engineer → full-set | `src/rsi/agents/coding.ts`、`critics.ts`、`engineering.ts`、`runtime/workspace.ts` |
-| §3.3 idea evolution from execution traces | `src/rsi/agents/ideas.ts`、`core/orchestrator.ts` |
-| §3.4 ablations + attribution | `src/rsi/agents/ablation.ts` |
-| §3.5 draft → peer review → rebuttal experiments | `src/rsi/agents/writing.ts`、`review.ts` |
-| §3.6 meta-review → idea refinement → re-draft | `src/rsi/agents/review.ts`、`core/orchestrator.ts` |
-| §4.3 integrity audit（score/spec/refs/method-code） | `src/rsi/agents/integrity.ts` |
-| Listing 1 stage 抽象 | `src/rsi/core/stage.ts` |
-| 附录 A.2 超参数 | `src/rsi/config.ts`（每个值标注 `[PAPER]` / `[CHOICE]`） |
+```text
+baseline（项目全局，实测）
+  → limitations / seeds
+  → subset 筛选（3 seeds × 95 步）
+      → SubsetCritic
+         ├─ invalid → 修复实现，不消耗工程轮
+         ├─ 所有 seed 都差 → 淘汰
+         ├─ 未达 margin → engineer
+         └─ good → full 954 步
+  → full 候选 / engineer
+  → data gate（多轮 full good + ablation 归因）
+  → paper loop（3 位独立 reviewer → rebuttal → meta-review）
+```
 
-## 扩展暴露的入口
+关键约束：
 
-| 入口 | 作用 |
-|---|---|
-| `rsi_research` 工具 | 接受一次研究请求；立即返回 run id 与 ticket id，SOP 在后台 task ticket 中运行（`wait: true` 才阻塞） |
-| `rsi_superagent` 工具 | `status`、`resume`、`tickets`、`ticket`、`events`、`policy`、`answer`、`note`、`retry`、`stop`、`attach` |
-| `rsi_inspect` 工具 | 汇总一次 run；运行中则返回协议状态，不把完整 state 灌进上下文 |
-| `rsi_replay` 工具 | 只用 traces 重建决策路径；不调用模型、不访问 workspace |
-| `/rsi` 命令 | `run`、`status`、`resume`、`tickets`、`ticket`、`events`、`policy`、`answer`、`note`、`retry`、`stop`、`wait`、`inspect`、`replay`、`list`、`models`、`help` |
-| `rsi-research` skill | RSI 总入口：运行、检查、replay、排错，以及 superagent 接单/转述/回答/策略 |
-| `rsi-adapter` skill | 根据 `examples/*.json` 为目标项目生成 benchmark adapter |
-| `/rsi-research` prompt | 一次性“派工 → 等待报告 → inspect → replay →（可选）真实运行”工作流 |
+- **目标项目拥有训练、checkpoint、评测和指标定义**；RSI 核心不导入目标项目代码。
+- 候选只有在**实测**上严格优于 baseline 才会被采纳；`reported_metrics` 永远不能
+  作为比较基线。
+- baseline 是**项目全局**的，不属于某一次 run；见“Baseline 生命周期”。
+- full baseline 是 **lazy** 的：只有第一个候选通过 subset 后才测 954；没有 full
+  候选的 run 不会先花一次 full。
+- subset 使用 3 个独立 seed，取均值；只有**所有 seed**都差于 baseline 才淘汰。
+- invalid run（运行失败/无有效指标/某个 seed 失败）进入 engineer 修复，不占
+  `maxEngRounds` 工程轮；只有修复预算耗尽才判 `bad`。
+- 数据门槛未满足时 abort（`data_gate_not_met`），不写论文，但仍导出 evidence。
+- 论文阶段要求 **3 位 reviewer 全部**达到 `reviewThreshold`；不是平均分过线。
+- 所有实验协议、`repo_ref`、adapter 和指标定义都属于目标仓库；RSI 只消费契约。
 
-### 一个前台 agent + superagent 协议
+### coral-rsi 示例
 
-RSI 扩展本身就是
-[`dsh-superagent-prototype`](https://github.com/deepseek-ai/dsh-superagent-prototype)
-协议的宿主：你只和一个前台 agent（当前 Pi 会话）对话，它只做接单、路由和转述，
-不亲自跑研究。一次研究是一张 **run ticket**，由 SOP driver 以 §3.1–§3.6 推进；
-SOP 内部每一次 agent 调用都是 **task ticket**，由 worker（默认是独立 Pi 会话，
-`agents=inline` 时是同协议的进程内调用）执行并回传结构化 **report**。
+目标仓库：`/Users/liuxiaoyan/workspace/coral-rsi`（容器内 `/repos/coral-rsi`）。
 
-- **授权**：`policy` 有 `off` / `observe`（默认）/ `auto` 三种接单模式；只有明确
-  对人的请求才自动接单，自动观测（benchmark、review、定时任务）最多只能延续已
-  订阅的 run。`sop.spend` 需要明确请求，`sop.experiment` 需要人确认。
-- **报告**：只有 run 结束、受阻、失败或提问时才通知前台；task 级进度不打扰人。
-  问题会变成 **attention**，`rsi_superagent action=answer` 是唯一能让它继续的操作。
-- **数值门不可被模型翻转**：promotion 只能由“相对复现基线的严格实测提升”产生；
-  策略只能决定谁可以花钱、导出，不能决定哪个候选更好。
-- **持久化**：`runs/<run_id>/superagent/state.json`（ticket、mandate、decision）
-  与 `events.jsonl`（有序领域事件）；每个命令原子落盘。重启后不会假装恢复半个
-  SOP：run 会以 blocked + 恢复问题结束，由人决定是否新开一次 run。
+- 指标：WikiText `word_ppl`，方向 `min`。
+- 协议：full 954 步，warmup 25，effective batch 256，context 1024；subset 95 步。
+- `repo_ref`：`rsi-bench`（已验收的 adapter 分支）。
+- 远端：SSH host `8818`，目录 `/home/sl/coral-rsi`。
+- adapter 入口：`bench/rsi_coral_train_eval.py --repo . --scope {scope} --out {out}`。
 
-完整协议、概念与工具见 [`docs/SUPERAGENT.md`](docs/SUPERAGENT.md)，提示词与
-worker 契约在 `prompts/superagent/`。
+## 安装
 
-## 快速开始（容器）
+### 前置条件
+
+- 宿主机已安装 Docker；RSI 仓库可用。
+- 目标仓库 `coral-rsi` 在宿主机存在，且已 checkout/可使用 `rsi-bench`。
+- 容器能通过 SSH 访问 `8818`；`container/ssh` 由 `up.sh` 从宿主机生成。
+- Pi 的 provider 凭据可用（示例为 `opencode-go`）。
+
+### 1. 配置 `container/.env`
+
+从 `container/.env.example` 复制，或使用 `up.sh creds` / `auth` 生成凭据：
 
 ```bash
-cd "/Users/liuxiaoyan/workspace/RSI "
+# 在 RSI 仓库根目录执行；不要依赖固定的宿主机绝对路径
+cd "$(git rev-parse --show-toplevel)"
 
-./container/up.sh creds      # opencode-go key → container/.env
-./container/up.sh auth       # 完整 ~/.pi/agent/auth.json → 容器（含 OAuth provider）
-./container/up.sh build      # 仅首次需要
+./container/up.sh creds   # 复制 opencode-go key 到 container/.env
+./container/up.sh auth    # 复制完整 Pi auth，包含 OAuth provider
+```
+
+`container/.env` 的关键项：
+
+```dotenv
+OPENCODE_API_KEY=sk-...
+PI_PROVIDER=opencode-go
+PI_MODEL=deepseek-v4.1-flash
+PI_REASONING_LEVEL=high
+
+# 宿主工作区挂到容器 /repos
+RSI_EXTERNAL_ROOT=/Users/liuxiaoyan/workspace
+# coral-rsi 在宿主机的位置，以及容器内路径
+RSI_TARGET_HOST=/Users/liuxiaoyan/workspace/coral-rsi
+RSI_TARGET_REPO=/repos/coral-rsi
+
+# 项目全局 baseline；放在挂载的 RSI 仓库内，容器重建后仍保留
+RSI_BASELINE_DIR=/workspace/RSI/.rsi-baseline
+
+# superagent 授权；yolo 会自动接受实验
+RSI_SUPERAGENT_POLICY=yolo
+```
+
+`container/compose.yaml` 已把宿主机 `RSI_TARGET_HOST` 挂载为容器
+`/repos/coral-rsi`，并默认设置：
+
+```dotenv
+RSI_TARGET_REPO=/repos/coral-rsi
+RSI_BASELINE_DIR=/workspace/RSI/.rsi-baseline
+```
+
+### 2. 构建并启动容器
+
+```bash
+./container/up.sh build
 ./container/up.sh run
-./container/up.sh shell      # 然后执行：pi
+./container/up.sh shell
 ```
 
-`container/pi-home/settings.json` 已经配置：
+- `build` 只在首次或 Dockerfile 变化时需要。
+- 如果容器已存在，但 `compose.yaml` 的 env 发生变化（例如刚加入
+  `RSI_BASELINE_DIR`），先重建容器：
 
-```json
-{
-  "defaultProvider": "opencode-go",
-  "defaultModel": "deepseek-v4.1-flash",
-  "packages": ["/workspace/RSI", "npm:pi-web-search"]
-}
+```bash
+./container/up.sh down
+./container/up.sh run
+./container/up.sh shell
 ```
 
-进入 Pi 后：
+- `shell` 会进入 `pi-agent-rsi` 的 bash；接着执行 `pi`。
+- 也可以直接运行 `./container/up.sh pi`。
+
+### 3. 验证容器环境
+
+在宿主机执行：
+
+```bash
+./container/up.sh exec bash -lc '
+  cd /workspace/RSI &&
+  node --version &&
+  git -C /repos/coral-rsi rev-parse --abbrev-ref HEAD &&
+  ssh 8818 true &&
+  echo container-ok
+'
+```
+
+应看到：
+
+- `node` 可用；
+- `/repos/coral-rsi` 的当前分支（示例为 `rsi-bench`）；
+- `ssh 8818 true` 成功；
+- `container-ok`。
+
+如果 SSH 失败，检查宿主机 `~/.ssh/config`，然后重新生成容器 SSH 配置：
+
+```bash
+./container/up.sh ssh
+```
+
+## 使用
+
+以下命令默认都在容器内执行。宿主机只负责 `./container/up.sh` 控制容器。
+
+### 1. 进入 Pi
+
+```bash
+./container/up.sh shell
+pi
+```
+
+或：
+
+```bash
+./container/up.sh pi
+```
+
+进入 Pi 后可以检查入口：
 
 ```text
 /rsi help
-/rsi run tests/fixtures/ood_frozen_encoder.json --mock
-/rsi inspect ood-frozen-encoder-s7
-/rsi replay ood-frozen-encoder-s7
 ```
 
-mock 运行是确定性的、免费的，几秒内就能跑到实验阶段。provider 运行会消耗
-真实调用，并先弹确认。
+### 2. 重建或确认 coral adapter
 
-详见 [`docs/CONTAINER.md`](docs/CONTAINER.md)、
-[`docs/PROVIDER.md`](docs/PROVIDER.md)。
-
-## 快速开始（离线 CLI，无需 Pi / API key）
+当前 `rsi-bench` 上的 adapter 以 `git rev-parse rsi-bench` 为准。历史上的
+`34e581e` 加入 ablation scope 和 95-step screen；后续提交又补齐了
+`bench/rsi_coral_diagnose.py`、`.rsi/adapter/coral.json`、`.rsi/adapter/coral.md`
+和 `tests/test_adapter_contract.py`。如果只是从 `main` 恢复当前已验证 adapter：
 
 ```bash
-node src/rsi/cli.ts run tests/fixtures/ood_frozen_encoder.json --mock
-node src/rsi/cli.ts inspect ood-frozen-encoder-s7
-node src/rsi/cli.ts replay  ood-frozen-encoder-s7
-npm test
-npm run typecheck
+cd /repos/coral-rsi
+
+# 保存当前 adapter commit（不要硬编码旧的 34e581e）
+ADAPTER=$(git rev-parse rsi-bench)
+
+git fetch --all
+git switch main
+git switch -C rsi-bench
+
+git checkout "$ADAPTER" -- \
+  ADAPTER.md \
+  .rsi/adapter \
+  bench/rsi_coral_train_eval.py \
+  bench/rsi_coral_diagnose.py \
+  bench/rsi_job_worker.py \
+  scripts/eval_arch_v1_wikitext.py \
+  tests/test_adapter_contract.py
+
+git add \
+  ADAPTER.md \
+  .rsi/adapter \
+  bench/rsi_coral_train_eval.py \
+  bench/rsi_coral_diagnose.py \
+  bench/rsi_job_worker.py \
+  scripts/eval_arch_v1_wikitext.py \
+  tests/test_adapter_contract.py
+
+git commit -m "feat(adapter): CORAL train/eval, diagnosis, manifest and contract tests"
+git log --oneline -2
 ```
+
+如果要真正重写 adapter（补数据加载、训练、checkpoint、lm-eval 链路），在 Pi 里：
+
+```text
+/skill:rsi-adapter examples/coral.json --repo /repos/coral-rsi
+```
+
+不要用 `scaffold_adapter.py` 直接覆盖当前已验证 adapter；它只生成带 TODO 的骨架。
+
+### 3. adapter 重建后清除旧 baseline
+
+adapter 代码变化后，旧 baseline 不能继续绑定。当前 baseline 是项目全局的：
+
+```bash
+ls -d /workspace/RSI/.rsi-baseline/coral-wikitext-ppl-* 2>/dev/null || true
+rm -rf /workspace/RSI/.rsi-baseline/coral-wikitext-ppl-*
+```
+
+如果设置了外部 `RSI_BASELINE_DIR`，删除对应目录下的
+`coral-wikitext-ppl-*`。
+
+注意：仓库里的
+`baseline-coral-wikitext-ppl-025b-manual.json` 指向 commit `aa6a63bf`，该 commit
+当前不在 `coral-rsi` 中。不要把它传给 `--baseline`；否则会因 commit 不存在而
+被拒绝。让新 run 自己测 baseline。
+
+### 4. adapter smoke
+
+重建后先跑真实小预算 smoke：
+
+```text
+/rsi smoke examples/coral.json \
+  --repo /repos/coral-rsi \
+  --timeout 900 \
+  --env RSI_CORAL_TRAIN_STEPS=2 \
+  --env RSI_CORAL_TRAIN_BATCH_SIZE=1 \
+  --env RSI_CORAL_EVAL_LIMIT=1 \
+  --env RSI_CORAL_TIMEOUT=600 \
+  --env RSI_CORAL_SEED=2026
+```
+
+成功后生成：
+
+```text
+runs/adapter-smoke-<id>/artifacts/smoke-summary.json
+```
+
+这个 receipt 是 `/rsi iterate` 的 `--adapter-acceptance` 输入；`/rsi run` 不强制
+要求 receipt，但建议先 smoke 通过再跑完整 SOP。
+
+### 5. 运行完整 RSI
+
+`examples/coral.json` 的 `repo` 是 `${RSI_TARGET_REPO}`；容器已把它设为
+`/repos/coral-rsi`。`/rsi run` 没有 `--repo` 参数。
+
+```text
+/rsi run examples/coral.json \
+  --runner subprocess \
+  --seed 7 \
+  --out runs \
+  --wait
+```
+
+说明：
+
+- `--runner subprocess` 必须显式指定；不能用默认 `simulated`。
+- provider/model 继承容器 `PI_PROVIDER` / `PI_MODEL`；也可以在命令中加
+  `--provider` / `--model` 覆盖。
+- `--wait` 在交互会话中会阻塞到 run 结束；`pi -p` 无头模式必须加。
+- 不要加 `--mock`；不要传旧的 `--baseline` 文件。
+- 第一次 full baseline 会在候选通过 subset 后 lazy 测量；不会在 run 开始就先
+  花一次 954。
+- 这个 run 会走 subset → full → data gate → ablation → paper，耗时可长达数小时。
+
+### 6. 状态、检查、停止和恢复
+
+```text
+/rsi status
+/rsi status <run_id>
+/rsi tickets <run_id>
+/rsi ticket <run_id> <ticket_id>
+/rsi events <run_id>
+/rsi inspect <run_id>
+/rsi replay <run_id>
+/rsi stop <run_id> <ticket_id> [reason]
+/rsi resume <run_id>
+```
+
+语义：
+
+- `status` 读协议状态，不把完整 `state.json` 灌进上下文。
+- `inspect` 汇总一次 run；`replay` 只用 traces 重建决策路径。
+- `stop` 是最终操作，停止后的 run 不能再 resume。
+- `failed` 但仍未结束的 run 可以 resume；`data_gate_not_met` 的 abort 会保留
+  evidence，并在 `final.json` 标记 `aborted`。
+- 远端实验的停止会终止远端进程组，不只是断开 SSH。
+
+### 7. 单轮 bounded iteration
+
+如果只授权一次小预算优化，用 `/rsi iterate`，不要用会继续 full/ablation/paper
+的 `/rsi run`。它必须带 smoke receipt：
+
+```text
+/rsi iterate examples/coral.json \
+  --adapter-acceptance runs/adapter-smoke-<id>/artifacts/smoke-summary.json \
+  --repo /repos/coral-rsi \
+  --out runs/iteration-coral-1 \
+  --seed 2026 \
+  --coding-max-tokens 32768 \
+  --env RSI_CORAL_TRAIN_STEPS=2 \
+  --env RSI_CORAL_TRAIN_BATCH_SIZE=1 \
+  --env RSI_CORAL_EVAL_LIMIT=1 \
+  --env RSI_CORAL_TIMEOUT=600 \
+  --env RSI_CORAL_SEED=2026
+```
+
+- 默认 `--scope subset`；只测候选并与项目 baseline 比较。
+- 只有严格更优才晋升，并把候选 commit 写入项目 baseline。
+- `--scope full` 才建立正式 full baseline；不会启动 ablation 或 paper。
+- `--baseline-mode paired` 可强制每轮复测 baseline；默认 `reuse`。
+
+### 8. Baseline 生命周期
+
+baseline 是**项目全局**的，所有 run 共享：
+
+```text
+/workspace/RSI/.rsi-baseline/<project-key>/
+  incumbent-coral-wikitext-ppl-subset.json
+  incumbent-coral-wikitext-ppl-full.json
+```
+
+- `project-key` = problem id + target repo 路径 hash。
+- 初始 baseline 测量后立即写入；full baseline 是 lazy 的，第一个 full 候选时写入。
+- `select` 采纳候选时，subset 和 full 两个 scope 一起 promote。
+- 下一次 run 直接复用，不再因为换 `--out` 或重建容器而重测。
+- 协议、seed、commit、指标或证据哈希不匹配时，会重新测量并覆盖当前项目 baseline。
+- 旧 run 目录下的 `runs/incumbent-*.json` 会在首次加载时迁移到项目全局目录。
+- adapter 重建后必须清除对应项目 baseline，见第 3 节。
+
+### 9. 远端和 GPU
+
+`examples/coral.json` 的 `remote` 指向：
+
+```jsonc
+{
+  "host": "8818",
+  "dir": "/home/sl/coral-rsi",
+  "python": "/home/sl/coral-eval-env-recovery-20261109-1345/.eval-venv/bin/python",
+  "gpu_ids": "0"
+}
+```
+
+- 候选 worktree 会通过 rsync 同步到远端；不需要手动 push adapter。
+- SSH/rsync 使用 `container/ssh` 中的宿主机配置。
+- 启动新 run 前，检查是否还有旧训练进程：
+
+```bash
+ssh 8818 'pgrep -af rsi_coral_train_eval.py || true'
+```
+
+如果有旧 PID，先手动终止，再启动新 run。
+
+full 协议固定为 954 步；不要为了省时间传
+`RSI_CORAL_TRAIN_STEPS`/`RSI_CORAL_EVAL_LIMIT` 缩短 full。subset 由
+`Problem.budget` 注入 95 步，属于正式筛选协议的一部分。
+
+### 10. 产物
 
 每次 run 写入：
 
 ```text
 runs/<run_id>/
-  state.json        运行结束时的完整研究状态
-  traces.jsonl      只追加：每次 LLM 调用、阶段转换、决策
+  state.json        完整研究状态
+  traces.jsonl      追加式 LLM/阶段/决策记录
   final.json        paper、review、meta-review、integrity、decision_path
-  artifacts/        final.tex、模拟/溯源实验日志
-  worktree/         本次 run 的 git worktree（所有候选共用一个 checkout）
-  patches/          每个候选的 diff 与 git apply 日志
+  artifacts/        final.tex、实验日志、原始报告
+  patches/          候选 diff 与 apply 日志
+  worktree/         本次 run 的 git worktree
 ```
 
-## 指向真实模型
-
-扩展使用 Pi 的 model registry，因此任何已认证的 Pi provider 都可直接用：
-
-```text
-rsi_research { problem: "...", provider: "opencode-go", model: "glm-5.3-flash" }
-```
-
-容器内可用环境变量覆盖：
-
-```bash
-RSI_MODEL=glm-5.3-flash
-RSI_CODING_MODEL=kimi-k3     # coding / ablation / rebuttal / draft_enhancer
-```
-
-`opencode-go` 需要 `x-opencode-session` 头；嵌套调用和 worker 会话会自动
-携带 Pi 的 session id。凭据复制、验证和排错见
-[`docs/PROVIDER.md`](docs/PROVIDER.md)。
-
-### 联网检索
-
-容器安装了 [`pi-web-search`](https://github.com/ttttmr/pi-web-search)，使用
-provider 原生 web search（无需额外搜索 API key）。`web_search` 使用
-`container/pi-home/web-search.json` 指定的检索模型：
-
-```json
-{ "provider": "opencode-go", "model": "gpt-5.6-luna" }
-```
-
-RSI 的 novelty 与 reference-audit worker 会自动获得 `web_search` 工具，用来
-检索真实文献；其他 agent 不联网，避免生成阶段被搜索结果污染。
-
-## 探索方向引导（超出论文）
-
-论文允许 agent 自由选择方向；`Problem` 带有一层研究方向约束：
-
-```json
-{
-  "domain": "time series forecasting",
-  "subfield": "zero-shot / retrieval-augmented",
-  "directions": [
-    { "id": "d1", "title": "spectral priors", "description": "DMD/FFT constraints",
-      "keywords": ["DMD", "spectral"], "weight": 1.0, "must_include": false },
-    { "id": "d2", "title": "safety gating", "description": "no-harm fallback",
-      "weight": 0.8, "must_include": true }
-  ],
-  "forbidden": ["finetuning the backbone"]
-}
-```
-
-- 引导只进入**生成阶段**，绝不进入 critic 的算术；
-- 排序分数为 `novelty + guidance_weight · domain_fit`；
-- `must_include` 只有在 `strict_directions: true` 时才是硬门；
-- 每个 `Idea` 记录 `direction_ids`；manuscript 必须提到某个方向；
-- 离线模拟器包含 `domain_fit` 项，所以有引导/无引导的 run 在测试中可区分。
-
-## Git 原生与严格解耦
-
-- 目标项目是**外部 git 仓库**；RSI 不为每个候选复制目录。
-- 每个候选是目标仓库中的 **branch + commit**（`rsi/<run_id>/<label>`）；
-  一个 run 只使用一个 `git worktree`（`runs/<run_id>/worktree`），所有候选复用。
-- `RepoRef` 记录 `repo`、`commit`、`branch`、`parent`；最终状态和 `final.json`
-  都以 commit 为代码身份，`worktree` 路径只是临时 checkout。
-- `Problem` 只暴露通用契约：`repo`、`repo_ref`、`experiment_command`
-  （`{scope}`、`{out}`、`{repo}`、`{commit}`）。RSI 核心不导入目标项目，
-  不知道 Mamba、DFM 或任何项目细节。
-- 项目基准属于目标项目本身。`integrations/` 只是可选适配器模板，不在 Pi
-  扩展加载路径内，也不被 `src/rsi/` 引用。
-
-## 生成新项目的 adapter
-
-用 `rsi-adapter` skill。它读取一个 `examples/*.json`，检查目标仓库，生成
-`integrations/<project>/run_experiment.py`、`README.md`、`setup.sh` 和
-`adapter.json`：
-
-```bash
-python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
-  --problem examples/<project>.json \
-  --repo /path/to/target \
-  --name <project> \
-  --out integrations/<project>
-```
-
-生成的是契约骨架，`train` / `evaluate` / `parse_metrics` 仍是 TODO；按
-`skills/rsi-adapter/SKILL.md` 的检查表接上目标项目后再跑实验。
-
-## 目标仓库：dfm-ssm
-
-针对真实 Mamba + DFM 仓库的 fixture 在 `examples/dfm_ssm_external.json`。目标项目
-是独立 git 仓库，不放在本仓库的 `vendor/` 下；容器通过 `RSI_TARGET_REPO` 指向挂载
-路径，例如 `/repos/mamba`。准备：
-
-```bash
-# 宿主机独立仓库：/Users/liuxiaoyan/workspace/mamba
-# container/.env 中：
-#   RSI_EXTERNAL_ROOT=/Users/liuxiaoyan/workspace
-#   RSI_TARGET_REPO=/repos/mamba
-
-# 可选：把 adapter 安装到目标仓库的 rsi-bench 分支
-TARGET_REPO=/Users/liuxiaoyan/workspace/mamba ./integrations/dfm_ssm/setup.sh
-```
-
-脚本在目标仓库内创建/更新 `rsi-bench` 分支，放入
-`bench/rsi_dfm_train_eval.py` 和 `bench/dfm_lm_eval.py`。指标是
-**wikitext word-ppl**（lm-eval 的 `word_perplexity`，越低越好）：先训练
-DFM-Mamba checkpoint，再用 lm-eval 在 wikitext 上评测。
-
-GPU 服务器通过通用 `remote` 配置执行：本地 git worktree 用 `rsync` 同步到
-服务器，SSH 远程运行，`gpu_ids` 写入 `CUDA_VISIBLE_DEVICES`；服务器不需要联网。
-详见 [`docs/REMOTE.md`](docs/REMOTE.md)。
-
-coding agent 会拿到 git commit 上的目录树 + 相关源码摘要，返回 unified diff；
-workspace 在目标仓库的 **git worktree** 上执行 `git apply`，并把候选写成
-`rsi/<run_id>/<label>` 分支上的 commit。不会为每个候选复制文件；diff 失败会写入
-`patches/*.apply.log` 并保持父 commit 不变，绝不伪造测量提升。真实优化运行建议
-在装有依赖的机器上执行，并把结果写回 `runs/<run_id>/`。
-
-## 容器内交互运行远程 RSI（GPU）
-
-这一节是实际操作手册。RSI 在容器里运行，目标代码在外部 GPU 服务器上训练/评测；
-**只上传目标仓库的 worktree，不上传 RSI 项目本身**。
-
-### 已经准备好的部分
-
-- 容器：`pi-agent-rsi`，Pi 自动加载 `/workspace/RSI` 与 `npm:pi-web-search`
-- 远程：SSH 别名 `8818`，用户 `sl`，GPU 0（A800 80GB）
-- 容器 SSH：`/root/.ssh/config`，通过 `socat` + `host.docker.internal:7890` 出网
-- 目标仓库：宿主机 `/Users/liuxiaoyan/workspace/mamba`，容器内 `/repos/mamba` 的 `rsi-bench` 分支
-- benchmark：`bench/rsi_dfm_train_eval.py` + `bench/dfm_lm_eval.py`
-- 指标：lm-eval `wikitext` 的 `word_perplexity`（`word_ppl`，越低越好）
-- 服务器资产：`/home/sl/mamba/checkpoints`、`/home/sl/SlimPajama-10B`、wikitext 缓存（见 fixture `remote.env`）
-
-### 1. 进入容器和 Pi
-
-```bash
-cd "/Users/liuxiaoyan/workspace/RSI "
-./container/up.sh shell
-
-# 容器内
-cd /workspace/RSI
-pi
-```
-
-### 2. 给 superagent 最高权限
-
-`runner=subprocess` 默认会被 `sop.experiment` 的 `person` 规则挡住。两种方式：
-
-**当前会话立即放开：**
-
-```text
-/rsi policy allow
-```
-
-**启动时默认放开：**
-
-```bash
-RSI_SUPERAGENT_POLICY=yolo pi
-```
-
-容器 compose 默认已经是 `RSI_SUPERAGENT_POLICY=yolo`；如果当前容器是旧进程，
-用上面的 `/rsi policy allow` 或重启容器即可。
-
-### 3. 先跑 mock 远程链路（不花 LLM 费用）
-
-```text
-/rsi run examples/dfm_ssm_external.json --mock --runner subprocess --max-refine-rounds 0 --max-review-refinements 0
-```
-
-`--mock` 只替换 LLM，不会跳过 adapter；`--runner subprocess` 仍会真实执行目标项目。
-
-查看状态：
-
-```text
-/rsi status <run_id>
-/rsi inspect <run_id>
-```
-
-### 4. 真实 provider + GPU 0
-
-```text
-/rsi run examples/dfm_ssm_external.json --runner subprocess --thinking low --max-refine-rounds 0 --max-review-refinements 0 --max-llm-calls 120 --max-wall-time-s 3000
-```
-
-如果仍然出现 Attention：
-
-```text
-/rsi status <run_id>
-/rsi tickets <run_id>
-/rsi answer <run_id> <ticket_id> "Approved: prepared offline DFM environment on server 8818, GPU 0, real remote benchmark."
-/rsi wait <run_id>
-```
-
-结束后：
-
-```text
-/rsi inspect <run_id>
-/rsi replay <run_id>
-```
-
-### 5. 不走 superagent 的 CLI 方式
-
-在容器内：
-
-```bash
-cd /workspace/RSI
-
-NODE_USE_ENV_PROXY=1 node src/rsi/cli.ts run examples/dfm_ssm_external.json   --provider opencode   --model deepseek-v4.1-flash   --runner subprocess   --max-refine-rounds 0   --max-review-refinements 0   --max-llm-calls 120   --max-wall-time-s 3000   --out runs   --seed 7
-```
-
-CLI 不经过 superagent 的 `person` 门，适合先验证远程链路。
-
-### 6. 改 GPU / 训练预算
-
-`examples/dfm_ssm_external.json` 的 `remote` 示例（实际值以文件为准）：
-
-```jsonc
-"remote": {
-  "host": "8818",
-  "dir": "/home/sl/mamba",
-  "python": "/home/sl/miniconda3/envs/mamba/bin/python",
-  "gpu_ids": "0",              // 必填；改成 "1" / "0,1" 选择 GPU
-  "timeout_s": 86400,
-  "env": {
-    "RSI_DFM_BASE_MODEL": "/home/sl/mamba/checkpoints",
-    "RSI_DFM_TRAIN_DATA": "/home/sl/SlimPajama-10B",
-    "RSI_DFM_BACKEND": "native"
-  }
-}
-```
-
-配置只有一处：`experiment_command` 只负责调用 benchmark，所有 dfm 参数都在
-`remote.env`：
-
-```jsonc
-"experiment_command": [
-  "{python}", "bench/rsi_dfm_train_eval.py",
-  "--repo", "{repo}", "--scope", "{scope}", "--out", "{out}"
-],
-"remote": {
-  "env": {
-    "RSI_DFM_DEVICE": "cuda",
-    "RSI_DFM_BACKEND": "reference",
-    "RSI_DFM_TRAIN_STEPS": "2",
-    "RSI_DFM_TRAIN_BATCH_SIZE": "2",
-    "RSI_DFM_GRAD_ACCUM": "2",
-    "RSI_DFM_MAX_LENGTH": "256",
-    "RSI_DFM_BLOCK_LENGTH": "16",
-    "RSI_DFM_LM_EVAL_BATCH_SIZE": "1",
-    "RSI_DFM_EVAL_MAX_LENGTH": "512",
-    "RSI_DFM_FLOW_TIME": "off",
-    "RSI_DFM_DATA_FORMAT": "auto"
-  }
-}
-```
-
-如果确实需要临时覆盖，可以再在 `experiment_command` 里加对应命令行参数；
-显式 flag 优先于 `remote.env`。fixture 默认不再重复这两份配置。
-
-- `gpu_ids` 直接写入 `CUDA_VISIBLE_DEVICES`；RSI 不做 GPU 排队/锁卡。
-- 多卡只提供可见性；DDP 需要在目标仓库 benchmark/trainer 内实现。
-- `RSI_DFM_BACKEND=reference` 是纯 PyTorch Mamba 路径；服务器装了
-  `selective_scan_cuda` 后可改 `native`。
-- `flow_time=off` 用 causal backbone 计算 lm-eval logits；改成 `1.0` 走
-  DFM forward，需与你们的评测协议一致。
-- 训练可以用 `accelerate`，评测仍然是 Python：
-
-  ```jsonc
-  "RSI_DFM_TRAIN_LAUNCHER": "/home/sl/miniconda3/envs/mamba/bin/accelerate launch --num_processes 1",
-  "RSI_DFM_TRAIN_SCRIPT": "scripts/finetune_dfm.py"
-  ```
-
-  `bench/dfm_lm_eval.py` 仍然由 `remote.python` 以 Python 运行。
-
-### 7. 换成真实模型/数据
-
-当前 `tiny-mamba` 是 3.3M 随机初始化模型，`word_ppl` 只是链路验证，不是科学结果。
-要得到有意义的 word-ppl，把 `remote.env` 指向服务器上的真实资产：
-
-```jsonc
-"RSI_DFM_BASE_MODEL": "/path/to/real-mamba-or-dfm",
-"RSI_DFM_TOKENIZER": "/path/to/tokenizer",
-"RSI_DFM_TRAIN_DATA": "/path/to/train.jsonl"
-```
-
-同时提高 `--train-steps`、`--max-length`、batch size 和 `remote.timeout_s`。
-服务器离线时，`lm-eval` 的 wikitext 数据集必须已缓存在
-`HF_DATASETS_CACHE`，模型/tokenizer 必须本地存在。
-
-### 外部目标仓库与本地→服务器路径映射
-
-待优化项目不需要放在本仓库的 `vendor/` 下。推荐做法：
-
-```text
-宿主机：/Users/liuxiaoyan/workspace/mamba     （独立 git 仓库）
-容器：  /repos/mamba                           （compose 挂载）
-服务器：/home/sl/projects/dfm-ssm-<run_id>       （rsync 目标）
-```
-
-`container/compose.yaml` 已支持：
-
-```dotenv
-# container/.env（gitignored）
-RSI_EXTERNAL_ROOT=/Users/liuxiaoyan/workspace
-RSI_TARGET_REPO=/repos/mamba
-```
-
-compose 把宿主 `RSI_EXTERNAL_ROOT` 挂到容器 `/repos`。fixture 使用：
-
-```jsonc
-"repo": "${RSI_TARGET_REPO}",       // 容器内 /repos/mamba
-"remote": {
-  "worktree": "/home/sl/projects/dfm-ssm-{run_id}",
-  "out": "/home/sl/projects/dfm-ssm-{run_id}/out"
-}
-```
-
-- `repo` 是容器内可访问的本地 git 仓库路径；git 提交/分支仍在这个外部仓库里。
-- `remote.worktree` 是本地项目到服务器路径的映射目标，支持 `{run_id}`、`{repo}`。
-- 默认 `worktree` 是 `<remote.dir>/rsi/<run_id>/worktree`；显式设置后以模板为准。
-- `remote.out` 是服务器上的输出目录；默认是 worktree 的兄弟目录 `out/`。
-- 只在服务器上同步候选 worktree；RSI 项目本身不会上传。
-- rsync 默认排除 `.git`、`runs`、`patches`、`checkpoints`、`pretrained`、
-  `data`、`build`、缓存和二进制权重；同时用
-  `git ls-files --others --ignored --exclude-standard` 收集目标仓库**所有
-  `.gitignore` 命中的本地内容**，通过 `--exclude-from` 排除。`.gitignore`
-  的否定规则（`!keep.log`）由 git 处理，不需要手工翻译成 rsync 语法。
-
-示例 fixture：`examples/dfm_ssm_external.json`。准备外部仓库：
-
-```bash
-TARGET_REPO=/Users/liuxiaoyan/workspace/mamba ./integrations/dfm_ssm/setup.sh
-```
-
-注意：**当前正在运行的容器**是在这套 compose 配置之前创建的，没有 `/repos`
-挂载。要用外部仓库，需要先重建容器；SSH/rsync/socat 会在容器启动时由
-`container/bootstrap.sh` 自动安装，不需要手动 apt。
-
-### Native backend 的 CUDA 环境
-
-外部 fixture 已设置 `RSI_DFM_BACKEND=native`，并通过 `remote.setup` 导出：
-
-```bash
-export CUDA_HOME=/usr/local/cuda-12.8
-export PATH="$CUDA_HOME/bin:$PATH"
-export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
-export PYTHONPATH="$HOME/mamba${PYTHONPATH:+:$PYTHONPATH}"
-export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
-```
-
-这些变量让 `selective_scan_cuda`（在 `$HOME/mamba` 下编译）可被 native
-backend 导入。`remote.setup` 在 `cd` 之后、benchmark 之前执行；adapter 会再把
-当前 worktree 放到 `PYTHONPATH` 最前面。
-
-### 指定服务器 Python 环境
-
-`remote.python` 可以是绝对路径：
-
-```jsonc
-"python": "/home/sl/coral-eval-env-recovery-20261109-1345/.eval-venv/bin/python"
-```
-
-也可以用 `setup` 先激活 conda/venv，然后让 `{python}` 使用环境内的 `python`：
-
-```jsonc
-"python": "python",
-"setup": "source /home/sl/miniconda3/etc/profile.d/conda.sh && conda activate dsfm"
-```
-
-`setup` 会在 `cd <远程 worktree>` 之后、benchmark 命令之前执行；适用于
-`conda activate`、`module load`、设置 `LD_LIBRARY_PATH` 等。
-
-### dfm-ssm 的 backend 与环境变量
-
-`RSI_DFM_BACKEND` 可选：
-
-| 值 | 行为 | 前提 |
-|---|---|---|
-| `auto` | 非 CUDA 用 reference；CUDA 用 native | CUDA 上需要编译好的 `selective_scan_cuda` |
-| `native` | `MambaLMHeadModel` + CUDA selective scan kernels，最快 | 需要 `selective_scan_cuda`；否则运行时报错 |
-| `reference` | 纯 PyTorch 顺序扫描，CPU/MPS/CUDA 都能跑，但慢 | 无需 CUDA 扩展；适合 smoke/正确性验证 |
-
-- `examples/dfm_ssm_external.json` 的小型 smoke 用 `reference`；
-- `examples/dfm_ssm_external.json` 用 `native`，并在 `remote.setup` 中导出
-  `/usr/local/cuda-12.8` 与 `$HOME/mamba`，让编译好的
-  `selective_scan_cuda.cpython-310-...so` 可导入。
-- baseline 和候选必须使用同一个 backend。
-
-命令参数补充：
-
-| 参数 | 作用 |
-|---|---|
-| `--data-format auto` | JSONL 文件/目录 → `jsonl`；parquet 目录/文件 → `pile-parquet` |
-| `--flow-time off` | lm-eval 用 causal backbone logits |
-| `--flow-time 1.0` | lm-eval 用 DFM forward logits |
-
-`remote.env` 的作用：
-
-| 变量 | 作用 |
-|---|---|
-| `HF_DATASETS_CACHE` | wikitext 数据集缓存路径；lm-eval 从这里离线加载 |
-| `HF_HUB_OFFLINE=1` | 禁止 HuggingFace Hub 下载 |
-| `TRANSFORMERS_OFFLINE=1` | 禁止 transformers 下载 |
-| `HF_DATASETS_OFFLINE=1` | 禁止 datasets 下载 |
-| `TOKENIZERS_PARALLELISM=false` | 关闭 tokenizer 并行，避免 fork/警告 |
-| `RSI_DFM_TRAIN_DATA` | 训练 JSONL 文件、JSONL 目录或 parquet 目录；adapter 的 `--data` 默认值 |
-| `RSI_DFM_BASE_MODEL` | 基座 Mamba/AR checkpoint 路径；`--base-model` 默认值 |
-| `RSI_DFM_TOKENIZER` | tokenizer 路径；`--tokenizer` 默认值，必须与模型词表匹配 |
-| `RSI_DFM_BACKEND` | `auto` / `native` / `reference`；`--backend` 默认值 |
-| `RSI_DFM_DEVICE` | `cuda` / `cpu` / `mps`；`--device` 默认值 |
-| `RSI_DFM_TRAIN_STEPS` | 训练步数；`--train-steps` 未显式给出时使用 |
-| `RSI_DFM_TRAIN_LAUNCHER` | 训练启动器，默认 `<python> -m`；可设 `accelerate launch --num_processes 1` |
-| `RSI_DFM_TRAIN_SCRIPT` | 传给启动器的模块/脚本；默认 `scripts.finetune_dfm`，accelerate 用 `scripts/finetune_dfm.py` |
-| `RSI_DFM_TRAIN_CMD` | 完整训练 shell 命令覆盖；设置后忽略 launcher/script，支持 `{python}`、`{repo}`、`{data}`、`{checkpoint}` 等占位符 |
-| `RSI_DFM_TRAIN_BATCH_SIZE` | 训练 batch size |
-| `RSI_DFM_GRAD_ACCUM` | 梯度累积步数 |
-| `RSI_DFM_MAX_LENGTH` | 训练最大序列长度 |
-| `RSI_DFM_BLOCK_LENGTH` | DFM block length |
-| `RSI_DFM_LM_EVAL_BATCH_SIZE` | lm-eval batch size |
-| `RSI_DFM_EVAL_MAX_LENGTH` | lm-eval max length |
-| `RSI_DFM_FLOW_TIME` | `off` = backbone logits；`1.0` = DFM forward |
-| `RSI_DFM_DATA_FORMAT` | `auto` / `jsonl` / `pile-parquet` |
-| `RSI_DFM_SEED` | 可选，训练/采样 seed |
-| `RSI_DFM_LM_EVAL_TASK` | 可选，默认 `wikitext` |
-| `RSI_DFM_CHECKPOINT` | 可选，eval-only 的已有 checkpoint |
-| `RSI_DFM_OFFLINE=1` | adapter 自动设置 HF 离线变量；不需要再重复写 `HF_*_OFFLINE` |
-| `RSI_DFM_TIMEOUT` | 可选，单次训练/评测子进程超时秒数 |
-
-优先级：`experiment_command` 里的显式参数 > `remote.env` > adapter 默认值。
-例如要改训练步数，改命令里的 `--train-steps`，不要只改
-`RSI_DFM_TRAIN_STEPS`。fixture 的 `experiment_command` 已经不再包含这些参数，
-所以 `RSI_DFM_TRAIN_STEPS=38000` 等 env 就是唯一入口。`gpu_ids` 生成的
-`CUDA_VISIBLE_DEVICES` 不在 `env` 里配置；`PYTHONPATH`、`TOKENIZERS_PARALLELISM`
-和 HF 离线变量由 adapter 自动处理。
-
-### 8. 远程目录与本地产物
-
-服务器每次 run：
-
-```text
-/home/sl/rsi/rsi/<run_id>/
-  worktree/        # 从本地 git commit rsync 过去的候选代码（无 .git）
-  out/             # checkpoint、lm-eval 结果、metrics JSON
-```
-
-本地：
-
-```text
-runs/<run_id>/
-  state.json
-  final.json
-  traces.jsonl
-  worktree/        # 本地唯一 git checkout
-  patches/         # 每个候选的 diff + apply.log
-  artifacts/experiments/remote-*.json
-```
-
-`state.json` / `final.json` 的 `code.commit`、`code.branch` 是候选代码的真实身份。
-
-### 9. 容器重建与 SSH 自动化
-
-`ssh` / `rsync` / `socat` 不需要手动安装：
-
-- `container/bootstrap.sh` 在容器启动时运行；
-- `./container/up.sh shell|exec|pi` 在命令前也会运行一次（幂等）；
-- 缺失时通过 `host.docker.internal:7890` 代理执行 apt 安装；
-- `/root/.ssh` 由 compose 挂载 `container/ssh`（只读）；如果容器是旧配置，
-  bootstrap 会从 `/workspace/RSI/container/ssh` 复制一份；
-- `./container/up.sh run` 发现 `container/ssh/config` 不存在时会自动调用
-  `container/sync-ssh.sh` 从宿主 `~/.ssh` 生成。
-
-手动触发：
-
-```bash
-./container/up.sh bootstrap
-./container/up.sh ssh        # 重新从本机 ~/.ssh 生成 container/ssh
-```
-
-SSH key/config 在宿主 `container/ssh/`，已 gitignore，不会进入仓库。
-
-## 设计保证
-
-| 纯数值决策（模型无法翻转） | 模型可追加意见 |
-|---|---|
-| `ResultComparison`（采纳，I2） | `SubsetCritic` / `FullSetCritic` 的理由 |
-| `Selector` 排序 | `AblationCritic`（可否决 GOOD） |
-| `SpecAuditor.hard_violations` | `SpecAuditor` 额外违规 |
-| `ReferenceAuditor.unknown_refs` | 额外违规 |
-| `MethodCodeAuditor.lexical_alignment` 下限 | 只能向上修正 |
-| `verify_scores` | — |
-
-模型可以**阻止** promotion，但绝不能**导致** promotion。`accepted: true` 还要求
-peer score ≥ 阈值、meta `accept`、integrity 审计干净；否则导出 incumbent 并记录
-`export_reason`。`aborted: true` 表示科学上的死胡同或硬预算停止——这是诚实的
-结果，不是 harness 故障。
-
-离线模拟器约 20% 的失败率校准自论文报告的 80.4%（86/107）改进率，因此 mock
-run 会同时覆盖成功与失败分支。
-
-## 代码结构
-
-```text
-extensions/rsi.ts          Pi 扩展入口：工具 + /rsi 命令（前台 agent）
-src/rsi/                   TypeScript 移植
-  superagent/              superagent 协议：model、store、policy、sop、engine、
-                           executor、runtime、tools、prompts
-  core/                    orchestrator、state、Listing 1 stage
-  agents/                  §3.1–§3.6 agents、critics、integrity
-  providers/               Pi registry、PiWorker/SuperagentLLMProvider、离线 mock、CLI
-  runtime/                 budget、artifact/trace store、workspace runners
-  types.ts, config.ts      冻结模型、超参数
-skills/rsi-research/       RSI 总入口 + superagent 协议
-skills/rsi-adapter/        从 examples/*.json 生成目标项目 adapter + 安装脚本
-prompts/superagent/        orchestrator / worker / dispatch / replies / policy
-prompts/rsi-research.md    /rsi-research prompt 模板
-tests/                     node:test 套件（离线、无网络）
-tests/fixtures/            合成 fixture（不进入 examples/）
-container/                 Dockerfile、compose、Kiri 辅助脚本、pi-home 配置
-examples/                  真实外部项目 fixture + mock script
-integrations/dfm_ssm/      mamba/DFM 的 train + lm-eval 适配器（可选，不属于核心）
-docs/                      SPEC、ARCHITECTURE、PROVIDER、CONTAINER、论文分析
-```
-
-## 测试
-
-```bash
-npm test            # 离线测试：types、stage、mock、orchestrator、gates、replay
-npm run typecheck   # tsc --noEmit，使用 ambient Pi 类型，不复制宿主包
-```
-
-覆盖重点：严格改进语义、subset/full/ablation 门、engineering 预算范围、guidance
-门、review 循环、meta 改进、integrity 检查、artifact/replay 契约，以及成功和
-abort 两条路径。
-
-## 保真边界：这不是什么
-
-- 论文中的数字（`86/107`、`+25.2%`、ScholarPeer/Stanford 分数）是其基础设施的
-  评测结果，不在此复现。本仓库复现的是**机制**，并逐条标注 `[PAPER]` /
-  `[CHOICE]` / `[INFERENCE]` / `[EXTENSION]`。
-- `tests/fixtures/ood_frozen_encoder.json` 是**合成** fixture，借用 Procrustes-DS 的
-  任务框架；指标是占位值。
-- `tests/fixtures/meta_refine.json` + `examples/mock_script.json` 是**合成续写**，用于
-  覆盖 §3.5 rebuttal 与 §3.6 meta-refinement。
-- 模拟 runner 不是科学基准。`runner: "subprocess"` 会执行目标仓库的
-  `run_experiment.py`；真实运行完全可能诚实地无法超过复现基线。
-- `final.json` 记录 `runner`、`accepted`、`export_reason`；不要把 `accepted`
-  理解为外部同行评审或论文录用。
-
-## 阅读顺序
-
-1. `docs/SPEC.md` — 契约：不变量、状态机、冻结模型、离线确定性规则。
-2. `docs/SUPERAGENT.md` — superagent 协议：概念映射、授权、报告、工具、持久化。
-3. `docs/ARCHITECTURE.md` — 模块 ↔ agent ↔ 论文章节的对应关系。
-4. `docs/PROBLEM.md` — 在哪里定义指标、研究方向、研究代码路径。
-5. `docs/REMOTE.md` — rsync + SSH 到 GPU 服务器、GPU 选择、离线服务器。
-6. `docs/CONTAINER.md` / `docs/PROVIDER.md` — 运行 Pi 与 opencode-go。
-7. `docs/analysis/*.md` — 论文逐节提取。
+项目全局 baseline 在 `/workspace/RSI/.rsi-baseline/`，不在单个 run 里。
+
+## 进一步阅读
+
+- [`docs/SPEC.md`](docs/SPEC.md)：论文阶段、超参数、数据门槛和协议。
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：代码结构、状态机、终止条件。
+- [`docs/PROBLEM.md`](docs/PROBLEM.md)：Problem fixture 契约和 adapter 约定。
+- [`docs/REMOTE.md`](docs/REMOTE.md)：rsync/SSH/GPU 执行和远端清理。
+- [`docs/SUPERAGENT.md`](docs/SUPERAGENT.md)：run/task ticket、policy、answer/stop。
+- `coral-rsi/ADAPTER.md`：coral adapter 的 scopes、环境变量和验收证据。

@@ -45,7 +45,7 @@ function fakeContext(_out: string, notes: Array<{ message: string; level?: strin
 
 test("the extension registers the RSI tools and command without side effects", () => {
   const { tools, commands } = fakeApi();
-  assert.deepEqual([...tools.keys()], ["rsi_research", "rsi_superagent", "rsi_inspect", "rsi_replay"]);
+  assert.deepEqual([...tools.keys()], ["rsi_research", "rsi_job_submit", "rsi_job_status", "rsi_job_wait", "rsi_job_cancel", "rsi_job_list", "rsi_adapter_smoke", "rsi_iteration", "rsi_superagent", "rsi_inspect", "rsi_replay"]);
   assert.deepEqual([...commands.keys()], ["rsi"]);
   assert.ok([...tools.values()].every((tool) => tool.description.length > 40));
 });
@@ -56,7 +56,7 @@ test("rsi_research and rsi_inspect work through the extension tool surface", asy
   const ctx = fakeContext(out);
   const research = await tools.get("rsi_research").execute(
     "call-1",
-    { problem: fixture("ood_frozen_encoder"), mode: "mock", out, seed: 7, wait: true },
+    { problem: fixture("ood_frozen_encoder"), mode: "mock", out, seed: 7, wait: true, script: fixture("good_ablation") },
     undefined,
     undefined,
     ctx,
@@ -96,6 +96,40 @@ test("rsi_research and rsi_inspect work through the extension tool surface", asy
   );
   assert.match(replay.content[0].text, /replay matches/);
   assert.equal(replay.details.match, true);
+});
+
+for (const explicit of [false, true]) {
+  test(`research dispatch inherits Pi model/thinking and forwards only explicit role caps (${explicit})`, async () => {
+    const { tools } = fakeApi();
+    const out = tempDir("rsi-session-inheritance-");
+    const ctx = fakeContext(out);
+    ctx.model = { provider: "configured-provider", id: "configured-deepseek", contextWindow: 1000000, maxTokens: 384000 };
+    ctx.thinkingLevel = "xhigh";
+    const response = await tools.get("rsi_research").execute("inherit-session", {
+      problem: fixture("ood_frozen_encoder"), mode: "mock", out, wait: true, max_llm_calls: 3,
+      ...(explicit ? { max_tokens: 384000, coding_max_tokens: 8192 } : {}),
+    }, undefined, undefined, ctx);
+    const root = String(response.details.root);
+    const config = JSON.parse(fs.readFileSync(`${root}/state.json`, "utf8")).config;
+    assert.equal(config.modelRoutes.default.provider, "configured-provider");
+    assert.equal(config.modelRoutes.default.model, "configured-deepseek");
+    assert.equal(config.modelRoutes.default.maxTokens, explicit ? 384000 : undefined);
+    assert.equal(config.modelRoutes.coding.maxTokens, explicit ? 8192 : undefined);
+    assert.match(fs.readFileSync(`${root}/superagent/state.json`, "utf8"), /"thinking":\s*"xhigh"/);
+    assert.equal(ctx.model.contextWindow, 1000000);
+    assert.equal(ctx.model.maxTokens, 384000);
+  });
+}
+
+test("/rsi run rejects malformed explicit caps instead of silently inheriting", async () => {
+  const { commands } = fakeApi();
+  const notes: Array<{ message: string; level?: string }> = [];
+  const ctx = fakeContext(repoRoot, notes);
+  for (const flags of ["--max-tokens", "--max-tokens nope", "--max-tokens 0", "--max-tokens 1.5", "--max-tokens 8192 --max-tokens 384000", "--coding-max-tokens -1", "--coding-max-tokens Infinity"]) {
+    await commands.get("rsi").handler(`run ${fixture("ood_frozen_encoder")} --mock ${flags}`, ctx);
+    assert.equal(notes.at(-1)?.level, "warning", flags);
+    assert.match(notes.at(-1)!.message, /positive|integer|safe/);
+  }
 });
 
 test("/rsi list and unknown subcommands report through the UI", async () => {

@@ -34,6 +34,15 @@ export const SOP_STAGES: readonly StageSpec[] = [
     deliverables: ["runs/<run_id>/state.json", "runs/<run_id>/final.json", "runs/<run_id>/superagent/state.json"],
   },
   {
+    stage: "diagnose",
+    section: "diagnose",
+    title: "Measured diagnosis",
+    summary: "Run the target-declared read-only diagnosis on the reproduced baseline and rank measured defects before any idea.",
+    tasks: ["diagnose.run"],
+    rule: "sop.diagnose",
+    deliverables: ["state.diagnosis", "diagnose.ok transition"],
+  },
+  {
     stage: "limits",
     section: "§3.1",
     title: "Limitations",
@@ -153,7 +162,8 @@ export const SOP_STAGES: readonly StageSpec[] = [
  */
 export const SOP_RULES: Rule[] = [
   { id: "sop.run", name: "Research run", level: "auto", enabled: true, instruction: "Accept and execute one research run: the closed loop from §3.1 to the exported artifacts." },
-  { id: "sop.limits", name: "Limitations", level: "auto", enabled: true, instruction: "Extract limitations and verify them before generating seeds." },
+  { id: "sop.diagnose", name: "Measured diagnosis", level: "auto", enabled: true, instruction: "Run the target-declared read-only diagnosis on the reproduced baseline and rank measured defects." },
+  { id: "sop.limits", name: "Limitations", level: "auto", enabled: true, instruction: "Extract limitations grounded in measured findings and verify them before generating seeds." },
   { id: "sop.seeds", name: "Seed ideas", level: "auto", enabled: true, instruction: "Generate, expand and novelty-score seed ideas against retrieved references." },
   { id: "sop.baseline", name: "Baseline reproduction", level: "auto", enabled: true, instruction: "Reproduce the baseline before comparing any candidate against it." },
   { id: "sop.search", name: "Idea search", level: "auto", enabled: true, instruction: "Implement candidates and gate them on subset and full-set evidence." },
@@ -213,6 +223,7 @@ export function stageOfRule(rule: string): Stage | undefined {
 
 /** The model role a task runs under (`config.modelRoutes`), for tracing and routing. */
 export function roleOfTask(task: string): string {
+  if (task === "diagnose.run") return "default";
   if (task === "code.ablation") return "ablation";
   if (task === "code.rebuttal" || task === "review.rebuttal_plan") return "rebuttal";
   if (task === "write.enhance") return "draft_enhancer";

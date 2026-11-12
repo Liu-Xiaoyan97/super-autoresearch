@@ -58,8 +58,19 @@ pi
 
 `container/pi-home/settings.json` declares the local package
 `"/workspace/RSI"`, so the RSI extension loads automatically in every Pi
-session started from this container. The default provider/model is
-`opencode-go/deepseek-v4.1-flash`.
+session started from this container. Its example startup preference is
+`opencode-go/deepseek-v4.1-flash`; RSI itself inherits the **active Pi session's**
+provider, model and thinking (`/model`, `/thinking`), unless the user supplies
+explicit run options or `RSI_MODEL` / `RSI_CODING_MODEL` preferences.
+
+Native `/rsi run` and `/rsi iterate` support optional `--max-tokens N` (all roles)
+and `--coding-max-tokens N` (coding override); tool equivalents are `max_tokens`
+and `coding_max_tokens`. Omit them for ordinary Pi native policy/model capacity,
+not a forced 8192 output cap. Configured DeepSeek 1M context / 384000 max output
+metadata stays intact; audited Pi 1.5.2 defaults to the model output limit and
+lowers it when needed to fit the remaining context. Explicit caps are positive integers bounded by the selected model, with
+no fixed RSI coding ceiling. None of this changes GPU training budgets, protected
+protocols, tool permissions or model-call/wall-clock authority; see `docs/PROVIDER.md`.
 
 Useful commands inside Pi:
 
@@ -101,6 +112,7 @@ Extension tools available in the session:
 | `rsi_research` | full loop; `mode=mock` or `mode=provider` |
 | `rsi_inspect` | read an exported run |
 | `rsi_replay` | verify the decision path from traces only |
+| `rsi_adapter_smoke` | real target worktree/rsync/SSH tiny train-save-reload-eval validation; no LLM |
 
 ## Run without Pi (CLI)
 
@@ -117,7 +129,7 @@ transport (the extension itself always uses Pi's registry):
 ```bash
 ./container/up.sh exec bash -lc 'cd /workspace/RSI && node src/rsi/cli.ts run \
   tests/fixtures/ood_frozen_encoder.json --provider opencode --model deepseek-v4.1-flash \
-  --max-llm-calls 40 --out runs'
+  --out runs'
 ```
 
 ## Bootstrap (automatic)
@@ -152,6 +164,29 @@ compose mounts `RSI_EXTERNAL_ROOT` at `/repos`. A fixture can then use
 `"repo": "${RSI_TARGET_REPO}"`, `remote.worktree`, and `remote.out`; see
 `examples/dfm_ssm_external.json` and `docs/REMOTE.md`.
 
+The native Pi extension owns the generic workflow, not project implementations.
+Use the skill directly in Pi to inspect and complete the independent target's
+real data/training/checkpoint save-and-reload/lm-eval path on a separate
+candidate ref:
+
+```text
+/skill:rsi-adapter examples/<project>.json --repo /repos/project
+```
+
+The target owns its canonical bench command (normally
+`bench/rsi_project_train_eval.py`), `.rsi/adapter/project.json` and
+`.rsi/adapter/project.md`, evaluator helpers, and project tests. RSI does not
+ship project-specific integrations. The optional deterministic scaffolder
+writes initial files directly into the target; it does not finish missing
+training code or certify a usable ref:
+
+```bash
+python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
+  --problem examples/<project>.json \
+  --repo /repos/project \
+  --name project
+```
+
 ## Tests and typecheck
 
 The extension has no runtime npm dependencies; Pi supplies its host packages.
@@ -169,7 +204,7 @@ If `npm install` hangs, the only missing piece is the proxy; verify with
 `curl -s -o /dev/null -w '%{http_code}' https://registry.npmmirror.com` inside
 the container. It should print `200`.
 
-## Web search and the dfm-ssm target
+## Web search and remote target validation
 
 RSI can also run the benchmark on a GPU server: `Problem.remote` rsyncs the
 local git worktree over SSH, selects GPUs with `CUDA_VISIBLE_DEVICES`, and
@@ -185,17 +220,28 @@ The container settings install `npm:pi-web-search` and use
 `web_search` is provider-native (no extra search key). RSI gives it only to the
 novelty and reference-audit subagents; other agents are offline.
 
-Prepare the real optimization target on the host (the container sees it through
-the bind mount):
+After the skill has implemented and committed the target-owned adapter on an
+independent candidate ref, point the test Problem's `repo_ref` at that candidate
+and run the native command inside Pi:
 
-```bash
-./integrations/dfm_ssm/setup.sh
-python3 integrations/dfm_ssm/run_experiment.py --repo /repos/mamba \
-  --scope subset --out /tmp/dfm-report.json
+```text
+/rsi smoke examples/<project>.json --repo /repos/project --timeout 900 --env RSI_PROJECT_TRAIN_STEPS=1 --env RSI_PROJECT_TRAIN_BATCH_SIZE=1
 ```
 
-Then run `examples/dfm_ssm_external.json` with `runner="subprocess"` (needs `torch` in the
-Python environment used by `run_experiment.py`).
+Use only budget variables the target actually supports, including tiny real-data
+evaluation limits. The equivalent `rsi_adapter_smoke` tool takes `problem`,
+`repo`, `timeout_s`, optional fresh evidence directory `out`, and an `env` object.
+Repeated command `--env KEY=VALUE` flags become those per-smoke overrides; they
+do not modify the fixture. An explicit `out` must not already exist.
+
+This does real worktree creation, rsync, SSH, training, checkpoint save/reload,
+and lm-eval metrics collection; it is not a mock or dry-run. A ref is usable only
+after this remote real-data tiny end-to-end pass. Failure stays
+`blocked / remote not verified`; inspect the saved smoke report and remote
+experiment logs. See [`REMOTE.md`](REMOTE.md) for preflight fixes and evidence.
+Then use the verified ref with `runner="subprocess"` for the full research SOP.
+Existing files such as `examples/dfm_ssm_external.json` remain example fixtures,
+not bundled project evaluators.
 
 ## Git worktrees and cleanup
 

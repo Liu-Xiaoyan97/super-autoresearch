@@ -8,7 +8,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { LLMError, LLMProvider, type LLMRequest, type LLMResponse, textOf } from "./base.ts";
+import { LLMError, LLMProvider, type LLMRequest, type LLMResponse, textOf, validateMaxTokens } from "./base.ts";
 
 export interface OpenAICompatOptions {
   apiKey?: string | null;
@@ -44,6 +44,7 @@ export class OpenAICompatProvider extends LLMProvider {
   }
 
   async complete(req: LLMRequest): Promise<LLMResponse> {
+    validateMaxTokens(req.maxTokens);
     const started = Date.now();
     const messages: Array<{ role: string; content: string }> = [];
     if (req.system) messages.push({ role: "system", content: req.system });
@@ -51,8 +52,9 @@ export class OpenAICompatProvider extends LLMProvider {
     const payload: Record<string, unknown> = {
       model: req.model || this.model,
       messages,
-      temperature: req.temperature,
-      max_tokens: req.maxTokens,
+      // No synthetic CLI/native budget: omitted options defer to endpoint defaults.
+      ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+      ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     };
     if (req.schemaName) payload.response_format = { type: "json_object" };
 

@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import type { PolicySettings, RunSpec, Ticket } from "./model.ts";
 import { sopTable } from "./sop.ts";
+import { stylePrompt } from "../writing/style.ts";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PROMPTS_DIR = path.resolve(HERE, "../../../prompts/superagent");
@@ -71,7 +72,8 @@ export function environmentSection(vars: Record<string, string>): string {
 /** A worker's system prompt: the task's own text, plus the report contract. */
 export function workerSystem(payload: { task: string; system: string }): string {
   const worker = promptPart("worker");
-  return [payload.system.trim(), worker].filter(Boolean).join("\n\n");
+  const prose = payload.task.startsWith("code.") ? "" : stylePrompt();
+  return [payload.system.trim(), worker, prose].filter(Boolean).join("\n\n");
 }
 
 /** A concise SOP overview for the foreground agent and for run cards. */

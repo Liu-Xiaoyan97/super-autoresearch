@@ -7,10 +7,12 @@
  */
 
 export interface ModelRoute {
-  provider: string;
-  model: string;
-  temperature: number;
-  maxTokens: number;
+  /** Unset fields inherit the injected provider's native/session configuration. */
+  provider?: string;
+  model?: string;
+  temperature?: number;
+  /** Explicit output limit; unset delegates to the provider's native policy. */
+  maxTokens?: number;
 }
 
 export type RunnerKind = "simulated" | "subprocess";
@@ -22,6 +24,8 @@ export interface Config {
   seed: number;
   runner: RunnerKind;
   failFast: boolean;
+  /** depth = one measured defect at a time; breadth = the original seed search. */
+  searchPolicy: "depth" | "breadth";
 
   // §3.1 idea generation
   nSeed: number; // [CHOICE] N_seed
@@ -39,13 +43,21 @@ export interface Config {
   // §3.2 idea evaluation
   n0: number; // [CHOICE] top-N0 seeds
   maxEngRounds: number; // [PAPER] at most two rounds
+  /** Code/interface repairs after an invalid run; these do not consume an engineering round. */
+  maxRepairs: number; // [CHOICE] bounded repair budget
   engineeringBudgetScope: EngineeringBudgetScope;
   subsetFraction: number;
+  /** Hard cap on subset training steps; the screen uses min(fraction*full, this). */
+  subsetMaxSteps: number;
+  /** Independent seeds per subset screen; a candidate is bad only if all are worse. */
+  subsetSeeds: number;
   subsetMargin: number; // [CHOICE] 2% relative
 
   // §3.3 idea refinement
   maxRefineRounds: number; // [PAPER] up to four rounds k>=1
   successTarget: number; // [PAPER]
+  /** Minimum independent full-set winners, across at least two rounds, before writing starts. */
+  minGoodTraces: number; // [CHOICE] multi-round data gate
   nEvolved: number;
   nExplore: number;
 
@@ -56,6 +68,8 @@ export interface Config {
   // §3.5 drafting & review
   reviewThreshold: number; // [PAPER]
   reviewScaleMax: number; // [PAPER]
+  /** Independent reviewers per paper round; every score must reach the threshold. */
+  reviewPanelSize: number; // [CHOICE] all-reviewer gate
   maxPeerRounds: number; // [PAPER]
   maxReviewRefinements: number; // [PAPER]
   venueFormat: string;
@@ -72,25 +86,22 @@ export interface Config {
 }
 
 export function modelRoute(over: Partial<ModelRoute> = {}): ModelRoute {
-  return {
-    provider: "opencode-go",
-    model: "deepseek-v4.1-flash",
-    temperature: 0.2,
-    maxTokens: 8192,
-    ...over,
-  };
+  if (over.maxTokens !== undefined && (!Number.isSafeInteger(over.maxTokens) || over.maxTokens <= 0)) {
+    throw new RangeError("maxTokens must be a positive safe integer when specified");
+  }
+  return { ...over };
 }
 
-/** Appendix A.2: Flash for everything except the coding-heavy roles. */
+/** Inherit Pi's selected model unless the user explicitly configures an RSI route. */
 export function defaultModelRoutes(): Record<string, ModelRoute> {
-  const model = process.env.RSI_MODEL || "deepseek-v4.1-flash";
+  const model = process.env.RSI_MODEL || undefined;
   const coding = process.env.RSI_CODING_MODEL || model;
   return {
-    default: modelRoute({ model }),
-    coding: modelRoute({ model: coding }),
-    ablation: modelRoute({ model: coding }),
-    rebuttal: modelRoute({ model: coding }),
-    draft_enhancer: modelRoute({ model: coding }),
+    default: modelRoute(model ? { model } : {}),
+    coding: modelRoute(coding ? { model: coding } : {}),
+    ablation: modelRoute(coding ? { model: coding } : {}),
+    rebuttal: modelRoute(coding ? { model: coding } : {}),
+    draft_enhancer: modelRoute(coding ? { model: coding } : {}),
   };
 }
 
@@ -101,6 +112,7 @@ export function defaultConfig(over: Partial<Config> = {}): Config {
     seed: 7,
     runner: "simulated",
     failFast: false,
+    searchPolicy: "depth",
 
     nSeed: 8,
     maxLimitationRounds: 16,
@@ -115,12 +127,16 @@ export function defaultConfig(over: Partial<Config> = {}): Config {
 
     n0: 2,
     maxEngRounds: 2,
+    maxRepairs: 2,
     engineeringBudgetScope: "per_idea",
-    subsetFraction: 0.25,
+    subsetFraction: 0.1,
+    subsetMaxSteps: 200,
+    subsetSeeds: 3,
     subsetMargin: 0.02,
 
     maxRefineRounds: 4,
     successTarget: 4,
+    minGoodTraces: 2,
     nEvolved: 1,
     nExplore: 1,
 
@@ -129,6 +145,7 @@ export function defaultConfig(over: Partial<Config> = {}): Config {
 
     reviewThreshold: 8,
     reviewScaleMax: 10,
+    reviewPanelSize: 3,
     maxPeerRounds: 2,
     maxReviewRefinements: 1,
     venueFormat: "iclr2025",

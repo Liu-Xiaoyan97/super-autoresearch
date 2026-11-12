@@ -34,6 +34,7 @@ export type Stage =
   | "limits"
   | "seeds"
   | "baseline"
+  | "diagnose"
   | "search"
   | "select"
   | "ablations"
@@ -48,6 +49,7 @@ export const STAGES: readonly Stage[] = [
   "limits",
   "seeds",
   "baseline",
+  "diagnose",
   "search",
   "select",
   "ablations",
@@ -231,8 +233,9 @@ export interface TicketPayload {
   schemaName?: string;
   provider?: string;
   model?: string;
-  temperature: number;
-  maxTokens: number;
+  temperature?: number;
+  /** Unset inherits the native Pi output policy; only an explicit value caps it. */
+  maxTokens?: number;
   meta: Record<string, unknown>;
   /** Tool names the worker may use; empty means a pure reasoning worker. */
   tools?: string[];

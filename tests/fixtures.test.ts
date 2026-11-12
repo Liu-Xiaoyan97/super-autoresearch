@@ -33,7 +33,7 @@ test("the coral fixture targets the non-Transformer dense stack", () => {
   assert.equal(problem.repo_ref, "rsi-bench");
   assert.equal(problem.remote?.gpu_ids, "0");
   assert.equal(problem.remote?.env.RSI_CORAL_TRAIN_DATA, "/home/sl/SlimPajama-10B");
-  assert.equal(problem.remote?.env.RSI_CORAL_TOKENIZER, "/home/sl/coral-e2-latest-checkpoint-wikitext-cpu-20261109-1955/snapshot/checkpoint-3000");
+  assert.equal(problem.remote?.env.RSI_CORAL_TOKENIZER, "/home/sl/coral-e2-C512L21H2720-1b-bf16only-20261109-1020/eval/canonical-tokenizer");
   assert.equal(problem.remote?.env.RSI_CORAL_STAGE, "stages/pretrain-dense-158m-025b.json");
   assert.deepEqual(problem.experiment_command?.slice(0, 2), ["{python}", "bench/rsi_coral_train_eval.py"]);
   assert.ok(problem.forbidden.some((item) => /self-attention|transformer/.test(item)));

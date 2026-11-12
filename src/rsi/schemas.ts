@@ -194,10 +194,12 @@ export const VerdictSpec: StructuredSpec<Verdict> = {
   fallback: () => makeVerdict(),
 };
 
-function patchSpec(name: string, fallback: string): StructuredSpec<{ patch: string }> {
+const PATCH_INSTRUCTION = '{"patch":"unified diff only: --- a/path, +++ b/path, @@ hunks; no prose, no shell code"}';
+
+function patchSpec(name: string, fallback: string, instruction = PATCH_INSTRUCTION): StructuredSpec<{ patch: string }> {
   return {
     name,
-    instruction: '{"patch":"unified diff only: --- a/path, +++ b/path, @@ hunks; no prose, no shell code"}',
+    instruction,
     parse(raw) {
       const item = asRecord(raw) ?? {};
       return { patch: str(item.patch, fallback) };
@@ -209,6 +211,9 @@ function patchSpec(name: string, fallback: string): StructuredSpec<{ patch: stri
 export const BaselinePatch = patchSpec(
   "BaselinePatch",
   "Reproduce the unmodified reference method with the fixed benchmark protocol.",
+  // The baseline is the authorized snapshot, not a new implementation. An
+  // empty patch is the normal answer; a diff is only for broken plumbing.
+  '{"patch":"empty string for the unmodified baseline snapshot; return a minimal plumbing diff only if the snapshot cannot run"}',
 );
 export const SubsetPatch = patchSpec(
   "SubsetPatch",

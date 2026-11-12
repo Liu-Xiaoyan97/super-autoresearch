@@ -186,6 +186,7 @@ export class InlineWorker implements TaskWorker {
       maxTokens: payload.maxTokens,
       schemaName: payload.schemaName,
       meta: payload.meta,
+      signal,
     });
     return {
       state: "ready",
@@ -222,8 +223,12 @@ export const REPORT_PARAMETERS = {
     },
     output: {
       type: "object",
-      description: "The task's answer. For RSI tasks, put the exact JSON text in output.text.",
-      properties: { text: { type: "string" } },
+      description:
+        "The answer envelope, never the answer's fields directly. For state=ready, output.text is required: " +
+        "a string holding the exact answer (the JSON object the task asked for, serialized as text).",
+      properties: {
+        text: { type: "string", description: "The exact answer text; the JSON text for JSON tasks." },
+      },
     },
     question: {
       type: "string",
@@ -240,28 +245,42 @@ export interface WorkerReportEnvelope {
   question?: string;
 }
 
-/** Normalize whatever a worker reported into the envelope the Engine accepts. */
+/**
+ * Normalize whatever a worker reported into the envelope the Engine accepts.
+ *
+ * A worker may answer with `output: {decision, feedback, ...}` instead of
+ * wrapping that JSON in `output.text`. Those fields are the answer, not a
+ * missing answer, so the envelope canonicalizes every accepted shape to
+ * `{ text }` once. Validation (JSON when the task requires a schema) still
+ * happens on the text, so tolerance for the wrapper never weakens the answer.
+ */
 export function normalizeEnvelope(raw: unknown, fallbackText = ""): WorkerReportEnvelope {
   const record = asRecord(raw) ?? {};
   const requested = str(record.state, "");
   const state: ReportState = requested === "ready" || requested === "blocked" || requested === "failed" ? requested : "ready";
-  const output = record.output ?? (fallbackText ? { text: fallbackText } : undefined);
+  const answer = outputText(record.output) || fallbackText;
   return {
     state,
     summary: str(record.summary, fallbackText.slice(0, 300) || "task finished"),
-    output,
+    output: answer ? { text: answer } : record.output,
     question: str(record.question) || undefined,
   };
 }
 
-/** The text a task ticket's answer carries, from any accepted output shape. */
+/**
+ * The text a task ticket's answer carries, from any accepted output shape:
+ * a string, `{ text }`, `{ answer }`, or the answer's own JSON fields. The
+ * last shape is serialized back to the JSON text every downstream parser
+ * reads; only a genuinely empty output has no text.
+ */
 export function outputText(output: unknown): string {
   if (typeof output === "string") return output;
+  if (Array.isArray(output)) return JSON.stringify(output);
   const record = asRecord(output);
   if (!record) return "";
   if (typeof record.text === "string") return record.text;
   if (typeof record.answer === "string") return record.answer;
-  return "";
+  return Object.keys(record).length ? JSON.stringify(record) : "";
 }
 
 /** Build the payload a ticket carries from an LLM request-like object. */
@@ -272,8 +291,8 @@ export function payloadOf(input: {
   user: string;
   provider?: string;
   model?: string;
-  temperature: number;
-  maxTokens: number;
+  temperature?: number;
+  maxTokens?: number;
   schemaName?: string;
   meta: Record<string, unknown>;
   tools?: string[];

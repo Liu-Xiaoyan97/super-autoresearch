@@ -21,6 +21,9 @@ services:
       RSI_SUPERAGENT_POLICY: ${RSI_SUPERAGENT_POLICY:-yolo}
       # Host workspace mounted at /repos in the container.
       RSI_TARGET_REPO: ${RSI_TARGET_REPO:-/repos/coral-rsi}
+      # Project-global baseline store; persisted under the mounted RSI repo so
+      # recreating the container does not discard measured baselines.
+      RSI_BASELINE_DIR: ${RSI_BASELINE_DIR:-/workspace/RSI/.rsi-baseline}
       # The Kiri VM cannot reach host loopback; use host.docker.internal.
       HTTP_PROXY: ${CONTAINER_HTTP_PROXY:-}
       HTTPS_PROXY: ${CONTAINER_HTTPS_PROXY:-}

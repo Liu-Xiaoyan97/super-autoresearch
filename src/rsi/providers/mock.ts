@@ -55,9 +55,11 @@ function cleanPrefix(task: string): string {
 }
 
 function decisionCycle(task: string, index: number): string {
-  const cycle =
-    task === "review.meta" ? ["refine", "accept"] : ["refine", "good", "accept", "bad", "engineer"];
-  return cycle[index % cycle.length];
+  if (task === "review.meta") return ["refine", "accept"][index % 2];
+  // §3.4 is a subset-only negative control; the offline simulation deliberately
+  // reports contributing components, so the default critique accepts them.
+  if (task === "ablation.critic") return ["good", "refine", "accept"][index % 3];
+  return ["refine", "good", "accept", "bad", "engineer"][index % 5];
 }
 
 export class MockLLMProvider extends LLMProvider {

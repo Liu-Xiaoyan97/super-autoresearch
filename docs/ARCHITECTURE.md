@@ -13,7 +13,9 @@ this tree; the field names and artifact contract are unchanged.
 Pi session (pi-agent) = the one foreground agent
   └─ extensions/rsi.ts                         extension entry
        ├─ rsi_research / rsi_superagent / rsi_inspect / rsi_replay   tools
-       ├─ /rsi                                  command
+       ├─ rsi_adapter_smoke                     native real-data adapter gate
+       ├─ rsi_iteration → src/rsi/iteration.ts  one blocking real subset pair
+       ├─ /rsi (including smoke, iterate)       command
        ├─ src/rsi/superagent/                   the superagent protocol
        │    ├─ model.ts store.ts policy.ts      domain, durability, gate
        │    ├─ sop.ts                           §3.1–§3.6 as stages and rules
@@ -28,7 +30,8 @@ Pi session (pi-agent) = the one foreground agent
             └─ core/orchestrator.ts             the state machine
 ```
 
-The extension is a normal Pi package (`package.json` → `pi.extensions`). It has
+RSI is a deeply integrated native Pi extension, packaged through
+`package.json` → `pi.extensions`, not a standalone application. It has
 no runtime npm dependencies; Pi supplies `@earendil-works/pi-coding-agent` and
 `typebox`. `npm install` is only for `typescript` and `@types/node` during
 development.
@@ -48,7 +51,24 @@ one Engine, one policy and one durable store. `docs/SUPERAGENT.md` is the
 protocol reference.
 
 Both resolve the same route and credential through Pi, and both pass the Pi
-session id (opencode-go requires `x-opencode-session`).
+session id (opencode-go requires `x-opencode-session`). Default provider/model
+and thinking inherit the active Pi session; explicit tool/command options and
+user `RSI_MODEL` / `RSI_CODING_MODEL` preferences can override the route.
+
+Optional `max_tokens` sets the all-role output cap; `coding_max_tokens` is the
+coding-role override (`--max-tokens` / `--coding-max-tokens` on native `/rsi run`
+and `/rsi iterate`). Omission leaves the model object unchanged and follows
+ordinary Pi's native request policy, not an RSI 8192 default or fixed 131072
+ceiling. DeepSeek's configured 1M context / 384000 output capability is preserved;
+Audited Pi 1.5.2 defaults to model.maxTokens, then fits output to remaining context.
+Explicit caps apply consistently to inline calls and `PiWorker` children within
+model capability. Historically the inline/bounded 8k cap did not constrain the
+actual child, which ignored the payload cap.
+
+Model capacity is not mandatory output length or permission: task isolation,
+selective source context, protected protocols, tool allowlists, wall/call limits
+and experiment authority remain unchanged. A tiny GPU training budget does not
+reduce LLM capacity or grant every worker shell/GPU access.
 
 ---
 
@@ -57,15 +77,17 @@ session id (opencode-go requires `x-opencode-session`).
 ```
 run.ts::runResearch
   └─ Orchestrator.run()                        core/orchestrator.ts
+       ├─ baseline()                           §3.2  → baseline.ok; full lazy
+       ├─ diagnose()   (only with diagnose_command)
+       │                                       diagnose → stage.diagnose / diagnose.ok:N
        ├─ limitations()                        §3.1  → stage.limitations / limits.ok:N
-       ├─ seedIdeas()                          §3.1  → seeds:N (h0 + ranked pool)
-       ├─ baseline()                           §3.2  → baseline.ok + baseline.full.ok
+       ├─ seedIdeas()                          §3.1  → seeds:N (depth: 1; breadth: pool)
        ├─ ideaSearch()                         §3.2+§3.3
        │    ├─ evaluate(top-N0 seeds, 0)
        │    ├─ for k in 1..K: evolve(R_<k) ∪ next N_e seeds → evaluate
        │    └─ abort when 0 Good after K     ("no_good_ideas")
        ├─ select()                             §3.3  → select:<id> / state.adopt
-       ├─ ablations()                          §3.4  → ablation.good|refine → keep|adopt
+       ├─ ablations()                          §3.4  → ablation.good|refine → keep (subset-only)
        ├─ draftAndReview()                     §3.5  → peer.r0:7.3 → peer.r1:8.6
        ├─ metaReview()                         §3.6  → meta.accept | meta.refine → keep|adopt
        └─ exportArtifacts()                    → state.json, traces.jsonl, final.json, *.tex
@@ -179,7 +201,72 @@ no commit and is logged under `patches/`.
 The benchmark is decoupled too: RSI core only runs
 `Problem.experiment_command` (placeholders `{scope}`, `{out}`, `{repo}`,
 `{commit}`) in the worktree, or the default `python3 run_experiment.py ...`.
-There is no project-specific import or injected runner in `src/rsi/`.
+There is no project-specific import or injected runner in `src/rsi/`, and no
+project-specific integrations ship in the RSI product. Existing `examples/`
+fixtures remain configuration examples, not implementations or proof of readiness.
+
+### Target-owned adapter generation and readiness
+
+In Pi, `/skill:rsi-adapter examples/<project>.json --repo /path/to/independent/target`
+directly inspects the independent target repository. On a separate candidate
+branch/ref, it fills missing real data/training/checkpoint save-and-reload/lm-eval
+code, generates the target bench adapter, and keeps evaluator helpers and project
+tests in the target. It is not merely an RSI-side wrapper or a TODO handoff.
+
+The optional deterministic helper is:
+
+```bash
+python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
+  --problem examples/<project>.json \
+  --repo /path/to/independent/target \
+  --name project
+```
+
+It writes the target's canonical command path (normally
+`bench/rsi_project_train_eval.py`) and `.rsi/adapter/project.json` plus
+`.rsi/adapter/project.md`. Scaffolding alone cannot certify a usable ref.
+
+Point the test Problem's `repo_ref` at the candidate, then invoke the native Pi
+gate before delivering that ref as usable:
+
+```text
+/rsi smoke examples/<project>.json --repo /path/to/independent/target --timeout 900 --env RSI_PROJECT_TRAIN_STEPS=1 --env RSI_PROJECT_TRAIN_BATCH_SIZE=1
+```
+
+The equivalent `rsi_adapter_smoke` tool accepts `problem`, `repo`, `timeout_s`,
+optional fresh evidence directory `out`, and an `env` object; repeated command
+`--env KEY=VALUE` flags supply per-smoke overrides. It performs real GitWorkspace
+→ rsync → SSH RemoteRunner → raw JSON/metrics validation without an LLM. Target
+budget controls must explicitly bound both training and evaluation.
+
+Readiness requires real data, actual tiny training, a saved checkpoint reloaded
+by the evaluator, and real lm-eval finite metrics. Failure stays
+`blocked / remote not verified`; a passing report records the tested commit/ref,
+commands, logs and artifacts. Smoke numbers are not a scientific baseline.
+Explicit evidence `out` must be new; configured remote worktree/out templates
+must include `{run_id}` to isolate destructive rsync. See `docs/REMOTE.md` for
+preflight fixes and evidence details; all project-specific fixes stay in target.
+
+### Native bounded optimization (separate from the paper SOP)
+
+`rsi_iteration` / `/rsi iterate` calls `runIteration` directly in the current Pi
+invocation. It injects `PiLLMProvider(ctx.modelRegistry)` with the selected
+provider/model, session id and native abort signal. It never dispatches a
+superagent session, constructs CLI credentials, or falls back to mock metrics.
+Live `sop.spend`, `sop.search` (coding) and `sop.experiment` rules govern the
+operation; person-level rules require fresh UI approval or an explicit policy
+grant. A concurrent pause still wins after approval.
+
+The exact Problem/ref is retained (only optional local `repo` is overridden).
+`out` names a fresh run directory, not a reusable parent; the same `env`, seed,
+subset and protected protocol apply to baseline and the single candidate.
+`runIteration` uses the real generic GitWorkspace + RemoteRunner/SubprocessRunner
+with at most two subset invocations in paired mode (one candidate when reusing the
+incumbent) and no engineering/full/ablation/
+paper stages. `summary.json`, `iteration.json`, traces and `artifacts/` retain
+measurement, commits and diff. Completed rejection has `isError: false`; only
+failed execution is a tool error. Neither acceptance nor rejection certifies a
+full scientific benchmark; target raw reports own train/checkpoint/eval evidence.
 
 ### Web retrieval
 
@@ -195,15 +282,17 @@ empirical gates.
 
 | Condition | Result | Code |
 |---|---|---|
-| ≥ `successTarget` Good ideas | proceed to select | `ideaSearch` |
+| ≥ `successTarget` Good ideas | proceed to the data gate | `ideaSearch` |
 | 0 Good after `maxRefineRounds` | `aborted=true`, `no_good_ideas` | `ScientificAbort` |
+| < `minGoodTraces` full-set winners (or < 2 rounds) | `aborted=true`, `data_gate_not_met`; **no paper** | `dataGate` |
 | baseline execution failed | `aborted=true`, `baseline_failed` | `baseline` |
 | 0 eligible seeds after guidance filtering | `aborted=true`, `no_eligible_seeds` | `seedIdeas` + `run` |
 | seed pool short but non-empty | `seeds.partial:N`, **continues** | `seedIdeas` |
-| ablation `REFINE` and no strict improvement | keep incumbent, continue to drafting | `ablations` |
-| review ≥ threshold or `maxPeerRounds` | stop rebuttal loop | `draftAndReview` |
+| ablation `REFINE` and no strict improvement | `aborted=true`, `data_gate_not_met`; **no paper** | `attributionGate` |
+| **all** `reviewPanelSize` reviewers ≥ threshold | stop the paper loop, proceed to meta | `draftAndReview` |
+| review loop reaches `maxPeerRounds` / `maxReviewRefinements` | stop the paper loop; meta decides | `draftAndReview` |
 | meta `Refine` and no strict improvement | `meta.keep`, export incumbent (`accepted=false`) | `metaReview` |
-| meta `Accept` | export (`accepted=true` if integrity clean) | `metaReview` |
+| meta `Accept` | export (`accepted=true` if integrity clean and all reviewers passed) | `metaReview` |
 | budget hit | `aborted=true`, `max_*` | `BudgetExceeded` |
 
 `aborted=true` means *the science dead-ended*. A non-improving refinement is
@@ -233,6 +322,11 @@ This asymmetry is deliberate: a model may **block** a promotion, never **cause**
 |---|---|---|
 | Round-0 batch | exactly top-`n0` seeds | `config.n0` |
 | `N_seed`, `N0`, `N_meta` | 8, 2, 2 | `config.ts` |
+| Data gate | ≥ 2 full-set Good traces across ≥ 2 rounds, plus accepted attribution | `dataGate`, `attributionGate` |
+| Project baseline store | one store per project/repo, shared by all runs; `RSI_BASELINE_DIR` override; repo-less fallback `<out>/.rsi/baseline` | `runtime/incumbent.ts:projectBaselineDir` |
+| Full baseline | lazy: measured on the first candidate that reaches full, or at `select` on resume | `Orchestrator.ensureBaselineFull` |
+| Reviewer panel | 3 independent reviewers; **every** score ≥ `reviewThreshold` | `config.reviewPanelSize` |
+| Subset screening budget | `min(10% of full_steps, 200)` real steps via `Problem.budget` | `runtime/workspace.ts:subsetBudgetEnv` |
 | Subset screening margin | 2% relative (`subsetMargin`) | `config.ts` |
 | "strictly better" | no metric regresses beyond tolerance **and** ≥1 improves | `types.isStrictlyBetter` |
 | Exploration guidance | soft weight on ranking, hard only with `strictDirections` | SPEC §2b |
@@ -241,6 +335,8 @@ This asymmetry is deliberate: a model may **block** a promotion, never **cause**
 | Ablation contribution | deterministic 2–11% drop; rare dead component (~5%) | `agents/coding.ts` |
 | Budget charging | only the agent that calls `workspace.run` charges | `agents/coding.ts` |
 | Engineering rounds | two per **idea**, shared by subset and full-set loops | `config.engineeringBudgetScope` |
+| Invalid-run repairs | failed execution/metrics enters engineer without consuming an engineering round; bounded by `maxRepairs` | `SubsetCritic`, `FullSetCritic`, `IdeaImplementer` |
+| Component ablations | subset-only, multi-seed, compared with the candidate subset control; no full-run refine | `Orchestrator.ablations`, `AblationCoder` |
 | Review budget across meta rounds | reset per new draft | `core/orchestrator.ts` |
 | Manuscript claims | dropped when unsupported (never resurrected) | `agents/writing.ts` |
 | Integrity alignment | 0 if the deterministic check finds no support | `agents/integrity.ts` |
@@ -264,9 +360,11 @@ the same workaround.
   tolerant parser, a fallback, and a JSON shape instruction.
 * **Real execution** → `runner: "subprocess"`; `Problem.experiment_command`
   runs in the candidate worktree and writes `{"metrics": {...}}` to `--out`.
-  The target project owns its benchmark harness; RSI core does not import it.
-  See `examples/dfm_ssm_external.json` and the optional adapter template in
-  `integrations/dfm_ssm/`.
+  The target project owns its benchmark harness, evaluator helpers, and tests;
+  RSI does not ship or import project-specific implementations. Use
+  `/skill:rsi-adapter` and the native `rsi_adapter_smoke` gate; see
+  `examples/dfm_ssm_external.json` for configuration and `docs/REMOTE.md` for
+  real-data readiness requirements.
 * **One context per problem.** `AgentContext` holds a single `Problem` and
   `scratch.baseline` / `scratch.baseline_full` are deliberately unqualified.
   Reusing a context for a different problem would reuse that problem's baselines.

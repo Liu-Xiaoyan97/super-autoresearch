@@ -1,0 +1,8 @@
+{
+  "ablation.critic": {
+    "decision": "good",
+    "feedback": "The ablation attributes the full-set gain to the core mechanism.",
+    "metrics": {},
+    "notes": "Offline fixture: accepted attribution with no real scientific claim."
+  }
+}

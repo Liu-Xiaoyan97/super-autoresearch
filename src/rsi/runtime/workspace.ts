@@ -91,6 +91,8 @@ export interface ExperimentRequest {
   metrics: string[];
   idea: Idea | null;
   label: string;
+  /** Scope-specific budget env (subset screen), merged by the runner. */
+  env?: Record<string, string>;
 }
 
 export interface Runner {
@@ -104,7 +106,7 @@ export interface Workspace {
   baselineRepo(): Promise<RepoRef>;
   writePatch(repo: RepoRef, patch: string, label: string): Promise<RepoRef>;
   diff(a: RepoRef, b: RepoRef): Promise<string>;
-  run(repo: RepoRef, scope: Scope, idea?: Idea | null): Promise<ExperimentResult>;
+  run(repo: RepoRef, scope: Scope, idea?: Idea | null, seed?: number): Promise<ExperimentResult>;
   /** Source context for coding agents (git tree + relevant files at a commit). */
   brief?(repo: RepoRef, query?: string, maxChars?: number): string;
 }
@@ -200,8 +202,29 @@ export function expandCommand(
   );
 }
 
+/**
+ * The subset screen uses a real fraction of the full budget, not a two-step
+ * smoke: steps = max(1, min(floor(full * fraction), cap)). The target adapter
+ * reads the declared env key; the full scope is untouched.
+ */
+export function subsetBudgetEnv(
+  problem: Problem,
+  config: Config,
+  scope: Scope,
+): Record<string, string> {
+  // Subset screening and component ablations share the short real budget.
+  if (scope !== "subset" && scope !== "ablation") return {};
+  const budget = problem.budget;
+  if (!budget?.full_steps || !budget.steps_env) return {};
+  const fraction = budget.subset_fraction ?? config.subsetFraction;
+  const cap = budget.subset_max_steps ?? config.subsetMaxSteps;
+  const steps = Math.max(1, Math.min(Math.floor(budget.full_steps * fraction), Math.floor(cap)));
+  return { [budget.steps_env]: String(steps) };
+}
+
 export interface SubprocessOptions {
   timeoutS?: number;
+  signal?: AbortSignal;
   /** Command template; `{scope}`, `{out}`, `{repo}`, `{commit}` are substituted. */
   command?: readonly string[] | null;
 }
@@ -209,12 +232,14 @@ export interface SubprocessOptions {
 export class SubprocessRunner implements Runner {
   private readonly store: ArtifactStore;
   private readonly command: readonly string[];
+  private readonly signal?: AbortSignal;
   readonly timeoutS: number;
   private sequence = 0;
 
   constructor(root: string | ArtifactStore, opts: SubprocessOptions = {}) {
     this.store = typeof root === "string" ? new ArtifactStore(root) : root;
     this.timeoutS = opts.timeoutS ?? 300;
+    this.signal = opts.signal;
     this.command = opts.command?.length ? opts.command : DEFAULT_EXPERIMENT_COMMAND;
   }
 
@@ -229,46 +254,59 @@ export class SubprocessRunner implements Runner {
     const repo = path.resolve(req.repo.path);
     const argv = this.expand(req, out);
 
+    const failure = (stdout: string, stderr: string): ExperimentResult => ({
+      metrics: {},
+      status: "failed",
+      log_path: out,
+      stdout,
+      stderr: stderr.trim(),
+      wall_time_s: (Date.now() - started) / 1000,
+    });
+    const errorText = (reason: unknown): string =>
+      reason instanceof Error ? `${reason.name}: ${reason.message}` : `AbortError: ${String(reason)}`;
+    if (this.signal?.aborted) return failure("", errorText(this.signal.reason));
+
     const result = await new Promise<ExperimentResult>((resolve) => {
       let stdout = "";
       let stderr = "";
       let settled = false;
+      let closed = false;
+      let cancellation: string | undefined;
+      let processError: Error | undefined;
+      let exitCode: number | null = null;
+      let exitSignal: NodeJS.Signals | null = null;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+      const grouped = process.platform !== "win32";
       const child = spawn(argv[0], argv.slice(1), {
         cwd: repo,
         stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, ...(req.env ?? {}) },
+        // A new process group lets us terminate ordinary descendants as well.
+        detached: grouped,
       });
-      const timer = setTimeout(() => {
-        if (settled) return;
-        stderr += `\nTimeoutError: exceeded ${this.timeoutS}s`;
-        child.kill("SIGKILL");
-      }, this.timeoutS * 1000);
-
-      child.stdout.on("data", (chunk: Buffer) => {
-        stdout += chunk.toString("utf8");
-      });
-      child.stderr.on("data", (chunk: Buffer) => {
-        stderr += chunk.toString("utf8");
-      });
-      child.on("error", (error) => {
-        if (settled) return;
+      const kill = (signal: NodeJS.Signals) => {
+        try {
+          if (grouped && child.pid) process.kill(-child.pid, signal);
+          else child.kill(signal);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
+            stderr += `\n${errorText(error)}`;
+            child.kill(signal);
+          }
+        }
+      };
+      const finish = () => {
+        if (settled || !closed || killTimer) return;
         settled = true;
         clearTimeout(timer);
-        resolve({
-          metrics: {},
-          status: "failed",
-          log_path: out,
-          stdout,
-          stderr: `${stderr}\n${error.name}: ${error.message}`.trim(),
-          wall_time_s: (Date.now() - started) / 1000,
-        });
-      });
-      child.on("close", (code, signal) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
+        this.signal?.removeEventListener("abort", abort);
+        if (cancellation || processError) {
+          resolve(failure(stdout, `${stderr}\n${cancellation ?? errorText(processError)}`));
+          return;
+        }
         const wall = (Date.now() - started) / 1000;
         try {
-          if (code !== 0) throw new Error(`benchmark exited with status ${code ?? signal}`);
+          if (exitCode !== 0) throw new Error(`benchmark exited with status ${exitCode ?? exitSignal}`);
           const data = JSON.parse(fs.readFileSync(out, "utf8")) as Record<string, unknown>;
           const raw = (data.metrics ?? data) as Record<string, unknown>;
           if (!raw || typeof raw !== "object" || !Object.keys(raw).length) {
@@ -282,15 +320,48 @@ export class SubprocessRunner implements Runner {
           }
           resolve({ metrics, status: "ok", log_path: out, stdout, stderr, wall_time_s: wall });
         } catch (error) {
-          resolve({
-            metrics: {},
-            status: "failed",
-            log_path: out,
-            stdout,
-            stderr: `${stderr}\n${(error as Error).name}: ${(error as Error).message}`.trim(),
-            wall_time_s: wall,
-          });
+          resolve(failure(stdout, `${stderr}\n${errorText(error)}`));
         }
+      };
+      const stop = (reason: unknown) => {
+        if (settled || cancellation) return;
+        cancellation = errorText(reason);
+        clearTimeout(timer);
+        // Give adapters a brief opportunity to clean up children they started
+        // in separate sessions. Then kill our group even if its leader exited.
+        kill("SIGTERM");
+        killTimer = setTimeout(() => {
+          kill("SIGKILL");
+          killTimer = undefined;
+          finish();
+        }, 500);
+      };
+      const abort = () => stop(this.signal!.reason);
+      const timer = setTimeout(
+        () => stop(new DOMException(`exceeded ${this.timeoutS}s`, "TimeoutError")),
+        this.timeoutS * 1000,
+      );
+      this.signal?.addEventListener("abort", abort, { once: true });
+      if (this.signal?.aborted) abort();
+      child.stdout.on("data", (chunk: Buffer) => {
+        stdout += chunk.toString("utf8");
+      });
+      child.stderr.on("data", (chunk: Buffer) => {
+        stderr += chunk.toString("utf8");
+      });
+      child.on("error", (error) => {
+        processError = error;
+        // A failed spawn has no process or descendants to wait for.
+        if (!child.pid) {
+          closed = true;
+          finish();
+        }
+      });
+      child.on("close", (code, signal) => {
+        closed = true;
+        exitCode = code;
+        exitSignal = signal;
+        finish();
       });
     });
     return result;
@@ -326,6 +397,7 @@ export function buildRemoteInvocation(
   }
   const env: Record<string, string> = {
     ...remote.env,
+    ...(req.env ?? {}),
     CUDA_VISIBLE_DEVICES: remote.gpu_ids,
   };
   const argv = expandCommand(command, req, remoteWorktree, remoteOut, remote.python)
@@ -345,23 +417,32 @@ export function expandRemoteTemplate(template: string, runId: string, repoName: 
   return template.replaceAll("{run_id}", safeName(runId)).replaceAll("{repo}", repoName);
 }
 
-interface ShResult {
+export interface RemoteTransportResult {
   code: number;
   stdout: string;
   stderr: string;
   killed: boolean;
 }
 
-async function sh(
+export type RemoteTransport = (
   binary: string,
   args: readonly string[],
-  opts: { timeoutS?: number } = {},
-): Promise<ShResult> {
+  opts: { timeoutS?: number; signal?: AbortSignal },
+) => Promise<RemoteTransportResult>;
+
+export async function sh(
+  binary: string,
+  args: readonly string[],
+  opts: { timeoutS?: number; signal?: AbortSignal } = {},
+): Promise<RemoteTransportResult> {
+  if (opts.signal?.aborted) return { code: 1, stdout: "", stderr: "Aborted", killed: true };
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
     let settled = false;
     const child = spawn(binary, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const abort = () => child.kill("SIGKILL");
+    opts.signal?.addEventListener("abort", abort, { once: true });
     const timer = opts.timeoutS
       ? setTimeout(() => {
           if (settled) return;
@@ -378,12 +459,14 @@ async function sh(
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", abort);
       resolve({ code: 1, stdout, stderr: `${stderr}\n${error.message}`.trim(), killed: false });
     });
     child.on("close", (code, signal) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", abort);
       resolve({
         code: code ?? 1,
         stdout,
@@ -399,6 +482,9 @@ export interface RemoteOptions {
   command: readonly string[] | null;
   runId: string;
   timeoutS?: number;
+  signal?: AbortSignal;
+  /** Testable transport boundary; production uses real subprocesses. */
+  transport?: RemoteTransport;
 }
 
 export class RemoteRunner implements Runner {
@@ -407,6 +493,8 @@ export class RemoteRunner implements Runner {
   private readonly command: readonly string[];
   private readonly runId: string;
   private readonly timeoutS: number;
+  private readonly signal?: AbortSignal;
+  private readonly transport: RemoteTransport;
   private sequence = 0;
 
   constructor(root: string | ArtifactStore, opts: RemoteOptions) {
@@ -415,10 +503,37 @@ export class RemoteRunner implements Runner {
     this.command = opts.command?.length ? opts.command : DEFAULT_EXPERIMENT_COMMAND;
     this.runId = opts.runId;
     this.timeoutS = opts.timeoutS ?? opts.remote.timeout_s ?? 7200;
+    this.signal = opts.signal;
+    this.transport = opts.transport ?? sh;
+  }
+
+  private sh(binary: string, args: readonly string[], opts: { timeoutS?: number } = {}): Promise<RemoteTransportResult> {
+    return this.transport(binary, args, { ...opts, signal: this.signal });
   }
 
   private sshBase(): string[] {
     return [...this.remote.ssh_args, this.remote.host];
+  }
+
+  /**
+   * Kill a detached remote process group after a local abort/timeout. This
+   * deliberately uses a fresh transport call: `this.sh` carries the already
+   * aborted signal and would skip the cleanup SSH itself.
+   */
+  private async cleanupRemote(pidFile: string): Promise<void> {
+    const script = [
+      `p=$(cat ${shellQuote(pidFile)} 2>/dev/null) || exit 0`,
+      `[ -n "$p" ] || exit 0`,
+      `kill -TERM -- -$p 2>/dev/null || true`,
+      `sleep 2`,
+      `kill -KILL -- -$p 2>/dev/null || true`,
+      `rm -f ${shellQuote(pidFile)}`,
+    ].join("; ");
+    try {
+      await this.transport("ssh", [...this.sshBase(), "--", script], { timeoutS: 30 });
+    } catch {
+      /* best effort: the server may be unreachable after the abort */
+    }
   }
 
   async run(req: ExperimentRequest): Promise<ExperimentResult> {
@@ -477,7 +592,7 @@ export class RemoteRunner implements Runner {
     let stdout = "";
     let stderr = "";
 
-    const mkdir = await sh("ssh", [
+    const mkdir = await this.sh("ssh", [
       ...this.sshBase(),
       "--",
       `mkdir -p ${shellQuote(remoteWorktree)} ${shellQuote(remoteOutDir)}`,
@@ -504,24 +619,35 @@ export class RemoteRunner implements Runner {
       `${path.resolve(req.repo.path)}/`,
       `${this.remote.host}:${shellQuote(remoteWorktree)}/`,
     ];
-    const synced = await sh("rsync", rsyncArgs, { timeoutS: 1800 });
+    const synced = await this.sh("rsync", rsyncArgs, { timeoutS: 1800 });
     stdout += synced.stdout;
     stderr += synced.stderr;
     if (synced.code !== 0) return this.fail(logPath, stdout, stderr, started);
 
     const invocation = buildRemoteInvocation(this.remote, this.command, req, remoteWorktree, remoteOut);
-    const run = await sh(
+    // Run the experiment in its own remote session and record its PID. A local
+    // abort kills only the SSH client; the cleanup below reaches the remote
+    // process group by PID. An untracked `ssh` would leave training running.
+    const pidFile = path.posix.join(remoteOutDir, `.rsi-${String(seq).padStart(4, "0")}.pid`);
+    const tracked = `echo $$ > ${shellQuote(pidFile)}; ${invocation.inner}; rc=$?; if [ $rc -eq 0 ]; then rm -f ${shellQuote(pidFile)}; fi; exit $rc`;
+    const launch = `if command -v setsid >/dev/null 2>&1; then setsid bash -lc ${shellQuote(tracked)} & wait $!; else bash -lc ${shellQuote(tracked)} & wait $!; fi`;
+    const run = await this.sh(
       "ssh",
-      [...this.sshBase(), "--", `bash -lc ${shellQuote(invocation.inner)}`],
+      [...this.sshBase(), "--", `bash -lc ${shellQuote(launch)}`],
       { timeoutS: this.timeoutS },
     );
     stdout += run.stdout;
     stderr += run.stderr;
-    if (run.killed) stderr += `\nTimeoutError: remote command exceeded ${this.timeoutS}s`;
+    if (run.killed || this.signal?.aborted || run.code !== 0) {
+      await this.cleanupRemote(pidFile);
+    }
+    if (run.killed) stderr += this.signal?.aborted ? "\nAborted: remote process group terminated" : `\nTimeoutError: remote command exceeded ${this.timeoutS}s`;
 
-    const fetched = await sh("ssh", [...this.sshBase(), "--", `cat ${shellQuote(remoteOut)}`], {
+    const fetched = await this.sh("ssh", [...this.sshBase(), "--", `cat ${shellQuote(remoteOut)}`], {
       timeoutS: 120,
     });
+    // Keep the original report even on nonzero remote exits or invalid JSON.
+    const rawReportPath = this.store.writeText(`experiments/remote-${String(seq).padStart(4, "0")}.report.raw.txt`, fetched.stdout);
     let metrics: Record<string, number> = {};
     let status: ExperimentResult["status"] = "failed";
     if (run.code === 0 && fetched.code === 0) {
@@ -560,6 +686,9 @@ export class RemoteRunner implements Runner {
       remote_out: remoteOut,
       gpu_ids: this.remote.gpu_ids,
       command: invocation.inner,
+      raw_report_path: rawReportPath,
+      remote_exit: run.code,
+      fetch: fetched,
       result,
     });
     return result;
@@ -671,7 +800,7 @@ export class GitWorkspace implements Workspace {
   private branchPrefix = "";
   private initialized = false;
 
-  constructor(problem: Problem, config: Config, root: string, runner?: Runner, sourceOverride?: string) {
+  constructor(problem: Problem, config: Config, root: string, runner?: Runner, sourceOverride?: string, signal?: AbortSignal) {
     this.problem = problem;
     this.config = config;
     this.root = root;
@@ -687,10 +816,12 @@ export class GitWorkspace implements Workspace {
               command: problem.experiment_command,
               runId: config.runId,
               timeoutS: problem.remote.timeout_s || config.maxWallTimeS,
+              signal,
             })
           : new SubprocessRunner(this.store, {
               timeoutS: config.maxWallTimeS,
               command: problem.experiment_command,
+              signal,
             }));
   }
 
@@ -770,8 +901,10 @@ export class GitWorkspace implements Workspace {
     this.branchPrefix = `rsi/${safeName(this.config.runId)}-${namespace}`;
     this.worktree = path.join(this.root, "worktree");
     fs.rmSync(this.worktree, { recursive: true, force: true });
-    git(this.source, ["worktree", "prune"], true);
-    git(this.source, ["worktree", "add", "--detach", this.worktree, this.baseCommit]);
+    // The same repository can be mounted under different host/container paths.
+    // Global prune would unregister another runtime's live (locally invisible)
+    // user worktrees. Reclaim only our own explicitly selected worktree path.
+    git(this.source, ["worktree", "add", "--force", "--detach", this.worktree, this.baseCommit]);
     this.initialized = true;
   }
 
@@ -806,8 +939,20 @@ export class GitWorkspace implements Workspace {
     if (diff) {
       const patchFile = path.join(this.worktree, ".rsi.patch");
       fs.writeFileSync(patchFile, diff, "utf8");
-      const applied = git(this.worktree, ["apply", "--whitespace=nowarn", "--recount", ".rsi.patch"], true);
-      applyLog = `status=${applied.status}\n${applied.stdout}${applied.stderr}`.trim();
+      // Strict first. A model diff can carry a correct body but a malformed
+      // hunk header; --recount fixes counts, and -C3 tolerates an off-by-one
+      // trailing context that git otherwise rejects. Only fall back when the
+      // exact same patch would apply, so placement is still verified.
+      let strategy = "strict";
+      let applied = git(this.worktree, ["apply", "--whitespace=nowarn", "--recount", ".rsi.patch"], true);
+      if (applied.status !== 0) {
+        const check = git(this.worktree, ["apply", "--check", "--whitespace=nowarn", "--recount", "--unidiff-zero", ".rsi.patch"], true);
+        if (check.status === 0) {
+          strategy = "recount-zero";
+          applied = git(this.worktree, ["apply", "--whitespace=nowarn", "--recount", "--unidiff-zero", ".rsi.patch"], true);
+        }
+      }
+      applyLog = `strategy=${strategy} status=${applied.status}\n${applied.stdout}${applied.stderr}`.trim();
       fs.rmSync(patchFile, { force: true });
     }
     const safe = safeName(label);
@@ -852,12 +997,15 @@ export class GitWorkspace implements Workspace {
     return out;
   }
 
-  async run(repo: RepoRef, scope: Scope, idea: Idea | null = null): Promise<ExperimentResult> {
+  async run(repo: RepoRef, scope: Scope, idea: Idea | null = null, seed?: number): Promise<ExperimentResult> {
     await this.init();
     if (repo.commit) {
       const head = git(this.worktree, ["rev-parse", "HEAD"], true);
       if (head.stdout.trim() !== repo.commit) this.checkout(repo.commit);
     }
+    const env = subsetBudgetEnv(this.problem, this.config, scope);
+    const seedEnv = this.problem.budget?.seed_env;
+    if (seed !== undefined && seedEnv) env[seedEnv] = String(seed);
     const req: ExperimentRequest = {
       idea_id: idea?.id ?? "baseline",
       scope,
@@ -866,6 +1014,7 @@ export class GitWorkspace implements Workspace {
       metrics: this.problem.metrics.map((m) => m.name),
       idea,
       label: repo.label,
+      env,
     };
     const result = await this.runner.run(req);
     this.store.writeJson(`experiments/provenance-${safeName(repo.label)}-${scope}.json`, {

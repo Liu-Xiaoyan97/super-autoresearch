@@ -54,6 +54,20 @@ export interface RemoteConfig {
   excludes: string[];
 }
 
+/** Target-declared screening budget. The target adapter reads `steps_env`. */
+export interface BudgetPolicy {
+  /** Full-protocol training steps, e.g. 954. */
+  full_steps: number | null;
+  /** Fraction of full_steps for the subset screen; default 0.1. */
+  subset_fraction: number | null;
+  /** Hard cap on subset steps; default 200. */
+  subset_max_steps: number | null;
+  /** Env key the target reads for training steps (e.g. RSI_CORAL_TRAIN_STEPS). */
+  steps_env: string | null;
+  /** Env key the target reads for the training seed (e.g. RSI_CORAL_SEED). */
+  seed_env: string | null;
+}
+
 export interface Problem {
   id: string;
   statement: string;
@@ -64,11 +78,17 @@ export interface Problem {
   repo: string | null;
   /** Git ref used as the baseline (branch/tag/SHA; default HEAD). */
   repo_ref: string | null;
+  /** Target-declared full/subset budget; the subset command gets a real screen. */
+  budget: BudgetPolicy | null;
   /**
    * Command template executed in the candidate worktree. Placeholders:
    * {scope}, {out}, {repo}, {commit}. Default: python3 run_experiment.py ...
    */
   experiment_command: string[] | null;
+  /** Read-only measured analysis of the baseline; same execution surface as experiments. */
+  diagnose_command: string[] | null;
+  /** Target-owned detached executor, relative to the repo (default bench/rsi_job_worker.py). */
+  job_worker: string | null;
   /** Optional GPU-server execution: rsync the candidate worktree, then run over SSH. */
   remote: RemoteConfig | null;
   datasets: string[];
@@ -80,6 +100,30 @@ export interface Problem {
   forbidden: string[];
   venue: string;
   audience_note: string;
+}
+
+export interface DiagnosisFinding {
+  id: string;
+  title: string;
+  axis: string;
+  /** Human-readable measured evidence; mandatory even for a labelled hypothesis. */
+  evidence: string;
+  severity: number;
+  actionable: boolean;
+  /** True only when the target command measured this defect. */
+  measured: boolean;
+  metric?: string;
+  value?: number;
+  artifact?: string;
+}
+
+/** One read-only diagnosis of the reproduced baseline. */
+export interface Diagnosis {
+  findings: DiagnosisFinding[];
+  log_path: string;
+  stdout: string;
+  stderr: string;
+  wall_time_s: number;
 }
 
 export interface Limitation {
@@ -131,14 +175,23 @@ export interface ExperimentResult {
   wall_time_s: number;
 }
 
+export interface SeedSample {
+  seed: number;
+  metrics: Record<string, number>;
+  result?: ExperimentResult | null;
+}
+
 export interface Evidence {
   idea_id: string;
   scope: Scope;
+  /** Aggregate metrics across `samples` (mean when multi-seed). */
   metrics: Record<string, number>;
   baseline_metrics: Record<string, number>;
   code: RepoRef | null;
   result: ExperimentResult | null;
   label: string;
+  /** Per-seed subset measurements; empty/one for full and single-seed scopes. */
+  samples?: SeedSample[];
 }
 
 export interface Verdict {
@@ -146,6 +199,8 @@ export interface Verdict {
   feedback: string;
   metrics: Record<string, number>;
   notes: string;
+  /** Deterministic flag: the run failed validation; repair code, don't prune. */
+  invalid?: boolean;
 }
 
 export interface Trace {
@@ -264,11 +319,14 @@ export function makeProblem(over: Partial<Problem> = {}): Problem {
     repo: null,
     repo_ref: null,
     experiment_command: null,
+    diagnose_command: null,
+    job_worker: null,
     remote: null,
     datasets: [],
     subset_datasets: [],
     metrics: [],
     reported_metrics: {},
+    budget: null,
     constraints: [],
     directions: [],
     forbidden: [],
@@ -318,6 +376,7 @@ export function makeEvidence(over: Partial<Evidence> = {}): Evidence {
     code: null,
     result: null,
     label: "",
+    samples: [],
     ...over,
   };
 }

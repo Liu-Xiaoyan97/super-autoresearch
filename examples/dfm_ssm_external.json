@@ -63,7 +63,7 @@
       "pretrained"
     ],
     "worktree": "/home/sl/mamba/projects/dfm-ssm-{run_id}",
-    "out": "/home/sl/mamba/projects/dfm-ssm-{run_id}/out",
+    "out": "/home/sl/mamba/results/dfm-ssm-{run_id}",
     "setup": "export CUDA_HOME=/usr/local/cuda-12.8; export PATH=\"$CUDA_HOME/bin:$PATH\"; export LD_LIBRARY_PATH=\"$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}\"; export PYTHONPATH=\"$HOME/mamba${PYTHONPATH:+:$PYTHONPATH}\""
   },
   "datasets": [

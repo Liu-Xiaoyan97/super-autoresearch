@@ -149,3 +149,17 @@ test("brief reads the git tree and relevant files at a commit", async () => {
   assert.match(brief, /pkg\/cache\.py/);
   assert.match(brief, /def f/);
 });
+
+test("a diff with a malformed hunk header still applies when git can verify placement", async () => {
+  const repo = fixtureRepo({ "three.txt": "a\nb\nc\nd\ne\n" });
+  const problem = makeProblem({ id: "p", repo });
+  const workspace = new GitWorkspace(problem, defaultConfig(), tempDir("rsi-ws-"));
+  const base = await workspace.baselineRepo();
+  // The body is valid (three context lines, one removal); the header lies.
+  const malformed = ["--- a/three.txt", "+++ b/three.txt", "@@ -1,6 +1,6 @@", " a", " b", " c", "-d", "+D"].join("\n");
+  const candidate = await workspace.writePatch(base, `${malformed}\nHypothesis: test\n`, "malformed-count");
+  assert.notEqual(candidate.commit, base.commit);
+  assert.equal(git(repo, ["show", `${candidate.commit}:three.txt`]), "a\nb\nc\nD\ne");
+  const log = fs.readFileSync(path.join(base.path, "..", "patches", "malformed-count.apply.log"), "utf8");
+  assert.match(log, /status=0/);
+});

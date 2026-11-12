@@ -26,7 +26,7 @@ export class AblationPlanner extends BaseAgent {
         "Formulate exactly N_p executable component-level ablations. Each plan must name ONE " +
         "distinct removable or replaceable component actually present in the proposed method, " +
         "not a hyperparameter/threshold/learning-rate sweep. State remove/replace intervention, " +
-        "validated code snapshot, fixed datasets/splits/seeds, metrics to re-measure, full-method " +
+        "validated code snapshot, fixed datasets/splits/seeds, metrics to re-measure, subset " +
         "control, and output artifacts in description. Set variant_of to the idea id. " +
         "Do not invent components.\n" +
         guidance(this.ctx) +
@@ -172,7 +172,7 @@ export class AblationCritic extends BaseAgent {
     const datasets = this.ctx.problem.datasets.join(", ") || "the full benchmark";
     let instruction =
       `Remove or merge component '${component}' in a candidate copy; re-measure ${metricsText} ` +
-      `on ${datasets} with identical splits/seeds against the complete incumbent before adoption.`;
+      `on ${datasets} with identical splits/seeds against the subset control before adoption.`;
     if (decision === "good") {
       instruction = `Each tested component contributes. As a verification control, ${instruction[0].toLowerCase()}${instruction.slice(1)}`;
     }

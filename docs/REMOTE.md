@@ -1,7 +1,9 @@
 # 远程 GPU 服务器执行（rsync + SSH）
 
-RSI 的代码版本管理始终在**本地 git 仓库**完成；GPU 服务器只接收一个候选
-worktree 的快照，然后执行 benchmark。服务器不需要联网，也不需要访问 git remote。
+RSI 是 Pi 原生扩展；代码版本管理始终在**本地独立目标 git 仓库**完成。
+训练、数据加载、checkpoint、lm-eval、bench adapter、项目 helper 和测试都由
+目标仓库拥有，RSI 不携带项目专属 integrations。GPU 服务器只接收候选
+worktree 快照并执行 benchmark；不需要联网或访问 git remote。
 
 ```text
 本地目标仓库 (git)
@@ -57,6 +59,12 @@ worktree 的快照，然后执行 benchmark。服务器不需要联网，也不�
 | `env` | 远程环境变量；离线缓存、数据、模型路径 |
 | `timeout_s` | 远程命令超时；同时作为本地 SSH 超时 |
 | `excludes` | 额外 rsync 排除项 |
+
+终止语义：远程实验在独立 session 中运行并写 PID 文件。本地 abort/timeout 会先
+关闭原 SSH，再用一次**不带已中止 signal** 的独立 SSH 读取 PID，并按 `TERM` →
+`KILL` 终止整个进程组；不会把 `setsid` 子进程留在 GPU 服务器。`rsi_job_cancel`
+仍先写 `cancel` 文件；worker 心跳失效时会直接杀 detached 进程组。若本地进程
+被 `SIGKILL` 或机器断电，任何客户端都无法再发信号，需要人工确认远程进程。
 
 默认还会排除：`.git`、`runs`、`patches`、`__pycache__`、`.pytest_cache`、
 `node_modules`、`.venv*`、`*.pyc`。
@@ -143,34 +151,76 @@ RSI 只做 `rsync` + `ssh`，不会在服务器上 `pip install` 或 `git clone`
 - 远程日志在 `runs/<run_id>/artifacts/experiments/remote-*.json`，包含 host、
   remote worktree、remote out、GPU、展开后的命令、stdout/stderr。
 
-## dfm-ssm word-ppl 流程
+## Adapter 交付前的真实数据冒烟门禁
 
-1. 在目标仓库的 `rsi-bench` 分支放置 benchmark：
-   - `bench/rsi_dfm_train_eval.py`
-   - `bench/dfm_lm_eval.py`
+在 Pi 中直接生成/补全目标链路：
 
-   由 `./integrations/dfm_ssm/setup.sh` 自动完成。
+```text
+/skill:rsi-adapter examples/<project>.json --repo /path/to/independent/target
+```
 
-2. 配置 `examples/dfm_ssm_external.json` 的 `remote.host`、`remote.python`、
-   `gpu_ids`、`env` 中的本地模型/数据路径。
+skill 直接检查目标代码；不完整的数据、训练、checkpoint 保存/重载及 lm-eval
+实现必须在目标仓库补齐。将 adapter、评测 helper、测试和说明提交在独立候选
+分支/ref 上，并让待验收 Problem 的 `repo_ref` 指向该候选；此时还不能宣布可用。
+不能以本地测试、`--help`、mock 或 rsync dry-run 代替真实远程验收。
 
-3. 运行：
+在 Pi 内调用原生扩展命令（可重复 `--env KEY=VALUE`）：
+
+```text
+/rsi smoke examples/<project>.json --repo /path/to/independent/target --timeout 900 --env RSI_PROJECT_TRAIN_STEPS=1 --env RSI_PROJECT_TRAIN_BATCH_SIZE=1
+```
+
+等价工具调用：
+
+```text
+rsi_adapter_smoke { problem: "examples/<project>.json", repo: "/path/to/independent/target", timeout_s: 900, out: "runs/fresh-adapter-evidence", env: { RSI_PROJECT_TRAIN_STEPS: "1", RSI_PROJECT_TRAIN_BATCH_SIZE: "1" } }
+```
+
+这是 Pi 原生扩展入口，无需 LLM；复用 GitWorkspace 和真实 RemoteRunner，完成
+新 worktree → 实际 rsync → SSH subset 实验 → 拉回原始 JSON → 指标键/数值/边界验证。
+`remote.worktree` 和 `remote.out` 若有配置，必须含 `{run_id}`，避免
+`rsync --delete` 覆盖服务器既有项目。默认新建 `runs/adapter-smoke-*`；显式
+`--out` / 工具 `out` 证据目录必须尚不存在。`--env` / 工具 `env` 对象只覆盖
+本次冒烟，不改正式 fixture，也不应含凭据；**不会自动缩短预算**，请明确设置
+目标实际支持的训练步数、batch、评测样本/长度等限制。
+
+验收必须覆盖真实训练一步、checkpoint 保存/重载和真实评测；仅加载已有
+checkpoint 不代表训练链路通过。记录原始数据来源、训练和评测日志路径，远程
+缺失资产也必须返回非零及 failed 报告。证据位于 `artifacts/smoke-summary.json`、
+`artifacts/smoke-report.json` 和 `artifacts/experiments/remote-0001.json`。
+
+未通过时状态为 `blocked / remote not verified`，附失败命令和错误；通过才是
+`remote-smoke-passed`，并记录实测 commit/ref 后，才交付可用的 `repo_ref`。
+小预算结果仅证明链路，不可作为正式 baseline 或论文指标。
+
+### 常见目标 preflight 修复（均在目标仓库完成）
+
+- 确认真实数据的文件/目录格式、shard、列名、非空样本与切分；训练集不可混入
+  评测集。离线数据加载必须命中真实本地资产，而不是退回合成数据。
+- 检查本地模型/config/tokenizer 路径、词表与 special token 一致性，以及依赖、
+  CUDA backend 和实际训练 CLI 是否兼容；不要靠模型目录存在就判定可加载。
+- 让导入优先使用同步后的候选源码，避免旧服务器 checkout 或已安装包遮蔽修改；
+  修复缺失模块、参数与训练目标时，只改目标代码。
+- 验证真实更新过参数的 checkpoint 连同必要配置可保存，评测在新进程中从该
+  产物重建/重载模型；只评测基座或已有 checkpoint 不算通过。
+- 在目标 lm-eval helper 中对齐 task、离线缓存、tokenization、logits/likelihood
+  接口与指标键；缺数据、重载失败或非有限指标必须失败，不能填常数或 proxy。
+- 为训练与评测分别明确微型预算、超时、输出目录和 GPU 空闲容量；记录数据
+  来源、展开命令、训练日志、checkpoint 和原始评测结果路径。项目回归测试也
+  保留在目标仓库，不把 evaluator 或修复代码复制进 RSI。
+
+## 示例 fixture 与正式研究
+
+`examples/dfm_ssm_external.json` 等仍是示例配置；其中的 bench 命令必须存在于
+各自目标 ref。以 word-ppl 为例，目标自有 adapter 执行真实训练 → 保存/重载
+checkpoint → lm-eval wikitext `word_perplexity` → `{"metrics":{"word_ppl":...}}`。
+`word_ppl` 越低越好，训练预算和评测协议由目标文档与 Problem 固定。
+
+完成远程冒烟后，才启动完整 SOP：
 
 ```text
 /rsi run examples/dfm_ssm_external.json --runner subprocess --thinking low
 ```
-
-4. benchmark 行为：
-
-```text
-scripts/finetune_dfm.py  →  本地/远程 checkpoint
-bench/dfm_lm_eval.py     →  lm-eval --tasks wikitext
-                         →  word_perplexity  →  {"metrics": {"word_ppl": ...}}
-```
-
-`word_ppl` 越低越好，`metrics[0].direction = "min"`。每个候选会重新训练
-（训练步数按 `scope` 默认：subset 20 / full 100 / ablation 50），然后重新
-lm-eval。真实实验请按预算覆盖 `RSI_DFM_TRAIN_STEPS` 或 `--train-steps`。
 
 ## 排错
 

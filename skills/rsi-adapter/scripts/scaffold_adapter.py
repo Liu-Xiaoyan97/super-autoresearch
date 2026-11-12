@@ -1,292 +1,170 @@
 #!/usr/bin/env python3
-"""Scaffold a target-project adapter from one RSI Problem fixture.
+"""Create a skeleton directly in an independent target git checkout.
 
-The generated run_experiment.py is a contract-compliant skeleton. Its
-train/evaluate/parse_metrics functions contain explicit TODOs: a real adapter
-must be wired to the target project before it is used for an experiment.
-
-Usage:
-  python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
-    --problem examples/dfm_ssm_external.json \
-    --repo /path/to/dfm-ssm \
-    --out integrations/dfm_ssm
+Invoked by the rsi-adapter Pi skill; generated project code never belongs in RSI.
+A skeleton is NOT usable until implemented and remotely accepted via native tools.
 """
-
 from __future__ import annotations
 
 import argparse
 import json
+import math
+from pathlib import Path, PurePosixPath
 import pprint
 import re
-import sys
-from pathlib import Path
+import subprocess
 
-SCOPES = ["subset", "full", "ablation", "rebuttal"]
 SKILL_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = SKILL_DIR.parents[1]
-TEMPLATE_DIR = SKILL_DIR / "templates"
-
-
-def display_path(path: Path) -> str:
-    try:
-        return str(path.resolve().relative_to(REPO_ROOT))
-    except ValueError:
-        return str(path)
+SCOPES = ["subset", "full", "ablation", "rebuttal"]
 
 
 def slugify(value: str) -> str:
-    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.strip().lower()).strip("-")
-    return slug or "adapter"
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "adapter"
 
 
 def validate_metrics(raw: object) -> list[dict]:
     if not isinstance(raw, list) or not raw:
         raise ValueError("problem.metrics must be a non-empty list")
-    metrics: list[dict] = []
-    seen: set[str] = set()
-    for index, item in enumerate(raw, start=1):
-        if not isinstance(item, dict):
-            raise ValueError(f"metrics[{index}] must be an object")
-        name = str(item.get("name", "")).strip()
-        if not name:
-            raise ValueError(f"metrics[{index}].name is required")
+    metrics = []
+    seen = set()
+    for item in raw:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not item["name"].strip():
+            raise ValueError("each metric requires a name")
+        name = item["name"]
         if name in seen:
             raise ValueError(f"duplicate metric name: {name}")
         seen.add(name)
-        direction = str(item.get("direction", "max"))
-        if direction not in {"min", "max"}:
-            raise ValueError(f"metrics[{index}].direction must be min or max")
-        try:
-            tolerance = float(item.get("tolerance", 0.0))
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"metrics[{index}].tolerance must be a number") from exc
-        if tolerance < 0:
-            raise ValueError(f"metrics[{index}].tolerance must be >= 0")
+        direction = item.get("direction", "max")
+        if direction not in ("min", "max"):
+            raise ValueError("metric direction must be min or max")
+        tolerance = float(item.get("tolerance", 0))
+        weight = float(item.get("weight", 1))
+        if not math.isfinite(tolerance) or tolerance < 0 or not math.isfinite(weight):
+            raise ValueError("metric tolerance/weight must be finite; tolerance >= 0")
         bounds = item.get("bounds")
         if bounds is not None:
-            if (
-                not isinstance(bounds, list)
-                or len(bounds) != 2
-                or any(not isinstance(value, (int, float)) for value in bounds)
-            ):
-                raise ValueError(f"metrics[{index}].bounds must be [low, high] or null")
-            if bounds[0] > bounds[1]:
-                raise ValueError(f"metrics[{index}].bounds low > high")
-            bounds = [float(bounds[0]), float(bounds[1])]
-        metrics.append(
-            {
-                "name": name,
-                "direction": direction,
-                "tolerance": tolerance,
-                "weight": float(item.get("weight", 1.0)),
-                "bounds": bounds,
-            }
-        )
+            if not isinstance(bounds, list) or len(bounds) != 2 or any(type(v) not in (float, int) or not math.isfinite(v) for v in bounds) or bounds[0] > bounds[1]:
+                raise ValueError("metric bounds must be finite [low, high]")
+        metrics.append(dict(name=name, direction=direction, tolerance=tolerance, weight=weight, bounds=bounds))
     return metrics
 
 
 def adapter_rel_path(command: object, slug: str) -> str:
-    if isinstance(command, list):
-        for token in command:
-            if not isinstance(token, str):
-                continue
-            if token in {"{python}", "{repo}", "{out}", "{scope}", "{commit}"}:
-                continue
-            if token.endswith(".py"):
-                return token.lstrip("./")
-    return f"bench/rsi_{slug.replace('-', '_')}_train_eval.py"
+    if command is not None and (not isinstance(command, list) or any(not isinstance(t, str) for t in command)):
+        raise ValueError("experiment_command must be a string array")
+    script = next((t for t in (command or []) if t.endswith(".py")), f"bench/rsi_{slug.replace('-', '_')}_train_eval.py")
+    path = PurePosixPath(script)
+    if path.is_absolute() or ".." in path.parts or "{" in script or "\\" in script:
+        raise ValueError("adapter script must be a safe relative target path")
+    return str(path)
 
 
 def render(template: str, values: dict[str, str]) -> str:
-    rendered = template
     for key, value in values.items():
-        rendered = rendered.replace(key, value)
-    missing = sorted(set(re.findall(r"@@[A-Z_]+@@", rendered)))
-    if missing:
-        raise ValueError(f"unreplaced template tokens: {missing}")
-    return rendered
-
-
-def write_readme(
-    out: Path,
-    problem: dict,
-    metrics: list[dict],
-    repo_hint: str,
-    adapter_path: str,
-    env_prefix: str,
-) -> None:
-    metric_rows = "\n".join(
-        f"| `{metric['name']}` | `{metric['direction']}` | "
-        f"`{metric['tolerance']}` | `{metric['bounds']}` |"
-        for metric in metrics
-    )
-    readme = f"""# RSI adapter: {problem.get("id", "adapter")}
-
-Generated by `skills/rsi-adapter` from `{problem.get("_source", "a Problem fixture")}`.
-
-This adapter is **target-owned**. RSI core does not import it. A real adapter
-must replace the `train`, `evaluate`, and `parse_metrics` TODOs in
-`run_experiment.py` before the first experiment.
-
-## Contract
-
-```text
-python run_experiment.py --repo <candidate worktree> --scope <scope> --out <report.json>
-```
-
-Report on success:
-
-```json
-{{"metrics": {{"{metrics[0]["name"]}": 0.0}}, "status": "ok"}}
-```
-
-The adapter must exit non-zero and write `{{"metrics": {{}}, "status": "failed"}}`
-on any failure. RSI treats a failed run as data, never as an improvement.
-
-## Metrics
-
-| name | direction | tolerance | bounds |
-|---|---|---|---|
-{metric_rows}
-
-## Target defaults
-
-- target repo: `{repo_hint or "<set --repo / TARGET_REPO>"}`
-- adapter install path: `{adapter_path}`
-- scopes: `{", ".join(SCOPES)}`
-- env prefix: `{env_prefix}`
-
-## Install on the benchmark ref
-
-```bash
-TARGET_REPO=/path/to/target ./setup.sh
-```
-
-The setup script copies this adapter to `{adapter_path}` on `rsi-bench` (or
-`RSI_BENCH_REF`). Update the fixture's `repo_ref` to that ref if needed.
-
-## Validate before running RSI
-
-```bash
-python3 run_experiment.py --help
-env -u {env_prefix}_TRAIN_DATA python3 run_experiment.py \\
-  --repo /path/to/target --scope subset --out /tmp/missing.json; echo "exit=$?"
-python3 run_experiment.py --repo /path/to/target --scope subset --out /tmp/report.json
-python3 -m json.tool /tmp/report.json
-```
-
-`--mock` in RSI never executes this file. Use `--runner subprocess` for a real
-adapter check.
-"""
-    (out / "README.md").write_text(readme)
+        template = template.replace(key, value)
+    if re.search(r"@@[A-Z_]+@@", template):
+        raise ValueError("unreplaced template tokens")
+    return template
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--problem", required=True, help="examples/*.json fixture")
-    parser.add_argument("--repo", default=None, help="target project checkout")
-    parser.add_argument("--out", required=True, help="integration directory to create")
-    parser.add_argument("--name", default=None, help="override slug (default: problem.id)")
-    parser.add_argument("--force", action="store_true", help="overwrite an existing scaffold")
+    parser.add_argument("--problem", required=True)
+    parser.add_argument("--repo", required=True, help="existing independent target git checkout")
+    parser.add_argument("--name", help="project slug / RSI_<PROJECT> env prefix")
+    parser.add_argument("--force", action="store_true", help="overwrite generated files; never implies acceptance")
     args = parser.parse_args()
-
-    problem_path = Path(args.problem).expanduser().resolve()
-    if not problem_path.is_file():
-        parser.error(f"problem fixture not found: {problem_path}")
     try:
+        problem_path = Path(args.problem).expanduser().resolve()
         problem = json.loads(problem_path.read_text())
-    except json.JSONDecodeError as exc:
-        parser.error(f"invalid JSON: {exc}")
-    if not isinstance(problem, dict):
-        parser.error("problem fixture must be a JSON object")
-
-    try:
+        if not isinstance(problem, dict):
+            raise ValueError("problem fixture must be an object")
         metrics = validate_metrics(problem.get("metrics"))
-    except ValueError as exc:
+        repo = Path(args.repo).expanduser().resolve()
+        check = subprocess.run(["git", "-C", str(repo), "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+        if check.returncode or Path(check.stdout.rstrip("\r\n")).resolve() != repo:
+            raise ValueError("--repo must be the root of an existing target git checkout")
+        source_root = SKILL_DIR.parents[1]
+        if repo == source_root:
+            raise ValueError("generate into the target repository, not the RSI extension repository")
+        slug = slugify(args.name or problem.get("id", "adapter"))
+        prefix = "RSI_" + slug.replace("-", "_").upper()
+        command = problem.get("experiment_command") or []
+        adapter_path = adapter_rel_path(command, slug)
+        worker_rel = "bench/rsi_job_worker.py"
+        paths = [repo / adapter_path, repo / worker_rel, repo / ".rsi/adapter" / f"{slug}.json", repo / ".rsi/adapter" / f"{slug}.md"]
+        for dest in paths:
+            if not dest.resolve().is_relative_to(repo):
+                raise ValueError(f"generated path escapes target via symlink: {dest}")
+            if dest.exists() and not args.force:
+                raise ValueError(f"generated file exists: {dest}; use --force only when intended")
+        values = {
+            "@@PROBLEM_ID@@": repr(problem.get("id", slug)), "@@SLUG@@": repr(slug),
+            "@@ENV_PREFIX@@": repr(prefix), "@@METRICS@@": pprint.pformat(metrics, sort_dicts=False),
+            "@@SCOPES@@": repr(SCOPES), "@@DEFAULT_REPO@@": repr(""),
+            "@@EXPERIMENT_COMMAND@@": repr(command),
+        }
+        adapter = render((SKILL_DIR / "templates/run_experiment.py.tmpl").read_text(), values)
+        worker = (SKILL_DIR / "templates/job_worker.py").read_text()
+        manifest = dict(problem=problem.get("id", slug), source_fixture=problem_path.name,
+                        slug=slug, env_prefix=prefix, target_repo=".", adapter_path=adapter_path,
+                        metrics=metrics, scopes=SCOPES, experiment_command=command,
+                        diagnose_command=problem.get("diagnose_command") or None,
+                        job_worker=worker_rel,
+                        protected_paths=[adapter_path, worker_rel, ".rsi/adapter"],
+                        acceptance="scaffolded; NOT remote verified")
+        readme = f"""# Target-owned RSI adapter: {problem.get('id', slug)}
+
+Generated by the `rsi-adapter` Pi skill. All project code belongs in this target,
+not in the RSI extension repository. The integration may and should modify the
+target to complete missing real train/data/checkpoint/eval/metric paths.
+
+- adapter: `{adapter_path}`
+- env prefix: `{prefix}`
+- metrics: {', '.join(m['name'] for m in metrics)}
+- scope: subset | full | ablation | rebuttal
+- invocation: Python adapter --repo PATH --scope SCOPE --out REPORT.json
+
+Replace train/evaluate/parse_metrics TODOs with actual target implementations.
+Add the real evaluator/protocol paths to manifest protected_paths. Add target
+regression tests. Commit all required files on an independent candidate ref;
+never reset or commit unrelated source working-tree changes.
+
+## Mandatory remote acceptance gate
+
+Scaffold generation, --help and mock tests are not completion. Use native Pi
+`rsi_adapter_smoke` or `/rsi smoke <problem.json> --repo <target> --timeout 900`
+with explicit target-supported tiny-budget env overrides. Execute complete real
+small-budget training, checkpoint save/reload and real lm-eval inference, then
+validate exact finite metric keys/status. Existing-checkpoint-only evaluation
+cannot pass. Keep actual command, host/GPU, commit, original report and train/eval
+logs in run artifacts and record evidence here. Remote outputs must be isolated
+and outside the synced worktree (rsync --delete).
+
+Add a real `bench/rsi_<project>_diagnose.py` script** and declare `diagnose_command` in the
+fixture so the SOP measures the reproduced baseline before generating ideas.
+It must emit evidence-backed findings with at least one `measured: true`; the
+default depth policy then targets the highest-severity measured defect. Without
+it the SOP keeps the original paper-first breadth search.
+
+A usable version only follows real remote end-to-end `remote-smoke-passed`.
+Before that report `blocked / remote not verified` on errors; never fabricate a
+baseline. A tiny smoke proves plumbing, not full-budget scientific validity.
+
+For regeneration, delete only generated adapter/metadata on an independent
+checkout, invoke `/skill:rsi-adapter` afresh, implement and repeat the real gate.
+"""
+        for dest, content in zip(paths, [adapter, worker, json.dumps(manifest, indent=2) + "\n", readme]):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content)
+        paths[0].chmod(0o755)
+        paths[1].chmod(0o755)
+        for dest in paths:
+            print(f"wrote target file: {dest}")
+        print("NOT DONE: implement target pipeline, commit candidate, then pass native rsi_adapter_smoke.")
+        return 0
+    except (OSError, ValueError, TypeError, KeyError) as exc:
         parser.error(str(exc))
-
-    problem_id = str(problem.get("id") or "adapter")
-    slug = slugify(args.name or problem_id)
-    env_prefix = f"RSI_{slug.replace('-', '_').upper()}"
-    command = problem.get("experiment_command") or []
-    adapter_path = adapter_rel_path(command, slug)
-    repo_hint = args.repo or str(problem.get("repo") or "")
-    if "${" in repo_hint or repo_hint == "None":
-        repo_hint = ""
-    # The adapter normally runs with cwd=candidate worktree. Only embed a
-    # relative fallback; do not bake a developer's absolute path into a
-    # committed harness.
-    repo_default = repo_hint if repo_hint and not Path(repo_hint).is_absolute() else ""
-
-    out = Path(args.out).expanduser().resolve()
-    if out.exists() and any(out.iterdir()) and not args.force:
-        parser.error(f"{out} is not empty; pass --force to overwrite")
-    out.mkdir(parents=True, exist_ok=True)
-
-    template = (TEMPLATE_DIR / "run_experiment.py.tmpl").read_text()
-    values = {
-        "@@PROBLEM_ID@@": repr(problem_id),
-        "@@SLUG@@": repr(slug),
-        "@@ENV_PREFIX@@": repr(env_prefix),
-        "@@METRICS@@": pprint.pformat(metrics, width=100, sort_dicts=False),
-        "@@SCOPES@@": repr(SCOPES),
-        "@@DEFAULT_REPO@@": repr(repo_default),
-        "@@EXPERIMENT_COMMAND@@": repr(command),
-    }
-    try:
-        adapter = render(template, values)
-    except ValueError as exc:
-        parser.error(str(exc))
-    (out / "run_experiment.py").write_text(adapter)
-    (out / "run_experiment.py").chmod(0o755)
-
-    setup_template = (TEMPLATE_DIR / "setup.sh.tmpl").read_text()
-    setup = render(
-        setup_template,
-        {
-            "@@PROBLEM_ID@@": problem_id,
-            "@@SLUG@@": slug,
-            "@@ADAPTER_PATH@@": adapter_path,
-            "@@FIXTURE_PATH@@": display_path(problem_path),
-        },
-    )
-    setup_path = out / "setup.sh"
-    setup_path.write_text(setup)
-    setup_path.chmod(0o755)
-
-    problem_for_readme = dict(problem)
-    problem_for_readme["_source"] = display_path(problem_path)
-    write_readme(
-        out,
-        problem_for_readme,
-        metrics,
-        repo_hint,
-        adapter_path,
-        env_prefix,
-    )
-
-    manifest = {
-        "problem": problem_id,
-        "source_fixture": str(problem_path),
-        "slug": slug,
-        "env_prefix": env_prefix,
-        "target_repo": repo_hint,
-        "adapter_path": adapter_path,
-        "metrics": metrics,
-        "scopes": SCOPES,
-        "experiment_command": command,
-    }
-    (out / "adapter.json").write_text(json.dumps(manifest, indent=2) + "\n")
-
-    print(f"wrote {out}/run_experiment.py")
-    print(f"wrote {out}/setup.sh")
-    print(f"wrote {out}/README.md")
-    print(f"wrote {out}/adapter.json")
-    print()
-    print("next: replace train/evaluate/parse_metrics TODOs, then run")
-    print(f"  python3 {out / 'run_experiment.py'} --help")
-    print("A scaffold with NotImplementedError must not be used for a real run.")
-    return 0
 
 
 if __name__ == "__main__":
