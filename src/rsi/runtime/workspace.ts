@@ -397,8 +397,10 @@ export function buildRemoteInvocation(
     throw new Error('remote.gpu_ids is required; use "0" for a single GPU');
   }
   const env: Record<string, string> = {
-    ...remote.env,
+    // Explicit target/operator overrides (including smoke-test budgets) win
+    // over the automatic subset budget injected into req.env.
     ...(req.env ?? {}),
+    ...remote.env,
     CUDA_VISIBLE_DEVICES: remote.gpu_ids,
   };
   const argv = expandCommand(command, req, remoteWorktree, remoteOut, remote.python)

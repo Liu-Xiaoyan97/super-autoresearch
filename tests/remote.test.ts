@@ -116,6 +116,19 @@ test("shellQuote escapes single quotes", () => {
   assert.equal(shellQuote("/tmp/a b"), "'/tmp/a b'");
 });
 
+test("explicit remote.env overrides the automatic subset budget for smoke", () => {
+  const invocation = buildRemoteInvocation(
+    { ...remote, env: { ...remote.env, RSI_CORAL_TRAIN_STEPS: "1", RSI_CORAL_EVAL_LIMIT: "1" } },
+    ["{python}", "bench/eval.py"],
+    { ...req, env: { RSI_CORAL_TRAIN_STEPS: "95" } },
+    "/remote/worktree",
+    "/remote/out.json",
+  );
+  assert.match(invocation.inner, /RSI_CORAL_TRAIN_STEPS=1/);
+  assert.doesNotMatch(invocation.inner, /RSI_CORAL_TRAIN_STEPS=95/);
+  assert.match(invocation.inner, /RSI_CORAL_EVAL_LIMIT=1/);
+});
+
 test("remote invocation requires an explicit GPU id", () => {
   assert.throws(
     () =>

@@ -233,6 +233,13 @@ or promote a usable `repo_ref` before the entire gate passes. SSH/GPU/assets or
 ambiguous scientific protocol blockers are `blocked / remote not verified`, with
 exact failed command/error, not "done; user can test later".
 
+**Adapter acceptance ends at `remote-smoke-passed`.** Do not launch
+`rsi run`, `rsi iterate`, subset screening, full benchmarking, ablations or
+paper writing as part of this skill. Those are separate RSI research stages and
+require a new, human-authorized run. The adapter's subset/full scope support is
+implemented and contract-tested here; it is not validated by running the
+research loop in this skill.
+
 ## 5. Handoff and regeneration test
 
 Report the target-only files/repairs/tests, exact validated commit/ref, host/GPU,
@@ -247,5 +254,7 @@ invoke this skill afresh through Pi. Do not restore/copy the old adapter as the
 real train → checkpoint save/reload → lm-eval before the regenerated version is
 usable. Do not delete source/user changes, datasets, checkpoints or prior evidence.
 
-RSI optimization is then invoked through the native Pi extension with a real
-provider and subprocess runner, never mock, and the accepted target-owned ref.
+RSI optimization is then invoked separately through the native Pi extension with
+a real provider and subprocess runner, never mock, and the accepted target-owned
+ref. That invocation is outside adapter acceptance: do not run it from this
+skill. If the person only wants adapter usability, stop after `remote-smoke-passed`.

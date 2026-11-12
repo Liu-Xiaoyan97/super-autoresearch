@@ -21,8 +21,21 @@
     "--scope",
     "{scope}",
     "--out",
-    "{out}"
+    "{out}",
+    "--commit",
+    "{commit}"
   ],
+  "diagnose_command": [
+    "{python}",
+    "bench/rsi_coral_diagnose.py",
+    "--repo",
+    "{repo}",
+    "--out",
+    "{out}",
+    "--commit",
+    "{commit}"
+  ],
+  "job_worker": "bench/rsi_job_worker.py",
   "remote": {
     "host": "8818",
     "dir": "/home/sl/coral-rsi",
