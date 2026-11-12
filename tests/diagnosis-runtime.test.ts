@@ -37,7 +37,7 @@ function script(dir: string, body: string): string {
 }
 
 const writer = (value: unknown) => `import argparse, json, pathlib
-p=argparse.ArgumentParser(); p.add_argument('--out', required=True); a=p.parse_args()
+p=argparse.ArgumentParser(); p.add_argument('--repo'); p.add_argument('--out', required=True); a=p.parse_args()
 pathlib.Path(a.out).parent.mkdir(parents=True, exist_ok=True)
 pathlib.Path(a.out).write_text(${JSON.stringify(JSON.stringify(value))})
 print('measured baseline')
@@ -101,7 +101,7 @@ test("diagnosis timeout kills the process group promptly", async () => {
 
 test("remote diagnosis uses real rsync/SSH expansion, injects env/GPU and fetches findings", async () => {
   const remoteRoot = tempDir("rsi-diag-remote-");
-  const p = problem(["{python}", "diag.py", "--out", "{out}"]);
+  const p = problem(["{python}", "diag.py", "--repo", "{repo}", "--out", "{out}"]);
   script(p.repo!, writer({ status: "ok", findings }));
   const remote: RemoteConfig = {
     host: "mock-host", dir: remoteRoot, worktree: "", out: "", python: "python3",
@@ -145,8 +145,40 @@ test("remote diagnosis uses real rsync/SSH expansion, injects env/GPU and fetche
   assert.ok(calls.some((line) => line.includes("CUDA_VISIBLE_DEVICES=2")));
   assert.ok(calls.some((line) => line.includes("RSI_DIAG_MODE=measure")));
   assert.ok(calls.some((line) => line.startsWith("ssh") && line.includes(" -- cat ")));
+  const bashCall = calls.find((line) => line.includes("bash -lc "));
+  assert.ok(bashCall, "remote diagnosis must execute through SSH");
+  assert.match(bashCall!, /--repo '?.*\/rsi\/diag-[^' ]+\/worktree'?/);
+  assert.ok(!bashCall!.includes(p.repo!), "remote diagnosis must not expand {repo} to the local worktree");
   const raw = fs.readFileSync(path.join(store.root, "artifacts", "experiments", fs.readdirSync(store.artifact("experiments")).find((file) => file.endsWith(".raw.json"))!), "utf8");
   assert.match(raw, /precision loss/);
+});
+
+test("remote diagnosis failure writes the local log with remote stderr", async () => {
+  const p = problem(["{python}", "diag.py", "--repo", "{repo}", "--out", "{out}"]);
+  script(p.repo!, writer({ status: "ok", findings }));
+  const remote: RemoteConfig = {
+    host: "mock-host", dir: tempDir("rsi-diag-remote-fail-"), worktree: "", out: "", python: "python3",
+    setup: "", ssh_args: [], rsync_args: [], gpu_ids: "0",
+    env: {}, timeout_s: 30, excludes: [],
+  };
+  p.remote = remote;
+  const transport = async (binary: string, args: readonly string[], _opts: { timeoutS?: number }) => {
+    if (binary === "rsync") return { code: 0, stdout: "", stderr: "", killed: false };
+    const last = args[args.length - 1];
+    if (last.startsWith("mkdir -p ")) return { code: 0, stdout: "", stderr: "", killed: false };
+    if (last.startsWith("bash -lc ")) {
+      return { code: 1, stdout: "remote stdout", stderr: "remote stderr detail", killed: false };
+    }
+    return { code: 1, stdout: "", stderr: `unsupported ${last}`, killed: false };
+  };
+  const store = new ArtifactStore(tempDir("rsi-diag-store-"));
+  const result = await runDiagnosis(p, repoOf(p), store, { timeoutS: 30, transport: transport as any });
+  assert.equal(result.status, "failed");
+  assert.match(result.error ?? "", /remote diagnosis exited 1/);
+  assert.ok(fs.existsSync(result.log_path), "failure log must exist locally");
+  const log = fs.readFileSync(result.log_path, "utf8");
+  assert.match(log, /remote stderr detail/);
+  assert.match(log, /remote stdout/);
 });
 
 test("diagnosis without a declared command is a usage error", async () => {

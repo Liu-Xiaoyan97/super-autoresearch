@@ -21,3 +21,6 @@ vendor/
 .pi/
 container/pi-home/bin/
 container/ssh/
+
+# Project-global baseline data (not source)
+.rsi-baseline/

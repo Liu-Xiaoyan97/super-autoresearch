@@ -51,7 +51,7 @@ const bounded = (chunk: string, current: string) =>
   current.length >= OUTPUT_LIMIT ? current : (current + chunk).slice(0, OUTPUT_LIMIT);
 
 function failed(logPath: string, reason: string, extra: Partial<DiagnosisResult> = {}): DiagnosisResult {
-  return {
+  const result: DiagnosisResult = {
     status: "failed",
     findings: [],
     stdout: extra.stdout ?? "",
@@ -60,6 +60,16 @@ function failed(logPath: string, reason: string, extra: Partial<DiagnosisResult>
     wall_time_s: extra.wall_time_s ?? 0,
     error: reason,
   };
+  // Persist the failure on every path (local, remote, timeout, validation).
+  // The trace only carries log_path, so a missing file otherwise makes the
+  // actual remote stderr impossible to inspect locally.
+  try {
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.writeFileSync(logPath, `${result.stdout}\n--- stderr ---\n${result.stderr}\n`, "utf8");
+  } catch {
+    /* best effort; the failure reason is still returned in the trace */
+  }
+  return result;
 }
 
 function number(value: unknown, label: string): number {
@@ -228,8 +238,9 @@ export async function runDiagnosis(
         `${path.resolve(repo.path)}/`, `${remote.host}:${shellQuote(worktree)}/`,
       ], { timeoutS: Math.min(1800, Math.max(60, opts.timeoutS)), signal: opts.signal });
       if (synced.code !== 0) return failed(logPath, `diagnosis worktree sync failed: ${tail(synced.stderr)}`);
-      const argv = expandCommand(command, req, repo.path, remoteOut, remote.python);
-      const invocation = buildRemoteInvocation(remote, argv, req, worktree, remoteOut);
+      // Expand against the remote synced worktree, never the local worktree.
+      // buildRemoteInvocation performs the placeholder expansion itself.
+      const invocation = buildRemoteInvocation(remote, command, req, worktree, remoteOut);
       const run = await transport("ssh", [...remote.ssh_args, remote.host, "--", `bash -lc ${shellQuote(invocation.inner)}`], { timeoutS: opts.timeoutS, signal: opts.signal });
       stdout = run.stdout;
       stderr = run.stderr;
