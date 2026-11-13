@@ -124,6 +124,8 @@ export class NoveltyChecker extends BaseAgent {
         "domain_fit, direction_ids and novelty_refs. " +
         `Measured defect to address: ${stableString(findings.slice(0, 1))}. ` +
         `Retrieve exactly ${count} relevant reference papers for that defect; never invent citations. ` +
+        "The references must evaluate the idea's mechanism (for example kernel decay, state mixing or the training objective), " +
+        "not generic data-curation or benchmark papers. If no relevant literature is found, say so and do not inflate novelty. " +
         "If a web_search tool is available, use it to find real papers and cite their titles/URLs; " +
         "if search fails, mark the slot as 'Reference unavailable' instead of guessing.\n" +
         `Idea: ${stableString(idea)}\nGuidance:\n${guidance(this.ctx)}`,

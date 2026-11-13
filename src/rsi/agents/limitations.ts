@@ -56,6 +56,7 @@ export class LimitationExtractor extends BaseAgent {
     const seenIds = new Set(previous.map((item) => item.id));
     const seenText = new Set(previous.map((item) => normalized(item.text)));
     const banned = forbidden.map(normalized).filter(Boolean);
+    const wanted = Math.max(1, this.ctx.config.minLimitations - previous.length);
     const out: Limitation[] = [];
     const ordered = [...batch.limitations].sort((a, b) =>
       a.id === b.id ? normalized(a.text).localeCompare(normalized(b.text)) : a.id.localeCompare(b.id),
@@ -67,6 +68,9 @@ export class LimitationExtractor extends BaseAgent {
       seenIds.add(item.id);
       seenText.add(text);
       out.push(item);
+      // Models ignore the requested item count. Cap each extraction round so
+      // a single response cannot turn three required limitations into dozens.
+      if (out.length >= wanted) break;
     }
     return out;
   }

@@ -255,7 +255,8 @@ word ppl / word-ppl 等变体 → 恢复成 canonical word_ppl
 且至少覆盖 3 个不同 axis
 ```
 
-少量 axis 缺失不会阻塞；一轮没有新增限制时停止，不再固定跑满 16 轮。
+少量 axis 缺失不会阻塞；一轮没有新增限制时停止，不再固定跑满 16 轮。每轮最多补
+`minLimitations - existing` 条，模型一次返回几十条也不会全部进入限制集。
 
 如果仍然失败，run 会：
 
@@ -277,6 +278,23 @@ abort_reason=style_violation
 ```
 
 这只影响模型思考强度，不改变实验预算。
+
+### `no_eligible_seeds`
+
+两种搜索策略都用 `nSeed` 生成 seed pool；`depth` 只限制“一个 measured defect”，
+不限制“一个 idea”。如果所有 seed 的 novelty 都低于 `minNovelty`，RSI 会记录：
+
+```text
+seeds.weak:<count>
+```
+
+并保留 domain/guidance 合格的最高排名 seed，继续进入 subset/full 实测，而不是
+因为没有一条 novelty >= 0.35 就直接结束。只有完全没有可用 hypothesis 时才
+`no_eligible_seeds`。
+
+Novelty 检查要求引用必须针对 idea 的机制；CCNet、数据去重之类的通用数据论文
+不能作为 kernel decay 的 novelty 依据。引用不相关会降低评分，但不会单独把整条
+run 归零。
 
 ### `diagnose.failed`
 

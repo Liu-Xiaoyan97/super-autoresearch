@@ -384,13 +384,16 @@ export class Orchestrator {
     progress(this.ctx, "§3.1 generating seed ideas");
     const findings = this.findings();
     const depth = this.depthSearch();
-    const nSeed = depth ? 1 : this.ctx.config.nSeed;
+    // The config N_seed is the seed pool target in both policies. Depth mode
+    // narrows the defect, not the number of ideas; otherwise one low-novelty
+    // idea aborts the entire run before any experiment.
+    const nSeed = Math.max(1, this.ctx.config.nSeed);
     const initial = await this.agents.initialIdeaGenerator.generate(this.state.limitations, { findings });
     if (depth && initial.target_limitations.length === 0) {
       initial.target_limitations = [this.state.limitations.find((item) => /^D\d+$/.test(item.id))?.id ?? "D1"];
     }
     const pool: Idea[] = [await this.agents.noveltyChecker.score(initial, { findings })];
-    const attempts = depth ? 0 : Math.max(2 * this.ctx.config.nSeed, 1);
+    const attempts = Math.max(2 * this.ctx.config.nSeed, 1);
     for (let i = 0; i < attempts; i++) {
       checkAborted(this.ctx);
       this.ctx.budget.check();
@@ -409,9 +412,22 @@ export class Orchestrator {
         pool.push(await this.agents.noveltyChecker.score(idea, { findings }));
       }
     }
-    const eligible = pool.filter(
+    let eligible = pool.filter(
       (idea) => idea.hypothesis.trim() && idea.novelty_score >= this.ctx.config.minNovelty,
     );
+    if (!eligible.length && pool.length) {
+      // The novelty score is a ranking signal when the pool is small. Keep the
+      // best domain/guidance-qualified idea instead of returning zero seeds;
+      // the subset/full measurements still decide whether it is adopted.
+      const weak = filterByGuidance(pool.filter((idea) => idea.hypothesis.trim()), this.ctx.problem, this.ctx.config);
+      if (weak.length) {
+        eligible = weak;
+        this.transition("stage.seeds", `seeds.weak:${weak.length}`, {
+          minNovelty: this.ctx.config.minNovelty,
+          best_novelty: Math.max(...weak.map((idea) => idea.novelty_score)),
+        });
+      }
+    }
     this.state.seeds = filterByGuidance(eligible, this.ctx.problem, this.ctx.config).sort((a, b) => {
       const ar = -rankKey(a, this.ctx.config.guidanceWeight);
       const br = -rankKey(b, this.ctx.config.guidanceWeight);
@@ -557,7 +573,9 @@ export class Orchestrator {
     // Depth: one measured defect, one candidate, measured once. Breadth keeps
     // the original N0 seed batch and evolution rounds.
     const depth = this.depthSearch();
-    await this.evaluate(this.state.nextSeeds(depth ? 1 : this.ctx.config.n0), 0);
+    // Depth mode selects one measured defect, not a single idea. Evaluate the
+    // seed pool so one low-novelty idea cannot zero the run.
+    await this.evaluate(this.state.nextSeeds(depth ? this.ctx.config.nSeed : this.ctx.config.n0), 0);
     for (let round = 1; !depth && round <= this.ctx.config.maxRefineRounds; round++) {
       checkAborted(this.ctx);
       this.ctx.budget.check();

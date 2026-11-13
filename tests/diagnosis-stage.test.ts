@@ -109,10 +109,10 @@ test("diagnose runs on the reproduced baseline before limitations and seeds", as
   assert.ok(baseline >= 0 && diagnose > baseline, `baseline ${baseline}, diagnose ${diagnose}`);
   assert.ok(limits > diagnose && seeds > limits, `diagnose ${diagnose}, limits ${limits}, seeds ${seeds}`);
 
-  // Depth-first default: one measured defect, one seed, one measured candidate.
-  assert.equal(state.seeds.length, 1);
-  assert.equal(state.traces.length, 1);
-  assert.ok(state.seeds[0].target_limitations.includes("D1"));
+  // Depth mode narrows the measured defect, but evaluates the full seed pool.
+  assert.equal(state.seeds.length, 8);
+  assert.equal(state.traces.length, 8);
+  assert.ok(state.seeds.some((idea) => idea.target_limitations.includes("D1")));
 });
 
 test("a failed or unmeasured diagnosis aborts before any seed or candidate", async () => {
