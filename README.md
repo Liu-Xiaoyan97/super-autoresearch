@@ -8,8 +8,8 @@ Pi 会话中执行；目标项目的训练、checkpoint、评测和指标代码�
 
 - **代码循环**：实测 baseline → subset 筛选 → full 954 → data gate → ablation。
 - **论文循环**：draft → 3 位独立 reviewer → rebuttal → meta-review。
-- **测量原则**：候选只有严格优于实测 baseline 才会被采纳；`reported_metrics`
-  不能作为比较基线。
+- **测量原则**：候选只有严格优于实测 baseline 才会被采纳；比较基线使用实测
+  baseline，`reported_metrics` 是报告值。
 - **baseline**：项目全局，不绑定单次 run；full baseline lazy 测量。
 - **subset**：3 个 seed × 95 步（Coral），用于判断 candidate 是否值得进入 full。
 - **目标项目独立**：RSI 不导入目标项目代码；adapter、训练、评测和测试都在目标仓库。
@@ -29,7 +29,7 @@ RSI_EXTERNAL_ROOT=/Users/liuxiaoyan/workspace
 RSI_TARGET_HOST=/Users/liuxiaoyan/workspace/coral-rsi
 RSI_TARGET_REPO=/repos/coral-rsi
 
-# 项目全局 baseline；放在 runs/ 外，避免被 run 清理删除
+# 项目全局 baseline；放在 runs/ 外，run 清理不会删除它
 RSI_BASELINE_DIR=/workspace/RSI/.rsi-baseline
 
 RSI_SUPERAGENT_POLICY=yolo
@@ -48,20 +48,11 @@ cd "$(git rev-parse --show-toplevel)"
 ```bash
 ./container/up.sh build
 ./container/up.sh run
-./container/up.sh shell
 ```
 
-容器已存在但挂载或 env 改变时，先重建：
+### 3. 启动路径
 
-```bash
-./container/up.sh down
-./container/up.sh build
-./container/up.sh run
-```
-
-### 3. 验证
-
-在宿主机：
+在宿主机验证容器：
 
 ```bash
 ./container/up.sh exec bash -lc '
@@ -71,12 +62,16 @@ cd "$(git rev-parse --show-toplevel)"
 '
 ```
 
-进入 Pi：
+固定从 `/workspace/RSI` 启动 Pi：
 
 ```bash
-./container/up.sh shell
-pi
+docker exec -it \
+  -e RSI_SUPERAGENT_POLICY=yolo \
+  -w /workspace/RSI \
+  pi-agent-rsi pi -c
 ```
+
+进入后：
 
 ```text
 /rsi help
@@ -102,40 +97,18 @@ pi
 <repo>/.rsi/pi-sessions
 ```
 
-所以容器重建、换 `docker exec` 都能继续同一批 session。
+容器重建、换 `docker exec` 都继续同一批 session。
 
-```bash
-# 继续当前项目最近的 session
-docker exec -it \
-  -e RSI_SUPERAGENT_POLICY=yolo \
-  -w /workspace/RSI \
-  pi-agent-rsi pi -c
-
-# 选择 session
-docker exec -it \
-  -e RSI_SUPERAGENT_POLICY=yolo \
-  -w /workspace/RSI \
-  pi-agent-rsi pi -r
-```
-
-旧的容器 session 已经迁移到 `.rsi/pi-sessions/`。这些文件包含聊天和工具输出，已在
-`.gitignore` 中忽略，不会提交。
-
-宿主机 Pi 默认仍用 `~/.pi/agent`；如果你也想让宿主机 Pi 和容器共享，在宿主机的
-`~/.pi/agent/settings.json` 里设置同样的 `"sessionDir": ".rsi/pi-sessions"`，并从仓库
-根目录启动 Pi。
+启动命令固定为上面的 `/workspace/RSI` + `pi -c` 路径。旧容器 session 已迁移到
+`.rsi/pi-sessions/`；这些文件已在 `.gitignore` 中忽略。
 
 ## 使用：coral-rsi
 
 目标仓库在容器内是 `/repos/coral-rsi`，远端是 `8818:/home/sl/coral-rsi`。
 
-> Pi 的研究命令按 `/workspace/RSI` 作为 cwd 编写。如果你是在 `/repos/coral-rsi`
-> 里启动 Pi，请使用下面的绝对路径；否则 `examples/coral.json` 会被解析成
-> `/repos/coral-rsi/examples/coral.json` 并报 `problem file not found`。
-
 ### 1. 重建 adapter
 
-Adapter 只能修改 `/repos/coral-rsi`，不能修改 `/workspace/RSI`。
+Adapter 的修改范围是 `/repos/coral-rsi`；`/workspace/RSI` 承载 RSI 本身。
 
 ```bash
 cd /repos/coral-rsi
@@ -166,7 +139,7 @@ Adapter 需要实现：
 subset | full | ablation | rebuttal
 ```
 
-Full/rebuttal 不允许缩短训练预算或评测样本。
+Full/rebuttal 使用完整训练预算和评测样本。
 
 ### 2. 1-step adapter smoke
 
@@ -214,7 +187,7 @@ run_kind: smoke
 ```
 
 这只是 adapter 可用性证据，不是 baseline，也不是科学结果。
-adapter 验收到这里结束；不要在这个 skill 里继续跑 subset/full。
+adapter skill 的验收边界是 smoke；subset/full 由独立的 `/rsi run` 执行。
 
 ### 3. 清 baseline
 
@@ -233,16 +206,15 @@ rm -rf /workspace/RSI/.rsi-baseline/coral-wikitext-ppl-*
   --out /workspace/RSI/runs
 ```
 
-> 交互式 Pi 会话不需要 `--wait`：命令先返回 run id，完成后会通知。
-> `pi -p`、脚本或无头自动执行必须加 `--wait`，否则进程退出后无法继续等待
-> 后台 run。
+> 交互式 Pi 会话先返回 run id，完成后通知。`pi -p`、脚本或无头自动执行附加
+> `--wait`。
 
 说明：
 
 - `/rsi run` 没有 `--repo`；容器已设置 `RSI_TARGET_REPO=/repos/coral-rsi`。
 - provider/model 继承容器配置。
 - 完整流程会做 subset 3 seeds × 95、full 954、data gate、ablation、paper。
-- 不要在 full 运行中传 `RSI_CORAL_TRAIN_STEPS=1`；full 协议不能被缩短。
+- full 运行使用 954 步协议；`RSI_CORAL_TRAIN_STEPS` 只用于 smoke/iteration。
 - 远端源码直接复用 `/home/sl/coral-rsi`，不再创建 `projects/<run>` 源码副本。
 - 产物在 `/home/sl/coral-rsi/results/coral-<run_id>/`。
 
@@ -295,7 +267,7 @@ coral-wikitext-ppl-s7-r1-r1-r2-r1 · run-1olswx6
 - 多个 run 各占两行，中间空一行；
 - 需要人回答时显示 `NEEDS PERSON`；
 - run 完成、失败或停止后自动清除，不残留旧状态；
-- 不再同时写入底部 footer status，避免同一状态出现两遍。
+- 底部 footer status 只保留其他扩展的信息。
 
 baseline 进度会区分来源：
 
@@ -331,7 +303,7 @@ word ppl / word-ppl 等变体 → 恢复成 canonical word_ppl
 
 少量 axis 缺失不会阻塞；一轮没有新增限制时停止，不再固定跑满 16 轮。每轮最多补
 `minLimitations - existing` 条，模型一次返回几十条也不会全部进入限制集。进入 seed
-阶段前还会把历史限制裁剪到最多 8 条（保留 severity 最高的），避免 resume 时把 59
+阶段前还会把历史限制裁剪到最多 8 条（保留 severity 最高的）；resume 时不会把 59
 条旧限制继续灌进每个 idea/novelty prompt。
 
 如果仍然失败，run 会：
@@ -368,9 +340,9 @@ seeds.weak:<count>
 因为没有一条 novelty >= 0.35 就直接结束。只有完全没有可用 hypothesis 时才
 `no_eligible_seeds`。
 
-Novelty 检查要求引用必须针对 idea 的机制；CCNet、数据去重之类的通用数据论文
-不能作为 kernel decay 的 novelty 依据。引用不相关会降低评分，但不会单独把整条
-run 归零。
+Novelty 检查的引用必须针对 idea 的机制；CCNet、数据去重之类的通用数据论文
+不属于 kernel decay 的有效依据。引用不相关会降低评分，但不会单独把整条 run
+归零。
 
 ### `code.*` worker reports no file-reading tool
 
@@ -380,8 +352,8 @@ run 归零。
 read, grep, find, ls
 ```
 
-worker 的 cwd 指向目标仓库，不是 RSI checkout。它不能直接用 write/edit/bash 改代码；
-候选改动仍必须通过 unified diff → git commit 的受控 patch 流程。
+worker 的 cwd 指向目标仓库。它只获得 `read/grep/find/ls`；候选改动通过
+unified diff → git commit 的受控 patch 流程。
 
 ### `diagnose.failed`
 
@@ -401,11 +373,11 @@ runs/<run_id>/artifacts/experiments/diagnosis-<id>.log
 
 - 远端源码目录：`/home/sl/coral-rsi`（复用，不复制到 `projects/`）。
 - 远端输出目录：`/home/sl/coral-rsi/results/coral-<run_id>`。
-- `results/` 不参与源码 rsync，不能被 `--delete` 删除。
+- `results/` 不参与源码 rsync；`--delete` 仅作用于源码目录，`results/` 保留。
 - 项目 baseline：`/workspace/RSI/.rsi-baseline/<project-key>/`。
 - 初始 baseline 测量后立即持久化；full baseline 在第一个 full 候选时 lazy 测量。
 - adapter 重建后必须清旧 baseline。
-- 1-step smoke 的 checkpoint 约 1.27 GB；验收后可以删除 checkpoint，保留报告和日志。不要删除整个 `results/`。
+- 1-step smoke 的 checkpoint 约 1.27 GB；验收后清理 checkpoint 文件，保留报告、日志和 `results/`。
 
 ## 相关文档
 
