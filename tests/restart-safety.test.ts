@@ -8,15 +8,16 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 import { ArtifactStore } from "../src/rsi/runtime/store.ts";
 import { GitWorkspace, MeasurementCache, measurementKey, subsetBudgetEnv } from "../src/rsi/runtime/workspace.ts";
 import { ResearchState } from "../src/rsi/core/state.ts";
 import { defaultConfig } from "../src/rsi/config.ts";
 import { loadProblem } from "../src/rsi/run.ts";
+import { fixture, readJson, repoRoot } from "./helpers.ts";
 import { makeCheckpoint, makeEvidence, makeIdea, makeTrace, type ExperimentResult } from "../src/rsi/types.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -279,28 +280,72 @@ test("implementer resumes a mid-idea checkpoint without re-measuring", async () 
   assert.equal(trace.evidence[0], measured, "the checkpointed evidence is reused verbatim");
 });
 
-test("resuming a run keeps its id, directory and history", async () => {
+test("a resume keeps the run id and continues after a deleted external baseline", async () => {
   const { runResearch } = await import("../src/rsi/run.ts");
-  const outDir = tempDir("rsi-inplace-");
-  const opts = {
-    problem: fixturePath("abort_case"),
-    outDir,
-    runId: "abort-case-s7",
-    mock: true,
-    seed: 7,
-  } as const;
-  const first = await runResearch({ ...opts });
-  assert.equal(first.final.aborted, true);
-  const before = fs.readFileSync(path.join(first.root, "traces.jsonl"), "utf8").trim().split("\n").length;
+  const outDir = tempDir("rsi-resume-baseline-");
+  const repo = tempDir("rsi-resume-repo-");
+  fs.writeFileSync(path.join(repo, "adapter.py"), "rate = 1\n");
+  const git = (args: string[]) => {
+    const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git(["init", "-q"]);
+  git(["add", "adapter.py"]);
+  git(["-c", "user.name=Test", "-c", "user.email=test@local", "commit", "-qm", "baseline"]);
+  const commit = git(["rev-parse", "HEAD"]);
+  const problemFile = path.join(outDir, "problem.json");
+  fs.writeFileSync(problemFile, JSON.stringify({ ...readJson(fixture("ood_frozen_encoder")), repo, repo_ref: commit }));
 
-  const second = await runResearch({ ...opts, resumeFrom: "abort-case-s7" });
-  assert.equal(second.runId, "abort-case-s7", "a resume must not create a new run id");
-  assert.equal(second.root, first.root);
-  assert.ok(fs.existsSync(path.join(first.root, "final.attempt-1.json")), "the previous attempt is kept");
-  const after = fs.readFileSync(path.join(second.root, "traces.jsonl"), "utf8").trim().split("\n").length;
-  assert.ok(after >= before, "the trace log continues instead of being replaced");
+  // The durable shape of a run that already measured its baseline and whose
+  // search was refuted: nothing may be re-measured after a restart.
+  const root = path.join(outDir, "resume-baseline-s7");
+  fs.mkdirSync(root, { recursive: true });
+  const baselineFile = path.join(outDir, "trusted-baseline.json");
+  const baseline = {
+    idea_id: "baseline", scope: "subset", label: "baseline-manual",
+    code: { path: repo, label: "baseline-manual", parent: null, patch: "", repo, commit, branch: "detached" },
+    metrics: { auroc: 0.5 }, baseline_metrics: {}, samples: [],
+    result: { status: "ok", metrics: { auroc: 0.5 }, log_path: baselineFile, stdout: "", stderr: "", wall_time_s: 0 },
+  };
+  fs.writeFileSync(path.join(root, "state.json"), JSON.stringify({
+    aborted: true, abort_reason: "no_good_ideas", decision_path: ["baseline.ok", "run.abort"],
+    baseline, baseline_source: "manual", baseline_path: baselineFile, search_done: true,
+  }));
+
+  // A trusted file is external evidence: losing it must not invalidate the
+  // baseline this run already recorded.
+  const result = await runResearch({
+    problem: problemFile, outDir, runId: "resume-baseline-s7", resumeFrom: "resume-baseline-s7",
+    mock: true, seed: 7, baseline: baselineFile,
+  });
+  const state = readJson(path.join(result.root, "state.json"));
+  assert.equal(result.runId, "resume-baseline-s7", "a resume must not create a new run id");
+  assert.equal(result.root, root, "a resume continues in the same directory");
+  assert.ok(state.decision_path.includes("baseline.recorded"), "the gap is recorded in the decision path");
+  assert.deepEqual(state.baseline.metrics, { auroc: 0.5 }, "the recorded baseline is reused, not re-measured");
+  assert.match(state.baseline.result.stdout, /is gone; continued from the baseline recorded/);
 });
 
-function fixturePath(name: string): string {
-  return path.join(path.dirname(new URL(import.meta.url).pathname), "fixtures", `${name}.json`);
-}
+test("a shutdown does not overwrite the outcome a finished run recorded", async () => {
+  const { SuperagentRuntime } = await import("../src/rsi/superagent/runtime.ts");
+  const out = tempDir("rsi-shutdown-outcome-");
+  const runtime = new SuperagentRuntime({ cwd: repoRoot, inMemory: true, workerFactory: () => ({
+    // Fail immediately: `done` must settle before the shutdown races it.
+    run: () => Promise.reject(new DOMException("aborted", "AbortError")),
+  }) });
+  const { session } = runtime.dispatch({
+    problem: fixture("ood_frozen_encoder"), out, mode: "mock", agents: "inline", seed: 7,
+    title: "finished run", sessionId: "finished-s7",
+  });
+  void session.done.catch(() => {});
+  fs.writeFileSync(path.join(session.root, "state.json"), JSON.stringify({
+    aborted: true, abort_reason: "no_good_ideas", decision_path: ["baseline.ok", "run.abort"],
+  }));
+  fs.writeFileSync(path.join(session.root, "final.json"), JSON.stringify({ aborted: true, abort_reason: "no_good_ideas" }));
+  session.engine.finish(session.ticketId, "dropped", "no_good_ideas");
+  await runtime.interruptAll("session quit");
+  const state = readJson(path.join(session.root, "state.json"));
+  assert.equal(state.abort_reason, "no_good_ideas", "the recorded outcome survives the shutdown");
+  assert.equal(state.interrupted, undefined, "a finished run is not marked interrupted");
+});

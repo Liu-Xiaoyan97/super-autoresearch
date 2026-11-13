@@ -225,7 +225,10 @@ export class RunSession {
       if (timer) clearTimeout(timer);
     }
     const runTicket = this.engine.ticket(this.ticketId);
-    if (runTicket?.ended?.outcome === "completed") {
+    // Any ended run ticket is a recorded conclusion (completed, dropped,
+    // aborted, failed or stopped). A shutdown must not rewrite it into
+    // "session quit": that would erase why the run actually stopped.
+    if (runTicket?.ended) {
       this.engine.close();
       return;
     }
@@ -254,8 +257,17 @@ export class RunSession {
       } catch {
         /* no state was written yet */
       }
-      state.aborted = true;
-      state.abort_reason = reason;
+      // A scientific conclusion already on disk stays the reason; the
+      // interruption only adds a marker.
+      const concluded =
+        state.aborted === true && typeof state.abort_reason === "string" && state.abort_reason !== "" && !isCleanupReason(state.abort_reason);
+      if (concluded) {
+        state.interrupted = true;
+        state.interrupted_reason = reason;
+      } else {
+        state.aborted = true;
+        state.abort_reason = reason;
+      }
       fs.mkdirSync(this.root, { recursive: true });
       fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
 
@@ -266,8 +278,12 @@ export class RunSession {
       } catch {
         /* no final was written yet */
       }
-      final.aborted = true;
-      final.abort_reason = reason;
+      const finalConcluded =
+        final.aborted === true && typeof final.abort_reason === "string" && final.abort_reason !== "" && !isCleanupReason(final.abort_reason);
+      if (!finalConcluded) {
+        final.aborted = true;
+        final.abort_reason = reason;
+      }
       if (!Array.isArray(final.decision_path)) final.decision_path = state.decision_path ?? [];
       final.extra = { ...(typeof final.extra === "object" && final.extra ? final.extra : {}), interrupted: true };
       fs.writeFileSync(finalFile, JSON.stringify(final, null, 2), "utf8");
@@ -868,6 +884,11 @@ export class SuperagentRuntime {
     for (const session of this.sessions.values()) session.close();
     this.sessions.clear();
   }
+}
+
+/** Host cleanup reasons that must never replace a scientific conclusion. */
+function isCleanupReason(reason: string): boolean {
+  return /^(session |host restart|interrupted by|.*\bstop(ped)?\b)/i.test(reason);
 }
 
 function readSnapshot(dir: string): Snapshot | null {

@@ -13,9 +13,10 @@ import { MockLLMProvider, type MockScript, loadMockScript } from "./providers/mo
 import { Budget } from "./runtime/budget.ts";
 import { ArtifactStore, TraceStore, type TraceRecord } from "./runtime/store.ts";
 import { GitWorkspace } from "./runtime/workspace.ts";
-import { loadRunBaselines } from "./runtime/incumbent.ts";
+import { loadRunBaselines, type RunBaselineSeeds } from "./runtime/incumbent.ts";
 import { refreshLedgerFromContext } from "./runtime/ledger.ts";
 import {
+  type Evidence,
   type FinalArtifacts,
   type MetricSpec,
   type Problem,
@@ -257,6 +258,16 @@ export function buildConfig(opts: RunOptions): Config {
   return config;
 }
 
+/** A baseline recorded inside a run is reusable only if it still parses as evidence. */
+function baselineIsValid(evidence: Evidence, problem: Problem): boolean {
+  const commit = evidence.code?.commit ?? "";
+  if (!/^[0-9a-f]{40}$/i.test(commit)) return false;
+  const names = problem.metrics.map((metric) => metric.name).sort();
+  const metrics = evidence.metrics ?? {};
+  if (JSON.stringify(Object.keys(metrics).sort()) !== JSON.stringify(names)) return false;
+  return names.every((name) => typeof metrics[name] === "number" && Number.isFinite(metrics[name]));
+}
+
 export async function runResearch(opts: RunOptions): Promise<RunResult> {
   const cwd = opts.cwd ?? process.cwd();
   const problem = loadProblem(opts.problem, cwd);
@@ -301,7 +312,20 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
 
   // A stored/manual baseline is the reference; reproduce only the scope that
   // is missing. The promoted commit is the base for a missing scope.
-  const baselineSeeds = loadRunBaselines(problem, outDir, config.seed, opts.baseline);
+  // A resume continues from what the run already recorded: an external baseline
+  // file that has since disappeared must not invalidate recorded evidence.
+  let baselineSeeds: RunBaselineSeeds = { subset: null, full: null, source: null, path: "" };
+  let baselineGap = "";
+  try {
+    baselineSeeds = loadRunBaselines(problem, outDir, config.seed, opts.baseline);
+  } catch (error) {
+    const explicit = opts.baseline ? path.resolve(cwd, opts.baseline) : "";
+    const recorded = resumedState?.baseline ?? resumedState?.baselineFull;
+    const missing = explicit !== "" && !fs.existsSync(explicit);
+    if (!missing || !recorded || !baselineIsValid(recorded, problem)) throw error;
+    baselineSeeds.path = explicit;
+    baselineGap = `baseline file ${explicit} is gone; continued from the baseline recorded in this run (${recorded.code?.commit})`;
+  }
   const seedCommit = baselineSeeds.full?.evidence.code?.commit ?? baselineSeeds.subset?.evidence.code?.commit;
   const baseCommit = resumedState?.baseline?.code?.commit ?? resumedState?.baselineFull?.code?.commit ?? seedCommit;
   if (baseCommit) problem.repo_ref = baseCommit;
@@ -348,6 +372,20 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
 
   try {
     const orchestrator = new Orchestrator(ctx, undefined, resumedState);
+    if (baselineGap) {
+      orchestrator.state.note("baseline.recorded");
+      const recorded = orchestrator.state.baseline ?? orchestrator.state.baselineFull;
+      if (recorded) {
+        recorded.result = {
+          status: recorded.result?.status ?? "ok",
+          metrics: recorded.metrics,
+          log_path: recorded.result?.log_path ?? "",
+          stdout: baselineGap,
+          stderr: "",
+          wall_time_s: recorded.result?.wall_time_s ?? 0,
+        };
+      }
+    }
     // Fill only the scopes the resumed state (or the caller) did not provide.
     if (!orchestrator.state.baseline && baselineSeeds.subset) {
       orchestrator.state.baseline = baselineSeeds.subset.evidence;
