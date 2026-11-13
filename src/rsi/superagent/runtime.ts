@@ -206,6 +206,9 @@ export class RunSession {
    * path for reload, session shutdown, and a person's stop.
    */
   async interrupt(reason = "session closed"): Promise<void> {
+    // A resume reopens the very same run ticket. Remember which attempt this
+    // cleanup owns so it can never end a newer attempt's tickets.
+    const ownedAttempt = this.engine.ticket(this.ticketId)?.assignments.length ?? 0;
     this.driver.cancel(reason);
     try {
       await this.worker.close?.();
@@ -230,6 +233,18 @@ export class RunSession {
     // "session quit": that would erase why the run actually stopped.
     if (runTicket?.ended) {
       this.engine.close();
+      return;
+    }
+    const currentAttempt = this.engine.ticket(this.ticketId)?.assignments.length ?? 0;
+    if (currentAttempt !== ownedAttempt) {
+      // Someone resumed while this cleanup was waiting: the new attempt owns
+      // the store now, so this one only releases its own engine.
+      this.driver.cancel("superseded by a newer attempt");
+      try {
+        this.engine.close();
+      } catch {
+        /* already closed */
+      }
       return;
     }
     this.markInterrupted(reason);
@@ -297,9 +312,9 @@ export class RunSession {
     }
   }
 
-  /** Idle a session: interrupt and release the worker without blocking the caller. */
-  close(): void {
-    void this.interrupt("session closed");
+  /** Idle a session: interrupt and release the worker. */
+  close(): Promise<void> {
+    return this.interrupt("session closed");
   }
 
   status(): RunStatus {
@@ -674,7 +689,7 @@ export class SuperagentRuntime {
   }
 
   /** Create a new attempt that resumes a previous ended/failed run. */
-  resume(runId: string): RunSession {
+  async resume(runId: string): Promise<RunSession> {
     const live = this.sessions.get(runId);
     const spec = live?.spec ?? this.runSpec(runId);
     if (!spec) throw new Error(`no run spec found for ${runId}`);
@@ -723,7 +738,9 @@ export class SuperagentRuntime {
     if (live) {
       this.retired.set(runId, oldStatus!);
       this.sessions.delete(runId);
-      live.close();
+      // Await the old owner: a half-finished interrupt would otherwise end the
+      // fresh attempt's tickets a few seconds after it starts.
+      await live.close();
     }
     // Resume in place: the run keeps its id, its directory, its artifacts and
     // its run ticket. Only a new attempt is started, so nothing is forked and
@@ -881,7 +898,7 @@ export class SuperagentRuntime {
   }
 
   closeAll(): void {
-    for (const session of this.sessions.values()) session.close();
+    for (const session of this.sessions.values()) void session.close();
     this.sessions.clear();
   }
 }

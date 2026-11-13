@@ -162,7 +162,7 @@ export async function superagentAction(host: SuperagentHost, params: Record<stri
       }
       case "resume": {
         const parent = needRun();
-        const session = runtime.resume(parent);
+        const session = await runtime.resume(parent);
         return text(
           `resumed ${parent} as ${session.runId} (run ticket ${session.ticketId}, parent ${parent})`,
           { run_id: session.runId, parent_run_id: parent, ticket_id: session.ticketId },
