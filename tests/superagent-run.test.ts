@@ -233,6 +233,22 @@ test("a mock run executes the SOP as task tickets and ends completed", async () 
         metrics: {},
         notes: "Offline fixture: accepted attribution.",
       },
+      "ablation.plan": {
+        plans: [
+          "safe component C",
+          "residual-alignment refinement",
+          "structural ablation: primary mechanism",
+          "structural ablation: auxiliary loss/regularizer",
+          "calibration gate",
+        ].map((component, index) => ({
+          id: `A${index + 1}`,
+          component,
+          description: "Remove the component and re-measure the same subset protocol.",
+          expects: "Removing it lowers auroc by 0.01 on the subset control.",
+          variant_of: "h6",
+        })),
+        hypothesis: "Pinned mock ablation plans.",
+      },
     }, 7)),
     onNotice: (notice) => notices.push(notice),
     notifyTaskReports: true,

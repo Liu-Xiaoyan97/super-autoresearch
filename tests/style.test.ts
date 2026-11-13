@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { InitialIdeaGenerator } from "../src/rsi/agents/ideas.ts";
-import { LimitationExtractor } from "../src/rsi/agents/limitations.ts";
+import { LimitationExtractor, LimitationVerifier } from "../src/rsi/agents/limitations.ts";
 import { LLMProvider, type LLMRequest, type LLMResponse } from "../src/rsi/providers/base.ts";
 import { StyleViolationError, isCodeSpec, lintSpec, normalizeStyleOutput, splitSentences, stylePrompt, wordCount } from "../src/rsi/writing/style.ts";
 import { makeManuscript, makeProblem, metricSpec } from "../src/rsi/types.ts";
@@ -165,6 +165,23 @@ test("LimitationExtractor uses normalized output without a repair round", async 
   assert.equal(limitations.length, 1);
   assert.equal(limitations[0].text, "word_ppl is high. training is slow");
   assert.equal(limitations[0].evidence, "0.1. 0.2");
+});
+
+test("LimitationVerifier accepts a small axis gap when the floor is met", async () => {
+  const ctx = agentCtx([JSON.stringify({
+    decision: "refine",
+    feedback: "missing theory axis",
+    metrics: {},
+    notes: "",
+  })]);
+  const limitations = [
+    { id: "L1", text: "word_ppl is high", axis: "method", evidence: "measured", severity: 0.5, actionable: true },
+    { id: "L2", text: "word_ppl is noisy", axis: "evaluation", evidence: "measured", severity: 0.5, actionable: true },
+    { id: "L3", text: "word_ppl is slow", axis: "efficiency", evidence: "measured", severity: 0.5, actionable: true },
+  ];
+  const verdict = await new LimitationVerifier(ctx).verify(limitations);
+  assert.equal(verdict.decision, "good");
+  assert.match(verdict.feedback, /Sufficient/);
 });
 
 test("one repair is attempted, then the compliant answer is used", async () => {

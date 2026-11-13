@@ -339,16 +339,33 @@ export class Orchestrator {
         existing: this.state.limitations,
         findings,
       });
+      const before = this.state.limitations.length;
       this.state.limitations = [...this.state.limitations, ...fresh].sort((a, b) => a.id.localeCompare(b.id));
       const verdict = await this.agents.limitationVerifier.verify(this.state.limitations, { round: index });
+      const axes = new Set(
+        this.state.limitations.map((item) => item.axis.trim().toLowerCase()).filter(Boolean),
+      ).size;
       const sufficient =
-        verdictAccepted(verdict) && this.state.limitations.length >= this.ctx.config.minLimitations;
+        verdictAccepted(verdict) &&
+        this.state.limitations.length >= this.ctx.config.minLimitations &&
+        axes >= Math.min(3, this.ctx.config.minLimitations);
       this.transition(
         "stage.limitations",
         `limits.${sufficient ? "ok" : "refine"}:${this.state.limitations.length}`,
-        { round: index, verdict },
+        { round: index, axes, verdict },
       );
       if (sufficient) return;
+      // No new limitations after a full extraction round means the next round
+      // can only duplicate the same set. Stop the loop instead of spending all
+      // 16 rounds on an impossible axis-perfect set.
+      if (this.state.limitations.length === before) {
+        this.transition("stage.limitations", `limits.no-progress:${this.state.limitations.length}`, {
+          round: index,
+          axes,
+          verdict,
+        });
+        throw new ScientificAbort("limitations_exhausted");
+      }
     }
     throw new ScientificAbort("limitations_exhausted");
   }

@@ -82,6 +82,22 @@ test("a writing-contract failure aborts the run but still exports final.json", a
   assert.ok(fs.existsSync(path.join(result.root, "final.json")));
 });
 
+test("limits stop after a no-progress round instead of demanding every axis", async () => {
+  const limitations = [
+    { id: "L1", text: "word_ppl is high", axis: "method", evidence: "measured", severity: 0.5, actionable: true },
+    { id: "L2", text: "word_ppl is noisy", axis: "evaluation", evidence: "measured", severity: 0.5, actionable: true },
+  ];
+  const result = await mockRun({
+    mockScript: {
+      "limitations.extract": { limitations, rationale: "same set" },
+      "limitations.verify": { decision: "refine", feedback: "missing theory axis", metrics: {}, notes: "" },
+    },
+  });
+  assert.equal(result.final.abort_reason, "limitations_exhausted");
+  assert.equal(result.final.aborted, true);
+  assert.ok(fs.existsSync(path.join(result.root, "final.json")));
+});
+
 test("the data gate blocks paper writing without multi-round evidence", async () => {
   const result = await mockRun({ configOverrides: { minGoodTraces: 99 } });
   assert.equal(result.final.aborted, true);
@@ -121,10 +137,42 @@ test("inspect reads a run without a provider or workspace", async () => {
   assert.equal((inspected.state as any).aborted, false);
 });
 
+const metaLimits = {
+  limitations: [
+    { id: "L1", text: "The proposed mechanism improves the primary metric [L1]", axis: "evaluation", evidence: "Offline fixture limitation.", severity: 0.5, actionable: true },
+    { id: "L2", text: "The proposed mechanism improves the primary metric [L2]", axis: "efficiency", evidence: "Offline fixture limitation.", severity: 0.5, actionable: true },
+    { id: "L3", text: "The proposed mechanism improves the primary metric [L3]", axis: "evaluation", evidence: "Offline fixture limitation.", severity: 0.5, actionable: true },
+    { id: "L4", text: "The proposed mechanism improves the primary metric [L4]", axis: "efficiency", evidence: "Offline fixture limitation.", severity: 0.5, actionable: true },
+    { id: "L5", text: "The proposed mechanism improves the primary metric [L5]", axis: "data", evidence: "Offline fixture limitation.", severity: 0.5, actionable: true },
+    { id: "L6", text: "The proposed mechanism improves the primary metric [L6]", axis: "efficiency", evidence: "Offline fixture limitation.", severity: 0.5, actionable: true },
+    { id: "L7", text: "The proposed mechanism improves the primary metric [L7]", axis: "efficiency", evidence: "Offline fixture limitation.", severity: 0.5, actionable: true },
+  ],
+  rationale: "Pinned fixture limitations for the meta-refinement test.",
+};
+const metaAblation = {
+  plans: [
+    "safe component C",
+    "residual-alignment refinement",
+    "structural ablation: primary mechanism",
+    "structural ablation: auxiliary loss/regularizer",
+    "calibration gate",
+  ].map((component, index) => ({
+    id: `A${index + 1}`,
+    component,
+    description: "Remove the component and re-measure the same subset protocol.",
+    expects: "Removing it lowers auroc by 0.01 on the subset control.",
+    variant_of: "e1-8",
+  })),
+  hypothesis: "Pinned fixture ablations.",
+};
+
 test("scripted meta-refinement adopts a measured improvement and accepts", async () => {
+  const script = (await import("../src/rsi/run.ts")).loadScript(fixture("mock_script"));
+  script["limitations.extract"] = metaLimits;
+  script["ablation.plan"] = metaAblation;
   const result = await mockRun({
     problem: fixture("meta_refine"),
-    mockScript: (await import("../src/rsi/run.ts")).loadScript(fixture("mock_script")),
+    mockScript: script,
   });
   assert.equal(result.final.aborted, false);
   assert.equal(result.final.meta_review?.decision, "accept");
@@ -133,8 +181,11 @@ test("scripted meta-refinement adopts a measured improvement and accepts", async
     result.final.decision_path.some((token) => token.startsWith("adopt.meta:")));
 });
 
-test("without the script the meta refinement is not adopted", async () => {
-  const result = await mockRun({ problem: fixture("meta_refine") });
+test("without the meta script the refinement is not adopted", async () => {
+  const result = await mockRun({
+    problem: fixture("meta_refine"),
+    mockScript: { "limitations.extract": metaLimits, "ablation.plan": metaAblation },
+  });
   assert.equal(result.final.aborted, false);
   assert.equal(result.final.extra.accepted, false);
   assert.equal((result.state as any).export_reason, "meta_refinement_not_strictly_better");

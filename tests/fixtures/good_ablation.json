@@ -4,5 +4,45 @@
     "feedback": "The ablation attributes the full-set gain to the core mechanism.",
     "metrics": {},
     "notes": "Offline fixture: accepted attribution with no real scientific claim."
+  },
+  "ablation.plan": {
+    "plans": [
+      {
+        "id": "A1",
+        "component": "safe component C",
+        "description": "Remove the component and re-measure the same subset protocol.",
+        "expects": "Removing it lowers auroc by 0.01 on the subset control.",
+        "variant_of": "h6"
+      },
+      {
+        "id": "A2",
+        "component": "residual-alignment refinement",
+        "description": "Remove the component and re-measure the same subset protocol.",
+        "expects": "Removing it lowers auroc by 0.01 on the subset control.",
+        "variant_of": "h6"
+      },
+      {
+        "id": "A3",
+        "component": "structural ablation: primary mechanism",
+        "description": "Remove the component and re-measure the same subset protocol.",
+        "expects": "Removing it lowers auroc by 0.01 on the subset control.",
+        "variant_of": "h6"
+      },
+      {
+        "id": "A4",
+        "component": "structural ablation: auxiliary loss/regularizer",
+        "description": "Remove the component and re-measure the same subset protocol.",
+        "expects": "Removing it lowers auroc by 0.01 on the subset control.",
+        "variant_of": "h6"
+      },
+      {
+        "id": "A5",
+        "component": "calibration gate",
+        "description": "Remove the component and re-measure the same subset protocol.",
+        "expects": "Removing it lowers auroc by 0.01 on the subset control.",
+        "variant_of": "h6"
+      }
+    ],
+    "hypothesis": "Pinned fixture ablations."
   }
 }

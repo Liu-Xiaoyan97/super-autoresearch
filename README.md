@@ -248,6 +248,15 @@ word ppl / word-ppl 等变体 → 恢复成 canonical word_ppl
 
 因此 adapter 诊断 findings 里的分号不会再把限制提取拖进“拆句还是保留指标名”的死循环。
 
+`limits` 的充分性门槛是：
+
+```text
+至少 minLimitations 条限制
+且至少覆盖 3 个不同 axis
+```
+
+少量 axis 缺失不会阻塞；一轮没有新增限制时停止，不再固定跑满 16 轮。
+
 如果仍然失败，run 会：
 
 ```text

@@ -81,8 +81,11 @@ export class LimitationVerifier extends BaseAgent {
     const verdict = await this.ask(VerdictSpec, {
       system:
         "You are the Limitation Verifier (§3.1). Judge whether the set " +
-        "is sufficient to guide novel improvements. Return GOOD if " +
-        "sufficient, REFINE with missing actionable axes otherwise.",
+        "is sufficient to guide novel improvements. Return GOOD when the set " +
+        "has at least the minimum number and at least three distinct axes. " +
+        "A small gap of one or two axes is acceptable; do not refine solely " +
+        "to cover all five axes. Return REFINE only when the set is too small " +
+        "or cannot guide work.",
       user: stableString({
         problem: this.ctx.problem.statement,
         minimum: this.ctx.config.minLimitations,
@@ -90,14 +93,27 @@ export class LimitationVerifier extends BaseAgent {
       }),
       meta: { round },
     });
-    if (limitations.length < this.ctx.config.minLimitations) {
+    const minimum = this.ctx.config.minLimitations;
+    const axes = new Set(
+      limitations.map((item) => item.axis.trim().toLowerCase()).filter(Boolean),
+    ).size;
+    if (limitations.length < minimum) {
       return {
         ...verdict,
         decision: "refine",
-        feedback: `Need at least ${this.ctx.config.minLimitations} limitations. ${verdict.feedback}`.trim(),
+        feedback: `Need at least ${minimum} limitations. ${verdict.feedback}`.trim(),
       };
     }
     const accepted = verdict.decision === "good" || verdict.decision === "accept";
+    // A small axis gap is acceptable. Do not let a verifier loop demand all
+    // five axes when the actionable floor is already met.
+    if (!accepted && axes >= Math.min(3, minimum)) {
+      return {
+        ...verdict,
+        decision: "good",
+        feedback: `Sufficient: ${limitations.length} limitations cover ${axes} axes. ${verdict.feedback}`.trim(),
+      };
+    }
     return { ...verdict, decision: accepted ? "good" : "refine" };
   }
 }

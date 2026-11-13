@@ -27,6 +27,26 @@ export function tempDir(prefix = "rsi-test-"): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
+const defaultMockPlan = {
+  "ablation.plan": {
+    plans: [
+      "safe component C",
+      "residual-alignment refinement",
+      "structural ablation: primary mechanism",
+      "structural ablation: auxiliary loss/regularizer",
+      "calibration gate",
+    ]
+      .map((component, index) => ({
+        id: `A${index + 1}`,
+        component,
+        description: "Remove the component and re-measure the same subset protocol.",
+        expects: "Removing it lowers auroc by 0.01 on the subset control.",
+        variant_of: "h6",
+      })),
+    hypothesis: "Pinned mock ablation plans.",
+  },
+};
+
 export async function mockRun(
   over: Partial<RunOptions> = {},
 ): Promise<Awaited<ReturnType<typeof runResearch>>> {
@@ -35,6 +55,7 @@ export async function mockRun(
     outDir: tempDir("rsi-run-"),
     mock: true,
     seed: 7,
+    mockScript: defaultMockPlan,
     ...over,
   });
 }
@@ -51,7 +72,7 @@ export function makeContext(over: {
   return {
     problem,
     config,
-    llm: new MockLLMProvider(null, config.seed),
+    llm: new MockLLMProvider(defaultMockPlan, config.seed),
     workspace: new GitWorkspace(problem, config, root),
     store,
     traces: new TraceStore(path.join(root, "traces.jsonl")),
