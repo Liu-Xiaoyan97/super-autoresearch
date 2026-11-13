@@ -448,7 +448,7 @@ export async function runIteration(opts: IterationOptions): Promise<IterationRes
     },
   };
   const ctx: AgentContext = { problem, config, llm: wrapped, workspace: guarded, store, traces, budget,
-    scratch: {}, signal, onProgress: opts.onProgress };
+    scratch: {}, projectRoot: cwd, signal, onProgress: opts.onProgress };
   store.writeJson("problem.json", problem);
   store.writeJson("config.json", config);
   try {

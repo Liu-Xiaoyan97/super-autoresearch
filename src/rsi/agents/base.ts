@@ -17,6 +17,8 @@ export interface AgentContext {
   traces: TraceStore;
   budget: Budget;
   scratch: Record<string, unknown>;
+  /** Project root used for the generated ledger; defaults from outDir. */
+  projectRoot?: string;
   /** Lazy full baseline: measured on the first candidate that reaches full. */
   ensureBaselineFull?: () => Promise<Evidence>;
   signal?: AbortSignal;

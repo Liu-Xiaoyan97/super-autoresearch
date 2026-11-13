@@ -192,6 +192,41 @@ integrity.spec: each good trace ──► evidence, during search
 > `code.rebuttal` 和 seed screen 仍串行，因为它们共享 remote GPU、worktree、
 > commit 和 checkpoint 资源。
 
+## 实验台账与族谱
+
+每次 run 的 `state.json` / `final.json` 更新后，RSI 自动重建项目根目录下的：
+
+```text
+ledger/
+  ledger.json          # 机器可读台账
+  experiments.jsonl    # 逐实验记录
+  ledger.md            # 人类可读表格
+  tree.txt             # 缩进树
+  graph.md             # Mermaid
+  graph.dot            # Graphviz DOT
+  lineage.json         # 族谱布局数据
+  lineage.png          # 树状族谱（PNG）
+  lineage.svg          # 树状族谱（SVG）
+```
+
+图谱结构：
+
+```text
+project
+  └─ model family
+       ├─ baseline subset / full
+       └─ subset → full → ablation → rebuttal
+```
+
+- **同族判定**：比较目标仓库中模型定义文件的 git blob，不比较 commit 或阶段配置。
+  `RSI_CORAL_MODEL_FILE` 指向的文件不变时，E/H、LR、batch、steps、优化器等超参数变化都属于同族；
+  模型定义文件内容变化才创建新 family。
+- `ledger` 每次状态写入后自动刷新，不需要手工导出。
+- 默认写到 `<项目根>/ledger/`；可用 `RSI_LEDGER_DIR` 覆盖。
+- PNG/SVG 需要 `python3` + matplotlib；容器镜像已包含 `python3-matplotlib`。缺少渲染器时
+  JSON/Markdown/DOT 仍然生成。
+- `ledger/` 是生成数据，已在 `.gitignore` 中忽略；不会删除 baseline 台账或 baseline 指针。
+
 ## 安装（仅容器）
 
 ### 1. 配置 `container/.env`

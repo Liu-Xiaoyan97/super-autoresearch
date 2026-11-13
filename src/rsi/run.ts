@@ -14,6 +14,7 @@ import { Budget } from "./runtime/budget.ts";
 import { ArtifactStore, TraceStore, type TraceRecord } from "./runtime/store.ts";
 import { GitWorkspace } from "./runtime/workspace.ts";
 import { loadRunBaselines } from "./runtime/incumbent.ts";
+import { refreshLedgerFromContext } from "./runtime/ledger.ts";
 import {
   type FinalArtifacts,
   type MetricSpec,
@@ -335,6 +336,7 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
     traces,
     budget,
     scratch: {} as Record<string, unknown>,
+    projectRoot: cwd,
     signal: opts.signal,
     onProgress: opts.onProgress,
   };
@@ -358,6 +360,7 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
     const state = orchestrator.stateDict();
     fs.writeFileSync(path.join(root, "state.json"), JSON.stringify(state, null, 2), "utf8");
     fs.writeFileSync(path.join(root, "final.json"), JSON.stringify(final, null, 2), "utf8");
+    refreshLedgerFromContext(ctx);
     const records = traces.readAll();
     const summary = summarize(runId, state, final, records);
     return { runId, root, state, final, records, orchestrator, provider, summary };

@@ -38,6 +38,7 @@ import { InitialDrafter, PaperEnhancer } from "../agents/writing.ts";
 import { BudgetExceeded } from "../runtime/budget.ts";
 import { incumbentFileFor, ledgerFromEvidence, protocolFingerprint, writeIncumbent } from "../runtime/incumbent.ts";
 import { runDiagnosis, type DiagnosisResult } from "../runtime/diagnosis.ts";
+import { refreshLedgerFromContext } from "../runtime/ledger.ts";
 import {
   type AblationResult,
   type Diagnosis,
@@ -291,6 +292,8 @@ export class Orchestrator {
 
   private persist(): void {
     this.ctx.store.writeJson("../state.json", this.state.toDict());
+    // Every transition is a new experiment datum; refresh the project ledger.
+    refreshLedgerFromContext(this.ctx);
   }
 
   /** Run the target-declared read-only analysis on the reproduced baseline. */

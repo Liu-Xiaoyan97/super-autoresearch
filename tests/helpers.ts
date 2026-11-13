@@ -91,3 +91,5 @@ export function readJson(file: string): any {
 
 // Keep project-global baseline writes out of the developer home during tests.
 process.env.RSI_BASELINE_DIR ??= tempDir("rsi-baseline-home-");
+process.env.RSI_LEDGER_DIR ??= tempDir("rsi-ledger-home-");
+process.env.RSI_LEDGER_RENDER ??= "0";

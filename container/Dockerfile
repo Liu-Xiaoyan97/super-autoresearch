@@ -30,7 +30,7 @@ RUN if [ -n "$APT_PROXY" ]; then \
  && apt-get update \
  && apt-get install -y --no-install-recommends \
       bash ca-certificates curl git jq ripgrep openssh-client rsync socat \
-      python3 python3-venv make \
+      python3 python3-venv python3-matplotlib make \
  && rm -rf /var/lib/apt/lists/* /etc/apt/apt.conf.d/01proxy
 
 # Pi ships platform binaries through npm; --ignore-scripts matches the official

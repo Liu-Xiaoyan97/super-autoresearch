@@ -39,6 +39,7 @@ import { defaultPolicySettings, makePolicy } from "./policy.ts";
 import { stageSpec, stageOfTask } from "./sop.ts";
 import { FileRepositories, MemoryRepositories, type Repositories, type Snapshot } from "./store.ts";
 import { SuperagentLLMProvider } from "../providers/superagent.ts";
+import { refreshLedger } from "../runtime/ledger.ts";
 
 export interface WorkerContext {
   spec: RunSpec;
@@ -113,6 +114,7 @@ export class RunSession {
   readonly engine: Engine;
   readonly ticketId: string;
   readonly spec: RunSpec;
+  readonly cwd: string;
   private readonly driver: SopDriver;
   private readonly worker: TaskWorker;
   private readonly controller = new AbortController();
@@ -129,6 +131,7 @@ export class RunSession {
     notifyTaskReports?: boolean;
   }) {
     this.spec = options.spec;
+    this.cwd = options.cwd;
     this.runId = path.basename(options.spec.root);
     this.root = options.spec.root;
     this.worker = options.workerFactory({ spec: options.spec, cwd: options.cwd, signal: this.controller.signal });
@@ -254,6 +257,11 @@ export class RunSession {
       if (!Array.isArray(final.decision_path)) final.decision_path = state.decision_path ?? [];
       final.extra = { ...(typeof final.extra === "object" && final.extra ? final.extra : {}), interrupted: true };
       fs.writeFileSync(finalFile, JSON.stringify(final, null, 2), "utf8");
+      try {
+        refreshLedger({ projectRoot: this.cwd, runsRoots: [path.dirname(this.root)] });
+      } catch {
+        /* ledger is best effort */
+      }
     } catch {
       /* the run directory may already be gone */
     }
@@ -780,6 +788,11 @@ export class SuperagentRuntime {
       } catch {
         /* a corrupt or disappearing run stays visible to /rsi status */
       }
+    }
+    try {
+      refreshLedger({ projectRoot: this.cwd, runsRoots: [this.out] });
+    } catch {
+      /* ledger is best effort */
     }
     return recovered;
   }
