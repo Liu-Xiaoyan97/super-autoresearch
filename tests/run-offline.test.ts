@@ -139,8 +139,8 @@ test("the paper loop retries a non-accepted review within max_retry.paper", asyn
   };
   // A meta-reviewer that never accepts: only the retry policy can end the loop.
   const script = { ...defaultMockPlan, "review.meta": { decision: "refine", critique: "The mechanism needs a measured algorithmic change.", score: 5 } };
-  const stopped = await mockRun({ problem: write("stop", 0), mockScript: script, configOverrides: { nSeed: 1, minLimitations: 7, maxMetaRounds: 0 } });
-  const retried = await mockRun({ problem: write("retry", 1), mockScript: script, configOverrides: { nSeed: 1, minLimitations: 7, maxMetaRounds: 0 } });
+  const stopped = await mockRun({ problem: write("stop", 0), mockScript: script, configOverrides: { nSeed: 1, minLimitations: 7, maxMetaRounds: 0, maxReviewRefinements: 0, maxPeerRounds: 0, reviewPanelSize: 1 } });
+  const retried = await mockRun({ problem: write("retry", 1), mockScript: script, configOverrides: { nSeed: 1, minLimitations: 7, maxMetaRounds: 0, maxReviewRefinements: 0, maxPeerRounds: 0, reviewPanelSize: 1 } });
   assert.ok(!stopped.final.decision_path.some((token) => token.startsWith("paper.retry:")), "paper 0 never retries");
   assert.ok(retried.final.decision_path.includes("paper.retry:1"), "one paper retry");
   assert.ok(retried.final.decision_path.includes("paper.revised"), "the retry revises the manuscript instead of re-drafting");
