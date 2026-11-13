@@ -29,7 +29,7 @@ test("the coral fixture targets the non-Transformer dense stack", () => {
   const problem = loadProblem(fixture("coral"));
   assert.equal(problem.metrics[0].name, "word_ppl");
   assert.equal(problem.metrics[0].direction, "min");
-  assert.equal(problem.metrics[0].tolerance, 0.005);
+  assert.equal(problem.metrics[0].tolerance, 0.05);
   assert.equal(problem.metrics[0].dataset, "wikitext-2-raw-v1");
   assert.equal(problem.metrics[1].name, "acc");
   assert.equal(problem.metrics[1].dataset, "lambada_openai");

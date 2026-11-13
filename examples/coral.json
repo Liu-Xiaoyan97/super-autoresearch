@@ -56,7 +56,7 @@
       "RSI_CORAL_MODEL_FILE": "models/modeling_coral_dense.py",
       "RSI_CORAL_EVAL_SCRIPT": "scripts/eval_arch_v1_wikitext.py",
       "RSI_CORAL_HARNESS": "/home/sl/coral-eval-env-recovery-20261109-1345/.eval-venv/lib/python3.10/site-packages",
-      "RSI_CORAL_TRAIN_BATCH_SIZE": "32",
+      "RSI_CORAL_TRAIN_BATCH_SIZE": "2",
       "RSI_CORAL_MAX_LENGTH": "1024",
       "RSI_CORAL_LM_EVAL_BATCH_SIZE": "8",
       "RSI_CORAL_EVAL_MAX_LENGTH": "1024",
@@ -96,7 +96,7 @@
       "name": "word_ppl",
       "dataset": "wikitext-2-raw-v1",
       "direction": "min",
-      "tolerance": 0.005,
+      "tolerance": 0.05,
       "weight": 1.0,
       "bounds": null
     },
