@@ -2,7 +2,7 @@ import fs from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import rsiExtension from "../extensions/rsi.ts";
+import rsiExtension, { currentOpenRuns } from "../extensions/rsi.ts";
 import { fixture, repoRoot, tempDir } from "./helpers.ts";
 
 function fakeApi(messages: Array<{ message: any; options: any }> = []) {
@@ -54,6 +54,27 @@ test("the extension registers the RSI tools and command without side effects", (
   assert.deepEqual([...tools.keys()], ["rsi_research", "rsi_job_submit", "rsi_job_status", "rsi_job_wait", "rsi_job_cancel", "rsi_job_list", "rsi_adapter_smoke", "rsi_iteration", "rsi_superagent", "rsi_inspect", "rsi_replay"]);
   assert.deepEqual([...commands.keys()], ["rsi"]);
   assert.ok([...tools.values()].every((tool) => tool.description.length > 40));
+});
+
+test("reload reattaches only open runs from the current process", () => {
+  const run = (run_id: string, updated_at: string) => ({ run_id, root: "", title: run_id, state: "working", updated_at });
+  const status = (run_id: string) =>
+    ({
+      run_id,
+      root: "",
+      title: run_id,
+      state: run_id === "ended" ? "ended" : "working",
+      stages: [],
+      tickets: [],
+      policy: { version: "", mode: "auto", paused: false },
+      ...(run_id === "ended" ? { ended: { outcome: "completed", at: "" } } : {}),
+    }) as any;
+  const open = currentOpenRuns(
+    [run("current", "2026-01-01T00:02:00.000Z"), run("old", "2026-01-01T00:00:00.000Z"), run("ended", "2026-01-01T00:03:00.000Z")],
+    status,
+    "2026-01-01T00:01:00.000Z",
+  );
+  assert.deepEqual(open.map((item) => item.run_id), ["current"]);
 });
 
 test("a live run writes the TUI status and clears it when the run ends", async () => {

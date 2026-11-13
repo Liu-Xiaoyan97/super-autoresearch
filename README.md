@@ -266,6 +266,8 @@ coral-wikitext-ppl-s7-r1-r1-r2-r1 · run-1olswx6
 - 多个 run 各占两行，中间空一行；
 - 需要人回答时显示 `NEEDS PERSON`；
 - run 完成、失败或停止后自动清除，不残留旧状态；
+- `/reload` 或切换 session 后，会从 run 的 superagent state 重新挂载本 Pi 进程启动
+  后仍在运行的 open run；
 - 底部 footer status 只保留其他扩展的信息。
 
 baseline 进度会区分来源：

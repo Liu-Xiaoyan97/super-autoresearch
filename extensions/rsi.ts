@@ -41,7 +41,7 @@ import type { Notice } from "../src/rsi/superagent/engine.ts";
 import type { PolicySettings } from "../src/rsi/superagent/model.ts";
 import { defaultPolicySettings, permissivePolicySettings } from "../src/rsi/superagent/policy.ts";
 import { orchestratorBriefing, policySection } from "../src/rsi/superagent/prompts.ts";
-import { SuperagentRuntime, type DispatchParams, type RunStatus } from "../src/rsi/superagent/runtime.ts";
+import { SuperagentRuntime, type DispatchParams, type RunStatus, type RunSummary } from "../src/rsi/superagent/runtime.ts";
 import { SUPERAGENT_PARAMS, formatStatus, superagentAction } from "../src/rsi/superagent/tools.ts";
 import { PiWorker } from "../src/rsi/providers/superagent.ts";
 import type { RunSpec } from "../src/rsi/superagent/model.ts";
@@ -469,6 +469,36 @@ function refreshTui(): void {
   } catch {
     /* TUI/RPC UI may be unavailable; the run itself must continue */
   }
+}
+
+/** Open runs that belong to this Pi process, newest state first. */
+export function currentOpenRuns(
+  runs: RunSummary[],
+  statusOfRun: (runId: string) => RunStatus | undefined,
+  processStarted: string,
+): RunSummary[] {
+  return runs.filter((run) => {
+    if (run.updated_at < processStarted) return false;
+    const status = statusOfRun(run.run_id);
+    return !!status && !status.ended && status.state !== "ended";
+  });
+}
+
+/** Reattach open runs after /reload or a session switch. The run's state file
+ * is the source of truth; only runs updated in this Pi process are current. */
+function discoverTuiRuns(ctx: ToolContext): void {
+  try {
+    const runtime = runtimeFor(ctx);
+    const processStarted = new Date(Date.now() - process.uptime() * 1000).toISOString();
+    for (const run of currentOpenRuns(runtime.list(), (runId) => runtime.status(runId), processStarted)) {
+      if (!TUI_RUNS.has(run.run_id)) {
+        TUI_RUNS.set(run.run_id, { runtime, started: Date.now(), title: run.title });
+      }
+    }
+  } catch {
+    /* the widget is best-effort; protocol state remains on disk */
+  }
+  refreshTui();
 }
 
 function trackTuiRun(
@@ -955,7 +985,7 @@ export default function rsiExtension(pi: ExtensionAPI): void {
 
   (pi as any).on?.("session_start", async (_event: unknown, ctx: any) => {
     TUI_CTX = ctx as ToolContext;
-    refreshTui();
+    discoverTuiRuns(TUI_CTX);
   });
 
   (pi as any).on?.("session_shutdown", async () => {
