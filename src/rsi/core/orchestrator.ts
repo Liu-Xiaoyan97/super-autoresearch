@@ -33,6 +33,7 @@ import {
 } from "../agents/integrity.ts";
 import { LimitationExtractor, LimitationVerifier } from "../agents/limitations.ts";
 import { MetaReviewer, PeerReviewer, RebuttalPlanner } from "../agents/review.ts";
+import { StyleViolationError } from "../writing/style.ts";
 import { InitialDrafter, PaperEnhancer } from "../agents/writing.ts";
 import { BudgetExceeded } from "../runtime/budget.ts";
 import { incumbentFileFor, ledgerFromEvidence, protocolFingerprint, writeIncumbent } from "../runtime/incumbent.ts";
@@ -236,6 +237,12 @@ export class Orchestrator {
         this.state.aborted = ABORT_REASONS.has(error.message);
         if (this.state.aborted) this.state.abortReason = error.message;
         else this.state.exportReason = error.message;
+      } else if (error instanceof StyleViolationError) {
+        // A writing-contract failure is a run-level block, not a missing final
+        // artifact. Preserve the baseline/diagnosis and make the run resumable.
+        this.state.aborted = true;
+        this.state.abortReason = "style_violation";
+        this.transition("stage.abort", "style.violation", { message: error.message });
       } else {
         throw error;
       }

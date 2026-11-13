@@ -127,7 +127,7 @@ export function parseManuscript(raw: unknown, format = "iclr2025", round = 0): M
 
 export const LimitationBatch: StructuredSpec<{ limitations: Limitation[]; rationale: string }> = {
   name: "LimitationBatch",
-  instruction: '{"limitations":[{"id":"L1","text":"actionable limitation","axis":"method|evaluation|efficiency|theory|data","evidence":"support","severity":0.5,"actionable":true}],"rationale":"why these are new"}',
+  instruction: '{"limitations":[{"id":"L1","text":"one-sentence actionable limitation","axis":"method|evaluation|efficiency|theory|data","evidence":"one-sentence measured support with exact metric names","severity":0.5,"actionable":true}],"rationale":"why these are new"}',
   parse(raw) {
     const item = asRecord(raw) ?? {};
     return {

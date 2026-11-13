@@ -64,6 +64,55 @@ function metricNames(problem: Problem): string[] {
   return problem.metrics.map((metric) => metric.name).filter(Boolean);
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Restore canonical metric names in prose; a repair must not rename them. */
+function restoreMetricNames(problem: Problem, text: string): string {
+  let out = text;
+  for (const name of metricNames(problem)) {
+    const pattern = new RegExp(
+      `\\b${escapeRegExp(name).replace(/[_-]/g, "[ _-]")}\\b`,
+      "gi",
+    );
+    out = out.replace(pattern, name);
+  }
+  return out;
+}
+
+/**
+ * Deterministic normalization before linting. Limitation evidence often quotes
+ * several measured values separated by semicolons; those are data, not
+ * separate claims. Split them into sentences and restore metric identifiers so
+ * a model repair cannot create a semicolon/identifier deadlock.
+ */
+export function normalizeStyleOutput(specName: string, problem: Problem, value: unknown): unknown {
+  if (specName !== "LimitationBatch" || !value || typeof value !== "object") return value;
+  const item = value as Record<string, unknown>;
+  const normalize = (text: unknown): unknown => {
+    if (typeof text !== "string") return text;
+    const split = text.replace(/;\s*/g, ". ").replace(/\s+/g, " ").trim();
+    return restoreMetricNames(problem, split);
+  };
+  const limitations = Array.isArray(item.limitations)
+    ? item.limitations.map((entry) => {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+        const record = entry as Record<string, unknown>;
+        return {
+          ...record,
+          ...(typeof record.text === "string" ? { text: normalize(record.text) } : {}),
+          ...(typeof record.evidence === "string" ? { evidence: normalize(record.evidence) } : {}),
+        };
+      })
+    : item.limitations;
+  return {
+    ...item,
+    ...(limitations !== undefined ? { limitations } : {}),
+    ...(typeof item.rationale === "string" ? { rationale: normalize(item.rationale) } : {}),
+  };
+}
+
 /** Rewritten identifiers: `word ppl` / `word-ppl` instead of the canonical key. */
 function identifierIssues(problem: Problem, path: string, sentence: string): StyleIssue[] {
   const issues: StyleIssue[] = [];
@@ -193,6 +242,7 @@ export function stylePrompt(profile: StyleProfile = "strict"): string {
     "- The answer is one JSON object with the keys and structure the task asks for. Apply these rules to its string values, not to the JSON keys or the envelope.",
     "- Use one term for one thing. Copy metric names, ids, paths and component names exactly.",
     "- One claim per sentence. Descriptive sentences: at most 25 words. Actions and feedback: at most 20 words.",
+    "- Do not use semicolons in prose values. Split each semicolon into separate sentences.",
     "- Use active voice with an explicit actor and verb.",
     "- Every comparison needs the metric name and a measured value. Never write a vague quantity: significantly, substantially, somewhat, much, several, various, numerous, many, few.",
     "- If a sentence states an unmeasured expectation or comparison, start it with \"Hypothesis:\". Hypotheses are exempt from the number rule, but still use one term per thing and one claim per sentence.",

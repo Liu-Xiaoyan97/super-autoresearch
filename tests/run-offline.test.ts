@@ -64,6 +64,24 @@ test("the full baseline is lazy and is not measured when no candidate reaches fu
   assert.equal(result.final.abort_reason, "no_good_ideas");
 });
 
+test("a writing-contract failure aborts the run but still exports final.json", async () => {
+  const bad = {
+    limitations: [{
+      id: "L1",
+      text: "Significantly lower word ppl",
+      axis: "method",
+      evidence: "bad evidence",
+      severity: 0.5,
+      actionable: true,
+    }],
+    rationale: "bad",
+  };
+  const result = await mockRun({ mockScript: { "limitations.extract": [bad, bad, bad] } });
+  assert.equal(result.final.aborted, true);
+  assert.equal(result.final.abort_reason, "style_violation");
+  assert.ok(fs.existsSync(path.join(result.root, "final.json")));
+});
+
 test("the data gate blocks paper writing without multi-round evidence", async () => {
   const result = await mockRun({ configOverrides: { minGoodTraces: 99 } });
   assert.equal(result.final.aborted, true);

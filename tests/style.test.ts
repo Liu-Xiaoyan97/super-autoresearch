@@ -2,8 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { InitialIdeaGenerator } from "../src/rsi/agents/ideas.ts";
+import { LimitationExtractor } from "../src/rsi/agents/limitations.ts";
 import { LLMProvider, type LLMRequest, type LLMResponse } from "../src/rsi/providers/base.ts";
-import { StyleViolationError, isCodeSpec, lintSpec, splitSentences, stylePrompt, wordCount } from "../src/rsi/writing/style.ts";
+import { StyleViolationError, isCodeSpec, lintSpec, normalizeStyleOutput, splitSentences, stylePrompt, wordCount } from "../src/rsi/writing/style.ts";
 import { makeManuscript, makeProblem, metricSpec } from "../src/rsi/types.ts";
 import { makeContext as context } from "./helpers.ts";
 
@@ -78,6 +79,24 @@ test("code specs are exempt; the manuscript lints only claims and evidence", () 
   assert.ok(!issues.some((issue) => issue.path.includes("sections")));
 });
 
+test("LimitationBatch normalization splits semicolon evidence and restores metric names", () => {
+  const normalized = normalizeStyleOutput("LimitationBatch", problem, {
+    limitations: [{
+      id: "L1",
+      text: "word ppl is high; training is slow",
+      axis: "method",
+      evidence: "0.1; 0.2",
+      severity: 0.5,
+      actionable: true,
+    }],
+    rationale: "copy word ppl; keep it exact",
+  }) as any;
+  assert.equal(normalized.limitations[0].text, "word_ppl is high. training is slow");
+  assert.equal(normalized.limitations[0].evidence, "0.1. 0.2");
+  assert.equal(normalized.rationale, "copy word_ppl. keep it exact");
+  assert.deepEqual(lintSpec("LimitationBatch", problem, normalized), []);
+});
+
 test("sentence splitting counts words deterministically", () => {
   assert.deepEqual(splitSentences("One. Two! Three?"), ["One.", "Two!", "Three?"]);
   assert.equal(wordCount("one two three."), 3);
@@ -105,6 +124,7 @@ test("stylePrompt states the three rules, the JSON contract and the manuscript e
   assert.match(stylePrompt(), /JSON keys/i);
   assert.match(stylePrompt(), /few/);
   assert.match(stylePrompt(), /Hypothesis:/);
+  assert.match(stylePrompt(), /semicolon/i);
   assert.match(stylePrompt("manuscript"), /Manuscript body/);
 });
 
@@ -126,6 +146,26 @@ function agentCtx(replies: string[]) {
   ctx.llm = new Scripted(replies);
   return ctx;
 }
+
+test("LimitationExtractor uses normalized output without a repair round", async () => {
+  const output = JSON.stringify({
+    limitations: [{
+      id: "L1",
+      text: "word ppl is high; training is slow",
+      axis: "method",
+      evidence: "0.1; 0.2",
+      severity: 0.5,
+      actionable: true,
+    }],
+    rationale: "word ppl; measured",
+  });
+  const ctx = agentCtx([output, output, output]);
+  const limitations = await new LimitationExtractor(ctx).extract({ findings: [] });
+  assert.equal(ctx.llm instanceof Scripted ? ctx.llm.calls : -1, 1);
+  assert.equal(limitations.length, 1);
+  assert.equal(limitations[0].text, "word_ppl is high. training is slow");
+  assert.equal(limitations[0].evidence, "0.1. 0.2");
+});
 
 test("one repair is attempted, then the compliant answer is used", async () => {
   const bad = JSON.stringify({ ideas: [idea("Significantly lower word_ppl")] });

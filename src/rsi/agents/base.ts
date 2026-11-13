@@ -2,7 +2,7 @@
 
 import type { Config } from "../config.ts";
 import { type LLMProvider, type StructuredSpec } from "../providers/base.ts";
-import { StyleViolationError, formatIssues, isCodeSpec, lintSpec, stylePrompt } from "../writing/style.ts";
+import { StyleViolationError, formatIssues, isCodeSpec, lintSpec, normalizeStyleOutput, stylePrompt } from "../writing/style.ts";
 import type { Budget } from "../runtime/budget.ts";
 import type { ArtifactStore, TraceStore } from "../runtime/store.ts";
 import type { Workspace } from "../runtime/workspace.ts";
@@ -99,10 +99,15 @@ export abstract class BaseAgent {
         meta: opts.meta ?? {},
       });
       if (code) return output;
-      lastIssues = lintSpec(spec.name, this.ctx.problem, output, profile);
+      // Normalize data-shaped prose before linting: split semicolon-separated
+      // measured evidence and restore canonical metric names. This prevents a
+      // repair loop from choosing between compliant punctuation and the exact
+      // metric identifier.
+      const checked = normalizeStyleOutput(spec.name, this.ctx.problem, output) as T;
+      lastIssues = lintSpec(spec.name, this.ctx.problem, checked, profile);
       if (!lastIssues.length) {
         this.ctx.traces.append("style.ok", { agent: this.NAME, schema: spec.name, attempt });
-        return output;
+        return checked;
       }
       this.ctx.traces.append("style.violation", { agent: this.NAME, schema: spec.name, attempt, issues: lastIssues });
       if (attempt === 2) break;

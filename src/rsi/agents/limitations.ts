@@ -20,13 +20,22 @@ export class LimitationExtractor extends BaseAgent {
       a.id === b.id ? normalized(a.text).localeCompare(normalized(b.text)) : a.id.localeCompare(b.id),
     );
     const forbidden = [...this.ctx.problem.forbidden].sort();
+    // Diagnosis evidence may contain semicolon-separated measurements. Split
+    // them before prompting so the model does not copy a multiple-claim string
+    // into a limitation's text/evidence.
+    const promptFindings = findings.map((finding) => ({
+      ...finding,
+      evidence: finding.evidence.replace(/;\s*/g, ". "),
+    }));
     const prompt =
       "Extract new, actionable limitations of the source method (§3.1). " +
       "Expand the existing set; never repeat its IDs or normalized text. " +
       "Only suggest limitations whose remedies are in scope. Do not propose " +
       "or depend on any forbidden approach. Ground each limitation in a measured " +
-      "finding when one is supplied; label genuinely unmeasured gaps as hypotheses.\n" +
-      `Measured findings (primary first): ${stableString(findings)}\n` +
+      "finding when one is supplied; label genuinely unmeasured gaps as hypotheses. " +
+      "Write one sentence per text and evidence field. Never use semicolons. " +
+      "Copy every metric name, id and path exactly, including word_ppl.\n" +
+      `Measured findings (primary first): ${stableString(promptFindings)}\n` +
       `Problem: ${this.ctx.problem.statement}\n` +
       `Source: ${this.ctx.problem.source_paper}\n` +
       `Constraints: ${stableString([...this.ctx.problem.constraints].sort())}\n` +

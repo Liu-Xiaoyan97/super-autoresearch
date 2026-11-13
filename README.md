@@ -235,6 +235,54 @@ rm -rf /workspace/RSI/.rsi-baseline/coral-wikitext-ppl-*
 
 `stop` 是最终的；失败的 open ticket 可以 resume。
 
+## 常见失败
+
+### `limits` 阶段反复 `multiple-claims` / `identifier-rewritten`
+
+RSI 在 lint 前会规范化限制文本：
+
+```text
+分号分隔的 measured evidence → 拆成独立句子
+word ppl / word-ppl 等变体 → 恢复成 canonical word_ppl
+```
+
+因此 adapter 诊断 findings 里的分号不会再把限制提取拖进“拆句还是保留指标名”的死循环。
+
+如果仍然失败，run 会：
+
+```text
+aborted=true
+abort_reason=style_violation
+```
+
+并仍然写出 `final.json`，保留 baseline 和 diagnosis，之后可以：
+
+```text
+/rsi resume <run_id>
+```
+
+写作输出不稳定时，可以在完整 run 加：
+
+```text
+--thinking high
+```
+
+这只影响模型思考强度，不改变实验预算。
+
+### `diagnose.failed`
+
+远端 `diagnose_command` 的 `{repo}` 现在使用远端同步后的 worktree，不是本地 checkout。失败时本地会写：
+
+```text
+runs/<run_id>/artifacts/experiments/diagnosis-<id>.log
+```
+
+包含远端 stdout/stderr。baseline 已复用时，resume 不会重新训练 baseline。
+
+### 没有 `final.json`
+
+只有未处理的异常才会缺少 `final.json`。style violation 现在会被 orchestrator 捕获，标记为 aborted 并导出 final；baseline/diagnosis 保留，可 resume。
+
 ## 远端和 baseline
 
 - 远端源码目录：`/home/sl/coral-rsi`（复用，不复制到 `projects/`）。
