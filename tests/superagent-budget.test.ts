@@ -270,8 +270,10 @@ test("native worker keeps precise role tool scopes, with rsi_report always avail
   const { worker, calls, loaders } = workerFixture();
   await worker.run(ticket({ task: "ideas.novelty" }), new AbortController().signal);
   await worker.run(ticket({ tools: ["read", "rsi_report", "read"] }), new AbortController().signal);
+  await worker.run(ticket({ task: "code.subset" }), new AbortController().signal);
   assert.deepEqual(calls[0].tools, ["web_search", "rsi_report"]);
   assert.deepEqual(calls[1].tools, ["read", "rsi_report"]);
+  assert.deepEqual(calls[2].tools, ["read", "grep", "find", "ls", "rsi_report"]);
   assert.equal(calls.every((call) => call.noTools === "all"), true);
   assert.equal(loaders.every((loader) => loader.noExtensions === false), true);
   await worker.close();

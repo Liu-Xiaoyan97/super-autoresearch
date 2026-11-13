@@ -201,6 +201,7 @@ class SopDriver implements RunDriver {
   private controller: AbortController | null = null;
   private promise: Promise<RunResult | null> = Promise.resolve(null);
   private lastProgress = 0;
+  private lastProgressMessage = "";
 
   private readonly opts: {
     spec: RunSpec;
@@ -237,8 +238,11 @@ class SopDriver implements RunDriver {
 
   private progress(ticketId: string, message: string): void {
     const now = Date.now();
-    if (now - this.lastProgress < 1500) return;
+    // Stage transitions must be visible immediately. Throttle only repeated
+    // messages, not a new stage that happens shortly after the previous one.
+    if (message === this.lastProgressMessage && now - this.lastProgress < 1500) return;
     this.lastProgress = now;
+    this.lastProgressMessage = message;
     const engine = this.opts.engine();
     const ticket = engine.ticket(ticketId);
     if (!ticket || !liveTicket(ticket)) return;
@@ -806,7 +810,10 @@ function stageRows(tickets: Ticket[], run: Ticket | undefined, facts: RunFacts):
       const completed = stageCompleted(stage, facts);
       const active = current.has(stage) || stageTickets.some((ticket) => liveTicket(ticket));
       const state = completed ? "done" : active ? (failed ? "failed" : stopped ? "stopped" : "working") : "pending";
-      return { stage, section: spec.section, title: spec.title, state, tasks, done };
+      // A stage can complete through the run decision path (for example a
+      // reused baseline) without a task ticket. The SOP says its declared tasks
+      // are done when the stage is done.
+      return { stage, section: spec.section, title: spec.title, state, tasks, done: completed ? tasks : done };
     })
     .sort((a, b) => a.stage.localeCompare(b.stage));
 }

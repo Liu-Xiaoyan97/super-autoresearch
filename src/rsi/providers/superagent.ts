@@ -23,6 +23,9 @@ import { roleOfTask } from "../superagent/sop.ts";
 import { workerSystem } from "../superagent/prompts.ts";
 
 const DEFAULT_WEB_TASKS: ReadonlySet<string> = new Set(["ideas.novelty", "integrity.refs"]);
+/** Coding workers inspect the target snapshot but never write it directly. */
+const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
+const CODE_TASK = /^(code|engineer|ablation|rebuttal)\./;
 
 /** A report the worker produced but the protocol cannot accept as an answer. */
 class WorkerReportError extends Error {
@@ -129,6 +132,9 @@ export class PiWorker implements TaskWorker {
 
   private toolsFor(task: string): string[] {
     if (this.tools.length) return this.tools;
+    // A coder asked to produce a diff must be able to inspect the source.
+    // Keep the allowlist read-only: write/edit/bash would bypass the patch flow.
+    if (CODE_TASK.test(task)) return READ_ONLY_TOOLS;
     if (this.webSearch && this.webTasks.has(task)) return ["web_search"];
     return [];
   }

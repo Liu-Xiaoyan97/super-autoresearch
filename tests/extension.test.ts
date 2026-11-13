@@ -26,7 +26,12 @@ async function until(predicate: () => boolean, timeoutMs = 10000): Promise<void>
   }
 }
 
-function fakeContext(_out: string, notes: Array<{ message: string; level?: string }> = []) {
+function fakeContext(
+  _out: string,
+  notes: Array<{ message: string; level?: string }> = [],
+  statuses: Array<{ key: string; text?: string }> = [],
+  widgets: Array<{ key: string; lines?: string[] }> = [],
+) {
   return {
     cwd: repoRoot,
     ui: {
@@ -34,8 +39,8 @@ function fakeContext(_out: string, notes: Array<{ message: string; level?: strin
       confirm: async () => true,
       select: async () => undefined,
       input: async () => undefined,
-      setStatus: () => {},
-      setWidget: () => {},
+      setStatus: (key: string, text?: string) => statuses.push({ key, text }),
+      setWidget: (key: string, lines?: string[]) => widgets.push({ key, lines }),
     },
     modelRegistry: {},
     model: null,
@@ -48,6 +53,27 @@ test("the extension registers the RSI tools and command without side effects", (
   assert.deepEqual([...tools.keys()], ["rsi_research", "rsi_job_submit", "rsi_job_status", "rsi_job_wait", "rsi_job_cancel", "rsi_job_list", "rsi_adapter_smoke", "rsi_iteration", "rsi_superagent", "rsi_inspect", "rsi_replay"]);
   assert.deepEqual([...commands.keys()], ["rsi"]);
   assert.ok([...tools.values()].every((tool) => tool.description.length > 40));
+});
+
+test("a live run writes the TUI status and clears it when the run ends", async () => {
+  const { tools } = fakeApi();
+  const out = tempDir("rsi-tui-");
+  const statuses: Array<{ key: string; text?: string }> = [];
+  const widgets: Array<{ key: string; lines?: string[] }> = [];
+  const ctx = fakeContext(out, [], statuses, widgets);
+  const research = await tools.get("rsi_research").execute(
+    "call-tui",
+    { problem: fixture("ood_frozen_encoder"), mode: "mock", out, seed: 7, wait: true, script: fixture("good_ablation") },
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.equal(research.details.final.aborted, false);
+  assert.ok(statuses.some((entry) => entry.text?.startsWith("RSI ")), JSON.stringify(statuses));
+  assert.ok(widgets.some((entry) => entry.lines?.length), JSON.stringify(widgets));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(statuses.at(-1)?.text, undefined, "status cleared after the run ends");
+  assert.equal(widgets.at(-1)?.lines, undefined, "widget cleared after the run ends");
 });
 
 test("rsi_research and rsi_inspect work through the extension tool surface", async () => {

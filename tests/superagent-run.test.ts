@@ -130,6 +130,7 @@ test("stage rows follow the run's deliverables, not ended task tickets", () => {
   }));
   const done = statusOfSnapshot(makeSnapshot([progress]), "run-1", root).stages.find((stage) => stage.stage === "baseline")!;
   assert.equal(done.state, "done", "the baseline.ok transition finishes the stage");
+  assert.equal(done.done, 1, "a completed reused baseline shows its declared task count");
 
   fs.writeFileSync(stateFile, JSON.stringify({
     decision_path: ["limits.ok:66", "seeds:4"], baseline: null, baseline_full: null, seeds: [{}, {}, {}, {}], limitations: [],

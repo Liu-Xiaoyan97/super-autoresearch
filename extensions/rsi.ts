@@ -41,7 +41,7 @@ import type { Notice } from "../src/rsi/superagent/engine.ts";
 import type { PolicySettings } from "../src/rsi/superagent/model.ts";
 import { defaultPolicySettings, permissivePolicySettings } from "../src/rsi/superagent/policy.ts";
 import { orchestratorBriefing, policySection } from "../src/rsi/superagent/prompts.ts";
-import { SuperagentRuntime, type DispatchParams } from "../src/rsi/superagent/runtime.ts";
+import { SuperagentRuntime, type DispatchParams, type RunStatus } from "../src/rsi/superagent/runtime.ts";
 import { SUPERAGENT_PARAMS, formatStatus, superagentAction } from "../src/rsi/superagent/tools.ts";
 import { PiWorker } from "../src/rsi/providers/superagent.ts";
 import type { RunSpec } from "../src/rsi/superagent/model.ts";
@@ -268,7 +268,10 @@ function runtimeFor(ctx: ToolContext): SuperagentRuntime {
     cwd: ctx.cwd,
     policy: HOST.policy.settings,
     workerFactory: (context) => workerFor(ctx, context.spec, context.signal),
-    onNotice: (notice) => notify(ctx, notice),
+    onNotice: (notice) => {
+      notify(ctx, notice);
+      refreshTui();
+    },
     notifyTaskReports: true,
   });
   HOST.runtimes.set(key, runtime);
@@ -299,9 +302,18 @@ function workerFor(ctx: ToolContext, spec: RunSpec, signal: AbortSignal): TaskWo
     signal,
   };
   if (spec.agents === "inline") return new InlineWorker(new PiLLMProvider(common));
+  // Coding workers need to read the target snapshot. Resolve the Problem repo
+  // so `read`/`grep` inspect the project, not the RSI harness checkout.
+  let workerCwd = ctx.cwd;
+  try {
+    const problem = loadProblem(spec.problem, ctx.cwd);
+    if (problem.repo) workerCwd = path.resolve(ctx.cwd, problem.repo);
+  } catch {
+    /* the runtime reports a clearer load error later */
+  }
   return new PiWorker({
     ...common,
-    cwd: ctx.cwd,
+    cwd: workerCwd,
     webSearch: spec.options.web_search !== false,
   });
 }
@@ -340,6 +352,99 @@ function notify(ctx: ToolContext, notice: Notice): void {
 }
 
 let PI: ExtensionAPI | undefined;
+
+// ---------------------------------------------------------------- TUI status
+
+type TuiRun = { runtime: SuperagentRuntime; started: number; title?: string };
+let TUI_CTX: ToolContext | null = null;
+let TUI_TIMER: ReturnType<typeof setInterval> | null = null;
+const TUI_RUNS = new Map<string, TuiRun>();
+const TUI_STATUS_KEY = "rsi";
+const TUI_WIDGET_KEY = "rsi-runs";
+
+function stopTuiTimer(): void {
+  if (!TUI_TIMER) return;
+  clearInterval(TUI_TIMER);
+  TUI_TIMER = null;
+}
+
+function startTuiTimer(): void {
+  if (TUI_TIMER) return;
+  TUI_TIMER = setInterval(() => refreshTui(), 1000);
+  (TUI_TIMER as { unref?: () => void }).unref?.();
+}
+
+function compactTuiStatus(status: RunStatus): string {
+  const stage =
+    status.stages.find((item) => item.state === "working" || item.state === "blocked") ??
+    [...status.stages].reverse().find((item) => item.state !== "done");
+  const stageText = stage
+    ? `${stage.section} ${stage.title} (${stage.done}/${stage.tasks})`
+    : status.progress?.state ?? status.state;
+  const progress = status.progress?.summary ? ` · ${status.progress.summary}` : "";
+  const attention = status.attention ? ` · NEEDS PERSON: ${status.attention}` : "";
+  return `RSI ${status.run_id} · ${stageText}${progress}${attention}`
+    .replace(/\s+/g, " ")
+    .slice(0, 220);
+}
+
+/** Refresh the footer status and the persistent widget from live run state. */
+function refreshTui(): void {
+  const ctx = TUI_CTX;
+  if (!ctx) return;
+  const active: RunStatus[] = [];
+  for (const [runId, entry] of TUI_RUNS) {
+    const status = entry.runtime.status(runId);
+    if (!status || status.ended || status.state === "ended") {
+      TUI_RUNS.delete(runId);
+      continue;
+    }
+    active.push(status);
+  }
+  try {
+    if (!active.length) {
+      ctx.ui.setStatus(TUI_STATUS_KEY, undefined);
+      ctx.ui.setWidget(TUI_WIDGET_KEY, undefined);
+      stopTuiTimer();
+      return;
+    }
+    const lines = active.map(compactTuiStatus);
+    ctx.ui.setStatus(TUI_STATUS_KEY, lines.join(" | ").slice(0, 240));
+    ctx.ui.setWidget(TUI_WIDGET_KEY, lines);
+    startTuiTimer();
+  } catch {
+    /* TUI/RPC UI may be unavailable; the run itself must continue */
+  }
+}
+
+function trackTuiRun(
+  ctx: ToolContext,
+  runtime: SuperagentRuntime,
+  session: { runId: string; done: Promise<unknown> },
+  title?: string,
+): void {
+  TUI_CTX = ctx;
+  TUI_RUNS.set(session.runId, { runtime, started: Date.now(), title });
+  refreshTui();
+  const untrack = () => {
+    TUI_RUNS.delete(session.runId);
+    refreshTui();
+  };
+  void session.done.then(untrack, untrack);
+}
+
+function trackTuiResume(
+  ctx: ToolContext,
+  runtime: SuperagentRuntime,
+  action: string,
+  response: { details: Record<string, unknown> },
+): void {
+  if (action !== "resume") return;
+  const runId = response.details.run_id;
+  if (typeof runId !== "string") return;
+  const session = runtime.session(runId);
+  if (session) trackTuiRun(ctx, runtime, session, runId);
+}
 
 // ---------------------------------------------------------------- helpers
 
@@ -442,6 +547,7 @@ async function dispatchResearch(
     },
   };
   const { session, duplicate } = runtime.dispatch(dispatch);
+  trackTuiRun(ctx, runtime, session, dispatch.title);
   const status = runtime.status(session.runId);
   if (!wait) {
     const lines = [
@@ -793,6 +899,26 @@ async function jobCancelResponse(params: JobParams, ctx: ToolContext) {
 export default function rsiExtension(pi: ExtensionAPI): void {
   PI = pi;
 
+  (pi as any).on?.("session_start", async (_event: unknown, ctx: any) => {
+    TUI_CTX = ctx as ToolContext;
+    refreshTui();
+  });
+
+  (pi as any).on?.("session_shutdown", async () => {
+    const ctx = TUI_CTX;
+    TUI_RUNS.clear();
+    stopTuiTimer();
+    if (ctx) {
+      try {
+        ctx.ui.setStatus(TUI_STATUS_KEY, undefined);
+        ctx.ui.setWidget(TUI_WIDGET_KEY, undefined);
+      } catch {
+        /* the UI may already be gone */
+      }
+    }
+    TUI_CTX = null;
+  });
+
   pi.registerTool({
     name: "rsi_research",
     label: "RSI Research Run",
@@ -944,12 +1070,17 @@ export default function rsiExtension(pi: ExtensionAPI): void {
     ],
     executionMode: "sequential",
     async execute(_toolCallId, params: Record<string, unknown>, _signal, _onUpdate, ctx) {
+      const runtime = runtimeFor(ctx);
       const host = {
-        runtime: () => runtimeFor(ctx),
+        runtime: () => runtime,
         policy: () => HOST.policy.settings,
         applyPolicy,
       };
-      return superagentAction(host, params);
+      const response = await superagentAction(host, params);
+      if (typeof params.action === "string") {
+        trackTuiResume(ctx, runtime, params.action, response);
+      }
+      return response;
     },
   });
 
@@ -1023,6 +1154,7 @@ export default function rsiExtension(pi: ExtensionAPI): void {
           { runtime: () => runtime, policy: () => HOST.policy.settings, applyPolicy },
           { action, ...extra },
         );
+        trackTuiResume(ctx, runtime, action, response);
         ctx.ui.notify(response.content[0]?.text ?? "(no output)", response.isError ? "warning" : "info");
         return response;
       };

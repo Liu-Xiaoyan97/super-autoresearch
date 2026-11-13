@@ -235,6 +235,22 @@ rm -rf /workspace/RSI/.rsi-baseline/coral-wikitext-ppl-*
 
 `stop` 是最终的；失败的 open ticket 可以 resume。
 
+### TUI 运行状态
+
+运行中的 run 会写到 Pi 的 footer status 和编辑器上方的 widget：
+
+```text
+RSI <run_id> · §3.1 Seed ideas (3/3) · progress ...
+```
+
+- 每秒刷新一次；
+- 多个 run 各占一行；
+- 需要人回答时显示 `NEEDS PERSON`；
+- run 完成、失败或停止后自动清除，不残留旧状态。
+
+`/rsi status` 里的 `progress:` 是最近一次阶段消息；真正的阶段状态以 stage rows 和
+`decision_path` 为准。阶段切换现在会立即上报，不再被 1.5 秒节流吞掉。
+
 ## 常见失败
 
 ### `limits` 阶段反复 `multiple-claims` / `identifier-rewritten`
@@ -297,6 +313,17 @@ seeds.weak:<count>
 Novelty 检查要求引用必须针对 idea 的机制；CCNet、数据去重之类的通用数据论文
 不能作为 kernel decay 的 novelty 依据。引用不相关会降低评分，但不会单独把整条
 run 归零。
+
+### `code.*` worker reports no file-reading tool
+
+`code.*`、`engineer.*`、`ablation.*`、`rebuttal.*` 的 Pi worker 现在获得只读工具：
+
+```text
+read, grep, find, ls
+```
+
+worker 的 cwd 指向目标仓库，不是 RSI checkout。它不能直接用 write/edit/bash 改代码；
+候选改动仍必须通过 unified diff → git commit 的受控 patch 流程。
 
 ### `diagnose.failed`
 
