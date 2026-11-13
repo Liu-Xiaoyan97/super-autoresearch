@@ -284,7 +284,10 @@ export async function runIteration(opts: IterationOptions): Promise<IterationRes
   const outDir = path.resolve(cwd, opts.outDir ?? "runs");
   const config = defaultConfig({ ...opts.configOverrides, runner: "subprocess", outDir,
     seed: opts.seed ?? opts.configOverrides?.seed ?? 7, maxExperiments: 2, maxLlmCalls, maxWallTimeS,
-    maxEngRounds: 0, maxRefineRounds: 0, maxAblationRounds: 0, maxReviewRefinements: 0 });
+    maxEngRounds: 0, maxRefineRounds: 0, maxAblationRounds: 0, maxReviewRefinements: 0,
+    // A bounded iteration is its own evidence unit: paired baseline and
+    // candidate are measured, never replayed from another run's cache.
+    disableMeasurementCache: true });
   for (const [role, route] of Object.entries(config.modelRoutes)) {
     const model = role === "coding" ? opts.codingModel ?? opts.model : opts.model;
     config.modelRoutes[role] = modelRoute({ ...route, ...(model ? { model } : {}), ...(maxTokens !== undefined ? { maxTokens } : {}) });

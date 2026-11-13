@@ -362,4 +362,5 @@ export type DomainEvent =
   | { type: "input.added"; at: string; data: { ticketId: string; inputId: string; kind: string } }
   | { type: "input.delivered"; at: string; data: { ticketId: string; assignmentId: string; inputIds: string[] } }
   | { type: "ticket.stopped"; at: string; data: { ticketId: string; reason: string } }
+  | { type: "ticket.reopened"; at: string; data: { ticketId: string; attempt: number; reason: string } }
   | { type: "policy.changed"; at: string; data: { from: string; to: string } };

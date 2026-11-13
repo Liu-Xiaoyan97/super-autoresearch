@@ -459,8 +459,13 @@ test("a failed run that never ended can still resume", async () => {
   assert.equal(status?.state, "person/failed");
   assert.equal(status?.ended, undefined, "a failed report leaves the run ticket open");
   const resumed = runtime.resume(session.runId);
-  assert.equal(resumed.runId, `${session.runId}-r1`);
+  // Resume in place: the run keeps its id and its run ticket, and only gets a
+  // new attempt, so nothing the person saw changes name.
+  assert.equal(resumed.runId, session.runId);
+  assert.equal(resumed.root, session.root);
+  assert.equal(resumed.ticketId, session.ticketId);
   assert.equal(resumed.spec.options.resumed_from, session.runId);
+  assert.equal(resumed.spec.options.resumed_attempt, 2);
   await resumed.done;
   runtime.closeAll();
 });
@@ -490,7 +495,8 @@ test("an open run whose previous process is gone can resume", async () => {
 
   const second = new SuperagentRuntime({ cwd, workerFactory: () => worker });
   const resumed = second.resume(session.runId);
-  assert.equal(resumed.runId, `${session.runId}-r1`);
+  assert.equal(resumed.runId, session.runId);
+  assert.equal(resumed.ticketId, session.ticketId);
   assert.equal(resumed.spec.options.resumed_from, session.runId);
   void resumed.done.catch(() => {});
   second.closeAll();
@@ -536,7 +542,8 @@ test("a restart recovers an open run into a durable aborted state", async () => 
   assert.match(state.abort_reason ?? "", /host restart/);
 
   const resumed = second.resume(session.runId);
-  assert.equal(resumed.runId, `${session.runId}-r1`);
+  assert.equal(resumed.runId, session.runId);
+  assert.equal(resumed.ticketId, session.ticketId);
   void resumed.done.catch(() => {});
   second.closeAll();
 });
@@ -640,11 +647,16 @@ test("an aborted run resumes as a new attempt and keeps the original ticket", as
   assert.ok(oldStatus?.ended);
 
   const resumed = runtime.resume(parentId);
-  assert.equal(resumed.runId, `${parentId}-r1`);
+  assert.equal(resumed.runId, parentId, "a resume must not fork the run id");
+  assert.equal(resumed.ticketId, session.ticketId, "a resume must keep the run ticket");
+  assert.equal(resumed.root, session.root, "a resume must keep the same directory");
   assert.equal(resumed.spec.options.resumed_from, parentId);
+  assert.equal(resumed.spec.options.resumed_attempt, 2);
   const second = await resumed.done;
   assert.ok(second, "the resumed attempt must finish");
-  assert.equal(runtime.status(parentId)?.ended?.outcome, oldStatus!.ended!.outcome);
-  assert.equal(runtime.status(resumed.runId)?.resumed_from, parentId);
+  assert.equal(runtime.status(parentId)?.resumed_from, parentId);
+  assert.ok(runtime.status(parentId)?.ended, "the resumed attempt ends the same ticket");
+  const attempts = resumed.engine.ticket(resumed.ticketId)?.assignments.length;
+  assert.equal(attempts, 2, "one ticket, two attempts");
   runtime.closeAll();
 });

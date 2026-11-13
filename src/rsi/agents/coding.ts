@@ -22,6 +22,7 @@ import {
   type RepoRef,
   type Scope,
   type Trace,
+  type TraceCheckpoint,
   clampMetric,
   makeEvidence,
   makeTrace,
@@ -359,12 +360,20 @@ export class IdeaImplementer extends BaseAgent {
     this.fullSetCoder = deps.fullSetCoder;
   }
 
-  async implement(idea: Idea, opts: { round?: number } = {}): Promise<Trace> {
+  async implement(
+    idea: Idea,
+    opts: { round?: number; resume?: TraceCheckpoint; onProgress?: (progress: TraceCheckpoint) => void } = {},
+  ): Promise<Trace> {
     const round = opts.round ?? 0;
-    const instruction = await this.ask(ImplementationInstruction, {
-      user: stableString(idea),
-      meta: { idea_id: idea.id, round },
-    });
+    const resume = opts.resume && opts.resume.idea_id === idea.id ? opts.resume : null;
+    // A resumed idea keeps its measured evidence and its spent budgets; only the
+    // unfinished step runs again (and the measurement cache makes it cheap).
+    const instruction = resume
+      ? { instruction: "resumed from checkpoint" }
+      : await this.ask(ImplementationInstruction, {
+          user: stableString(idea),
+          meta: { idea_id: idea.id, round },
+        });
     this.log("implementation_instruction", { idea_id: idea.id, instruction: instruction.instruction });
 
     let baseline = this.ctx.scratch.baseline as Evidence | undefined;
@@ -372,7 +381,26 @@ export class IdeaImplementer extends BaseAgent {
       baseline = await this.baselineCoder.reproduce({ scope: "subset" });
       this.ctx.scratch.baseline = baseline;
     }
-    const trace = makeTrace({ idea, round });
+    const trace = resume ? resume.trace : makeTrace({ idea, round });
+    const state: TraceCheckpoint = resume ?? {
+      idea_id: idea.id,
+      round,
+      trace,
+      stage: "subset",
+      verdict: null,
+      subset_rounds: 0,
+      subset_repairs: 0,
+      full_rounds: 0,
+      full_repairs: 0,
+    };
+    trace.idea = idea;
+    const checkpoint = () => {
+      state.trace = trace;
+      state.idea_id = trace.idea.id;
+      trace.decision = state.verdict?.decision === "good" ? "good" : "bad";
+      trace.feedback = state.verdict?.feedback ?? "";
+      opts.onProgress?.(state);
+    };
     const baselineFailed =
       (baseline.result && baseline.result.status !== "ok") ||
       (baseline.samples ?? []).some((sample) => sample.result && sample.result.status !== "ok");
@@ -382,36 +410,49 @@ export class IdeaImplementer extends BaseAgent {
       return trace;
     }
 
-    let current = await this.subsetCoder.implement(idea, { base: baseline, seeds: subsetSeeds(this.ctx.config) });
-    trace.evidence.push(current);
-    let verdict = await this.subsetCritic.judge(current, { baseline });
-    trace.lessons.push(verdict.feedback);
-
     const perStage = this.ctx.config.engineeringBudgetScope === "per_stage";
     const budget = this.ctx.config.maxEngRounds;
     const maxRepairs = this.ctx.config.maxRepairs;
-    let subsetUsed = 0;
-    let subsetRepairs = 0;
-    while (verdict.decision === "engineer") {
-      // Invalid execution (patch, command or output contract) is a repair, not
-      // a scientific engineering round. It is separately bounded so a broken
-      // implementation cannot consume maxEngRounds.
-      if (verdict.invalid) {
-        if (subsetRepairs >= maxRepairs) break;
-        subsetRepairs += 1;
-      } else {
-        if (subsetUsed >= budget) break;
-        subsetUsed += 1;
+    let current = state.trace.evidence.length ? state.trace.evidence[state.trace.evidence.length - 1] : null;
+    let verdict = state.verdict;
+
+    if (state.stage === "subset") {
+      if (!current || !verdict) {
+        current = await this.subsetCoder.implement(idea, { base: baseline, seeds: subsetSeeds(this.ctx.config) });
+        trace.evidence.push(current);
+        verdict = await this.subsetCritic.judge(current, { baseline });
+        state.verdict = verdict;
+        trace.lessons.push(verdict.feedback);
+        checkpoint();
       }
-      current = await this.subsetEngineer.refine(idea, { evidence: current, feedback: verdict.feedback });
-      trace.evidence.push(current);
-      verdict = await this.subsetCritic.judge(current, { baseline });
-      trace.lessons.push(verdict.feedback);
-    }
-    if (verdict.decision !== "good") {
-      trace.feedback = verdict.feedback;
-      trace.decision = "bad";
-      return trace;
+      while (verdict.decision === "engineer") {
+        // Invalid execution (patch, command or output contract) is a repair, not
+        // a scientific engineering round. It is separately bounded so a broken
+        // implementation cannot consume maxEngRounds.
+        if (verdict.invalid) {
+          if (state.subset_repairs >= maxRepairs) break;
+          state.subset_repairs += 1;
+        } else {
+          if (state.subset_rounds >= budget) break;
+          state.subset_rounds += 1;
+        }
+        current = await this.subsetEngineer.refine(idea, { evidence: current, feedback: verdict.feedback });
+        trace.evidence.push(current);
+        verdict = await this.subsetCritic.judge(current, { baseline });
+        state.verdict = verdict;
+        trace.lessons.push(verdict.feedback);
+        checkpoint();
+      }
+      if (!verdict || verdict.decision !== "good") {
+        trace.feedback = verdict?.feedback ?? "subset evidence missing";
+        trace.decision = "bad";
+        state.stage = "done";
+        checkpoint();
+        return trace;
+      }
+      state.stage = "full";
+      state.verdict = null;
+      checkpoint();
     }
 
     // The full baseline is lazy: measure it before the first full candidate so
@@ -419,43 +460,51 @@ export class IdeaImplementer extends BaseAgent {
     const fullBaseline = this.ctx.ensureBaselineFull
       ? await this.ctx.ensureBaselineFull()
       : ((this.ctx.scratch.baseline_full as Evidence | undefined) ?? baseline);
-    current = await this.fullSetCoder.scale(idea, { subset: current });
-    current = { ...current, baseline_metrics: { ...fullBaseline.metrics } };
-    trace.evidence.push(current);
-
-    let fullUsed = 0;
-    let fullRepairs = 0;
-    const totalAttempts = () => (perStage ? fullUsed : subsetUsed + fullUsed);
-    verdict = await this.fullCritic.judge(current, {
-      baseline: fullBaseline,
-      attempts: totalAttempts(),
-    });
-    trace.lessons.push(verdict.feedback);
-    while (verdict.decision === "engineer") {
-      if (verdict.invalid) {
-        if (fullRepairs >= maxRepairs) break;
-        fullRepairs += 1;
+    if (!current) {
+      throw new Error(`no subset evidence to scale for ${idea.id}`);
+    }
+    const totalAttempts = () => (perStage ? state.full_rounds : state.subset_rounds + state.full_rounds);
+    if (!state.verdict || !current.baseline_metrics || Object.keys(current.baseline_metrics).length === 0) {
+      current = await this.fullSetCoder.scale(idea, { subset: current });
+      current = { ...current, baseline_metrics: { ...fullBaseline.metrics } };
+      trace.evidence.push(current);
+      state.verdict = await this.fullCritic.judge(current, {
+        baseline: fullBaseline,
+        attempts: totalAttempts(),
+      });
+      trace.lessons.push(state.verdict.feedback);
+      checkpoint();
+    }
+    let verdictFull = state.verdict;
+    while (verdictFull.decision === "engineer") {
+      if (verdictFull.invalid) {
+        if (state.full_repairs >= maxRepairs) break;
+        state.full_repairs += 1;
       } else {
-        if (perStage ? fullUsed >= budget : subsetUsed + fullUsed >= budget) break;
-        fullUsed += 1;
+        if (perStage ? state.full_rounds >= budget : state.subset_rounds + state.full_rounds >= budget) break;
+        state.full_rounds += 1;
       }
       const refined = await this.fullEngineer.refine(idea, {
         evidence: current,
-        feedback: verdict.feedback,
+        feedback: verdictFull.feedback,
         reason: "full",
       });
       idea = refined.idea;
       current = refined.evidence;
       trace.idea = idea;
       trace.evidence.push(current);
-      verdict = await this.fullCritic.judge(current, {
+      verdictFull = await this.fullCritic.judge(current, {
         baseline: fullBaseline,
         attempts: totalAttempts(),
       });
-      trace.lessons.push(verdict.feedback);
+      state.verdict = verdictFull;
+      trace.lessons.push(verdictFull.feedback);
+      checkpoint();
     }
-    trace.decision = verdict.decision === "good" ? "good" : "bad";
-    trace.feedback = verdict.feedback;
+    trace.decision = verdictFull.decision === "good" ? "good" : "bad";
+    trace.feedback = verdictFull.feedback;
+    state.stage = "done";
+    checkpoint();
     return trace;
   }
 }

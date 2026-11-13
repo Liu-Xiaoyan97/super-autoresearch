@@ -278,17 +278,19 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
   if (opts.resumeFrom) {
     const previousId = assertRunId(opts.resumeFrom);
     const previousRoot = path.join(outDir, previousId);
-    if (path.resolve(previousRoot) === path.resolve(root)) {
-      throw new Error("resumeFrom must refer to a different run directory");
-    }
+    // Resuming in place is the normal case: one run id, one directory, one
+    // history. A different directory is still accepted for explicit forks.
+    const inPlace = path.resolve(previousRoot) === path.resolve(root);
     const previousState = path.join(previousRoot, "state.json");
     if (!fs.existsSync(previousState)) {
       throw new Error(`state.json not found for resume source: ${previousRoot}`);
     }
-    fs.copyFileSync(previousState, path.join(root, "state.json"));
-    const previousTraces = path.join(previousRoot, "traces.jsonl");
-    if (fs.existsSync(previousTraces)) {
-      fs.copyFileSync(previousTraces, path.join(root, "traces.jsonl"));
+    if (!inPlace) {
+      fs.copyFileSync(previousState, path.join(root, "state.json"));
+      const previousTraces = path.join(previousRoot, "traces.jsonl");
+      if (fs.existsSync(previousTraces)) {
+        fs.copyFileSync(previousTraces, path.join(root, "traces.jsonl"));
+      }
     }
     resumedState = ResearchState.fromDict(
       problem,
@@ -362,7 +364,15 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
     const final = await orchestrator.run({ resume: Boolean(resumedState) });
     const state = orchestrator.stateDict();
     fs.writeFileSync(path.join(root, "state.json"), JSON.stringify(state, null, 2), "utf8");
-    fs.writeFileSync(path.join(root, "final.json"), JSON.stringify(final, null, 2), "utf8");
+    // Keep every finished attempt readable: a resume must not erase the record
+    // of what the previous attempt concluded.
+    const finalFile = path.join(root, "final.json");
+    if (fs.existsSync(finalFile)) {
+      let attempt = 1;
+      while (fs.existsSync(path.join(root, `final.attempt-${attempt}.json`))) attempt += 1;
+      fs.copyFileSync(finalFile, path.join(root, `final.attempt-${attempt}.json`));
+    }
+    fs.writeFileSync(finalFile, JSON.stringify(final, null, 2), "utf8");
     refreshLedgerFromContext(ctx);
     const records = traces.readAll();
     const summary = summarize(runId, state, final, records);

@@ -112,6 +112,7 @@ export class RunSession {
   readonly runId: string;
   readonly root: string;
   readonly engine: Engine;
+  readonly store: Repositories;
   readonly ticketId: string;
   readonly spec: RunSpec;
   readonly cwd: string;
@@ -129,8 +130,11 @@ export class RunSession {
     onTrace?: (kind: string, data: Record<string, unknown>) => void;
     clock?: () => Date;
     notifyTaskReports?: boolean;
+    /** Reopen this existing run ticket instead of accepting a new request. */
+    resumeTicketId?: string;
   }) {
     this.spec = options.spec;
+    this.store = options.store;
     this.cwd = options.cwd;
     this.runId = path.basename(options.spec.root);
     this.root = options.spec.root;
@@ -161,6 +165,16 @@ export class RunSession {
       notifyTaskReports: options.notifyTaskReports ?? false,
     });
     this.engine = engineRef;
+    if (options.resumeTicketId) {
+      // A resume keeps the run ticket: same id, same thread, one more attempt.
+      this.ticketId = options.resumeTicketId;
+      this.engine.reopen(
+        this.ticketId,
+        `resumed from ${resumedFrom ?? "an interrupted attempt"}`,
+        options.spec as Ticket["run"],
+      );
+      return;
+    }
     const trigger = this.engine.intake({
       source: options.spec.mode === "mock" ? "cli" : "human",
       kind: "request",
@@ -477,10 +491,17 @@ export class SuperagentRuntime {
     };
   }
 
-  private openSession(spec: RunSpec, _params: DispatchParams): RunSession {
-    const store: Repositories = this.inMemory
-      ? new MemoryRepositories(this.policy)
-      : new FileRepositories(path.join(spec.root, "superagent"), this.policy);
+  private openSession(
+    spec: RunSpec,
+    _params: DispatchParams,
+    resumeTicketId?: string,
+    storeOverride?: Repositories,
+  ): RunSession {
+    const store: Repositories =
+      storeOverride ??
+      (this.inMemory
+        ? new MemoryRepositories(this.policy)
+        : new FileRepositories(path.join(spec.root, "superagent"), this.policy));
     return new RunSession({
       spec,
       cwd: this.cwd,
@@ -491,6 +512,7 @@ export class SuperagentRuntime {
       onTrace: this.options.onTrace,
       clock: this.options.clock,
       notifyTaskReports: this.options.notifyTaskReports ?? true,
+      resumeTicketId,
     });
   }
 
@@ -643,8 +665,8 @@ export class SuperagentRuntime {
     const oldStatus = live?.status() ?? this.status(runId);
     const ended = oldStatus?.ended;
     const outDir = spec.out;
-    const root = spec.root || path.join(outDir, runId);
-    const finalFile = path.join(root, "final.json");
+    const previousRoot = spec.root || path.join(outDir, runId);
+    const finalFile = path.join(previousRoot, "final.json");
     let aborted = false;
     try {
       const final = JSON.parse(fs.readFileSync(finalFile, "utf8")) as { aborted?: boolean };
@@ -674,31 +696,53 @@ export class SuperagentRuntime {
       if (live && !ended) throw new Error(`run ${runId} is still live; wait for it to end`);
       throw new Error(`run ${runId} ended ${ended?.outcome ?? "without a final state"}; only aborted/failed runs can resume`);
     }
+    // Attempt numbering reads the previous owner first: a live engine, then
+    // the durable ticket log (an in-memory runtime may have neither).
+    let priorAttempts = 0;
+    try {
+      priorAttempts = live?.engine.ticket(live.ticketId)?.assignments.length ?? 0;
+    } catch {
+      priorAttempts = 0;
+    }
     if (live) {
       this.retired.set(runId, oldStatus!);
       this.sessions.delete(runId);
       live.close();
     }
-    let index = 1;
-    let newId = `${runId}-r${index}`;
-    while (fs.existsSync(path.join(outDir, newId))) {
-      index += 1;
-      newId = `${runId}-r${index}`;
+    // Resume in place: the run keeps its id, its directory, its artifacts and
+    // its run ticket. Only a new attempt is started, so nothing is forked and
+    // nothing a person already saw changes name.
+    const root = path.join(outDir, runId);
+    fs.mkdirSync(root, { recursive: true });
+    const runTicket = this.recordedTickets(path.join(root, "superagent"))
+      .filter((ticket) => ticket.kind === "run" && (ticket.runId ?? ticket.id) === runId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .pop();
+    const attempts = Math.max(priorAttempts, runTicket?.assignments.length ?? 0);
+    const attempt = attempts ? attempts + 1 : 1;
+    // Keep every finished attempt readable instead of overwriting final.json.
+    const latestFinal = path.join(root, "final.json");
+    if (fs.existsSync(latestFinal)) {
+      let copy = 1;
+      while (fs.existsSync(path.join(root, `final.attempt-${copy}.json`))) copy += 1;
+      fs.copyFileSync(latestFinal, path.join(root, `final.attempt-${copy}.json`));
     }
-    const newRoot = path.join(outDir, newId);
-    fs.mkdirSync(newRoot, { recursive: true });
     const resumedSpec: RunSpec = {
       ...spec,
-      root: newRoot,
+      root,
       options: {
         ...spec.options,
         resumed_from: runId,
-        title: `${str(spec.options.title) || runId} (resume ${index})`,
+        resumed_attempt: attempt,
+        title: str(spec.options.title) || runId,
       },
     };
-    const session = this.openSession(resumedSpec, { problem: spec.problem });
-    this.sessions.set(newId, session);
-    this.runOuts.set(newId, outDir);
+    // An in-memory runtime has no ticket log on disk: the previous engine keeps
+    // the ticket, so reuse its repository and the live ticket id.
+    const resumeTicketId = live?.ticketId ?? runTicket?.id;
+    const session = this.openSession(resumedSpec, { problem: spec.problem }, resumeTicketId, live?.store);
+    this.sessions.set(runId, session);
+    this.runOuts.set(runId, outDir);
     return session;
   }
 
@@ -710,6 +754,16 @@ export class SuperagentRuntime {
     const snapshot = readSnapshot(dir);
     if (!snapshot) return this.retired.get(runId);
     return statusOfSnapshot(snapshot, runId, path.join(base, runId));
+  }
+
+  /** Read the recorded tickets of a run directory without starting its engine. */
+  private recordedTickets(dir: string): Ticket[] {
+    try {
+      const store = new FileRepositories(dir, this.policy);
+      return store.tickets.list();
+    } catch {
+      return [];
+    }
   }
 
   /** Change the policy for new runs and every live one. */

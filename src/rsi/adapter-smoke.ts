@@ -144,7 +144,7 @@ export async function adapterSmoke(params: AdapterSmokeParams, options: AdapterS
   fs.mkdirSync(path.dirname(root), { recursive: true });
   fs.mkdirSync(root); // Intentionally reject stale evidence and all existing directories.
   const runner = new RemoteRunner(root, { remote, command: problem.experiment_command, runId, timeoutS: timeout, signal: options.signal, transport: options.transport });
-  const workspace = new GitWorkspace(problem, defaultConfig({ runner: "subprocess", runId, maxWallTimeS: timeout }), root, runner);
+  const workspace = new GitWorkspace(problem, defaultConfig({ runner: "subprocess", runId, maxWallTimeS: timeout, disableMeasurementCache: true }), root, runner);
   const summaryPath = workspace.store.artifact("smoke-summary.json");
   const summary: Record<string, unknown> = {
     status: "failed", purpose: "plumbing-only; not a scientific baseline or proof of training",

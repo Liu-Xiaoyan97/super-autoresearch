@@ -53,6 +53,7 @@ import {
   type Scope,
   type SeedSample,
   type Trace,
+  type TraceCheckpoint,
   type Verdict,
   evidenceOk,
   finalEvidence,
@@ -183,6 +184,8 @@ export class Orchestrator {
   readonly state: ResearchState;
   private specReports = new Map<string, IntegrityReport>();
   private readonly diagnoseFn: DiagnoseFn;
+  /** Candidate-ledger keys already written, so a resume does not duplicate rows. */
+  private readonly journaled = new Set<string>();
 
   constructor(ctx: AgentContext, agents?: AgentBundle, state?: ResearchState, diagnoseFn: DiagnoseFn = runDiagnosis) {
     this.ctx = ctx;
@@ -213,7 +216,13 @@ export class Orchestrator {
       if (!resume || !limitsDone) await this.limitations();
       if (!resume || !this.state.seeds.length) await this.seedIdeas();
       if (!this.ctx.problem.diagnose_command) await this.baseline();
-      await this.ideaSearch();
+      if (!resume || !this.state.searchDone) {
+        await this.ideaSearch();
+      } else if (!this.state.goodTraces().length) {
+        // The search already ran and refuted every idea; do not spend the GPU
+        // budget again, reproduce the same scientific outcome.
+        throw new ScientificAbort("no_good_ideas");
+      }
       const needsPaper = !resume || !this.state.manuscript || !this.state.review;
       if (needsPaper) {
         const gate = this.dataGate();
@@ -411,7 +420,12 @@ export class Orchestrator {
     if (depth && initial.target_limitations.length === 0) {
       initial.target_limitations = [this.state.limitations.find((item) => /^D\d+$/.test(item.id))?.id ?? "D1"];
     }
-    const pool: Idea[] = [await this.agents.noveltyChecker.score(initial, { findings })];
+    // Resume the pool a previous attempt already scored; never re-score it.
+    const pool: Idea[] = this.state.ideaPool.length
+      ? this.state.ideaPool.slice()
+      : [await this.agents.noveltyChecker.score(initial, { findings })];
+    this.state.ideaPool = pool.slice();
+    this.persist();
     const attempts = Math.max(2 * this.ctx.config.nSeed, 1);
     for (let i = 0; i < attempts; i++) {
       checkAborted(this.ctx);
@@ -435,6 +449,10 @@ export class Orchestrator {
         }),
       );
       pool.push(...scored);
+      // Persist the pool after every batch: a restart resumes scoring, not the
+      // whole generation loop.
+      this.state.ideaPool = pool.slice();
+      this.persist();
     }
     let eligible = pool.filter(
       (idea) => idea.hypothesis.trim() && idea.novelty_score >= this.ctx.config.minNovelty,
@@ -588,7 +606,22 @@ export class Orchestrator {
       checkAborted(this.ctx);
       this.ctx.budget.check();
       if (this.state.evaluatedIds.has(idea.id)) continue;
-      const trace = await this.agents.implementer.implement(idea, { round });
+      const resume = this.state.checkpointFor(idea.id);
+      if (resume) {
+        progress(
+          this.ctx,
+          `§3.2 round ${round}: ${idea.id} resumed at ${resume.stage} (${resume.trace.evidence.length} evidence)`,
+        );
+      }
+      const trace = await this.agents.implementer.implement(idea, {
+        round,
+        resume: resume ?? undefined,
+        onProgress: (checkpoint) => {
+          this.state.checkpoint(checkpoint);
+          this.journalCandidates(checkpoint);
+          this.persist();
+        },
+      });
       await this.auditTrace(trace);
       this.state.record(trace);
       this.transition("stage.round", `round${round}.${idea.id}:${trace.decision}`, {
@@ -597,6 +630,40 @@ export class Orchestrator {
         trace,
       });
       progress(this.ctx, `§3.2 round ${round}: ${idea.id} → ${trace.decision}`);
+    }
+  }
+
+  /**
+   * Machine-readable candidate ledger: one line per measured seed, written as
+   * soon as the measurement exists. state.json holds the same data, but a
+   * ledger survives schema changes and is cheap to read after a restart.
+   */
+  private journalCandidates(checkpoint: TraceCheckpoint): void {
+    for (const evidence of checkpoint.trace.evidence) {
+      const commit = evidence.code?.commit ?? "";
+      const samples: Array<{ seed: number | null; metrics: Record<string, number> }> = evidence.samples?.length
+        ? evidence.samples
+        : [{ seed: null, metrics: evidence.metrics }];
+      for (const sample of samples) {
+        const key = `${checkpoint.idea_id}|${commit}|${evidence.scope}|${sample.seed}|${evidence.label}`;
+        if (this.journaled.has(key)) continue;
+        this.journaled.add(key);
+        this.ctx.store.appendJsonl("candidates.jsonl", {
+          idea_id: checkpoint.idea_id,
+          round: checkpoint.round,
+          scope: evidence.scope,
+          label: evidence.label,
+          commit,
+          parent: evidence.code?.parent ?? null,
+          seed: sample.seed,
+          metrics: sample.metrics,
+          aggregate: evidence.metrics,
+          baseline_metrics: evidence.baseline_metrics,
+          stage: checkpoint.stage,
+          verdict: checkpoint.verdict?.decision ?? null,
+          feedback: checkpoint.verdict?.feedback ?? "",
+        });
+      }
     }
   }
 
@@ -634,7 +701,13 @@ export class Orchestrator {
       await this.evaluate(candidates, round);
       if (!candidates.length) this.transition("stage.round", `round${round}.empty`, { round });
     }
-    if (!this.state.goodTraces().length) throw new ScientificAbort("no_good_ideas");
+    if (!this.state.goodTraces().length) {
+      this.state.searchDone = true;
+      this.persist();
+      throw new ScientificAbort("no_good_ideas");
+    }
+    this.state.searchDone = true;
+    this.persist();
   }
 
   private async select(): Promise<void> {
@@ -743,15 +816,31 @@ export class Orchestrator {
     const best = await this.incumbentSubset(idea, full);
     this.ctx.budget.check();
     this.state.ablationRound = 0;
-    const plans = await this.agents.ablationPlanner.plan(idea, {
-      best,
-      n: this.ctx.config.nAblationPlans,
-    });
+    const plans = this.state.ablationPlans.length
+      ? this.state.ablationPlans
+      : await this.agents.ablationPlanner.plan(idea, {
+          best,
+          n: this.ctx.config.nAblationPlans,
+        });
+    if (!this.state.ablationPlans.length) {
+      this.state.ablationPlans = byId(plans);
+      this.persist();
+    }
+    const done = new Map(this.state.ablations.map((item) => [item.plan_id, item]));
     const results: AblationResult[] = [];
     for (const plan of byId(plans)) {
       checkAborted(this.ctx);
       this.ctx.budget.check();
-      results.push(await this.agents.ablationCoder.runPlan(idea, plan, { best }));
+      const existing = done.get(plan.id);
+      if (existing) {
+        results.push(existing);
+        continue;
+      }
+      const measured = await this.agents.ablationCoder.runPlan(idea, plan, { best });
+      // One ablation is a full measurement: record it before the next one runs.
+      this.state.ablations = [...results, measured];
+      this.persist();
+      results.push(measured);
     }
     this.state.ablations = results;
     const verdict = await this.agents.ablationCritic.judge(idea, results, { best });
@@ -798,18 +887,25 @@ export class Orchestrator {
   private async draftAndReview(reviewerFeedback = ""): Promise<void> {
     progress(this.ctx, "§3.5 drafting and peer review");
     const [idea, best] = this.incumbent();
-    this.state.peerRound = 0;
-    this.state.reviewRefinements = 0;
-    this.state.rebuttals = [];
-    this.state.reviews = [];
-    this.state.manuscript = await this.agents.initialDrafter.draft({
-      idea,
-      best,
-      ablations: this.state.ablations,
-      round: this.state.metaRound,
-      reviewerFeedback,
-    });
-    await this.reviewPanel(0);
+    // A persisted manuscript from an interrupted attempt is finished work: only
+    // a meta refinement or a missing draft starts a new one.
+    const redraft = Boolean(reviewerFeedback) || !this.state.manuscript;
+    if (redraft) {
+      this.state.peerRound = 0;
+      this.state.reviewRefinements = 0;
+      this.state.rebuttals = [];
+      this.state.reviews = [];
+      this.state.manuscript = await this.agents.initialDrafter.draft({
+        idea,
+        best,
+        ablations: this.state.ablations,
+        round: this.state.metaRound,
+        reviewerFeedback,
+      });
+      // Keep the draft even if the host dies before the panel returns.
+      this.persist();
+    }
+    await this.reviewPanel(redraft ? 0 : this.state.peerRound);
     while (
       !this.reviewsPass() &&
       this.state.peerRound < this.ctx.config.maxPeerRounds &&
@@ -826,6 +922,8 @@ export class Orchestrator {
         this.ctx.budget.check();
         const evidence = await this.agents.rebuttalCoder.runTask(idea, task, { best });
         this.state.rebuttals.push(evidence);
+        // A rebuttal is a real measurement: keep it even if the host dies now.
+        this.persist();
         if (evidenceOk(evidence) && Object.keys(evidence.metrics).length) rebuttal.push(evidence);
       }
       if (!rebuttal.length) {
@@ -833,7 +931,7 @@ export class Orchestrator {
         break;
       }
       this.state.manuscript = await this.agents.paperEnhancer.enhance({
-        manuscript: this.state.manuscript,
+        manuscript: this.state.manuscript as Manuscript,
         review: this.state.review!,
         rebuttal,
       });

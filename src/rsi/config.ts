@@ -23,6 +23,8 @@ export interface Config {
   outDir: string;
   seed: number;
   runner: RunnerKind;
+  /** Fresh-evidence flows (adapter smoke, dry runs) must never replay a measurement. */
+  disableMeasurementCache?: boolean;
   failFast: boolean;
   /** depth = one measured defect at a time; breadth = the original seed search. */
   searchPolicy: "depth" | "breadth";

@@ -16,8 +16,10 @@
  */
 
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { stableString } from "../json.ts";
 
 import { crc32, unit } from "../crc32.ts";
 import type { Config } from "../config.ts";
@@ -186,6 +188,114 @@ export class SimulatedRunner implements Runner {
 // --------------------------------------------------------------------------- //
 // subprocess runner
 // --------------------------------------------------------------------------- //
+
+/**
+ * Cross-run measurement cache. Entries are keyed by the invariants that define
+ * an experiment (code commit + protocol) and carry the parts they were built
+ * from, so a stale or hand-edited entry can never be returned: the key is
+ * recomputed on read and must match.
+ */
+/** Stable cache key for a measurement's protocol invariants. */
+export function measurementKey(parts: Record<string, unknown>): string {
+  return createHash("sha256").update(stableString(parts)).digest("hex").slice(0, 32);
+}
+
+/**
+ * The invariants that make two measurements the same evidence: the code commit,
+ * the scope, the seed, the datasets/metrics contract and every env value the
+ * target actually receives (fixture protocol env included).
+ */
+export function measurementParts(input: {
+  runner: string;
+  problem: Problem;
+  commit: string;
+  scope: string;
+  seed: number | null;
+  datasets: string[];
+  metrics: string[];
+  env: Record<string, string>;
+}): Record<string, unknown> {
+  const remote = input.problem.remote;
+  return {
+    runner: input.runner,
+    command: input.problem.experiment_command ?? [],
+    remote: remote ? { host: remote.host, dir: remote.dir, python: remote.python ?? "" } : null,
+    commit: input.commit,
+    scope: input.scope,
+    seed: input.seed,
+    datasets: [...input.datasets].sort(),
+    metrics: [...input.metrics].sort(),
+    env: Object.fromEntries(
+      Object.entries({ ...(remote?.env ?? {}), ...input.env })
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, value]) => [name, String(value)]),
+    ),
+  };
+}
+
+export class MeasurementCache {
+  readonly root: string;
+  readonly key: string;
+  private readonly parts: Record<string, unknown>;
+  private readonly disabled: boolean;
+
+  constructor(root: string, key: string, parts: Record<string, unknown>, disabled = false) {
+    this.root = root;
+    this.key = key;
+    this.parts = parts;
+    this.disabled = disabled;
+  }
+
+  get file(): string {
+    return path.join(this.root, `${this.key}.json`);
+  }
+
+  private static hash(parts: Record<string, unknown>): string {
+    return measurementKey(parts);
+  }
+
+  read(): ExperimentResult | null {
+    if (this.disabled) return null;
+    let raw: string;
+    try {
+      raw = fs.readFileSync(this.file, "utf8");
+    } catch {
+      return null;
+    }
+    try {
+      const entry = JSON.parse(raw) as { key?: unknown; parts?: unknown; result?: unknown };
+      if (entry.key !== this.key) return null;
+      if (!entry.parts || typeof entry.parts !== "object") return null;
+      if (MeasurementCache.hash(entry.parts as Record<string, unknown>) !== this.key) return null;
+      const result = entry.result as ExperimentResult | undefined;
+      if (!result || result.status !== "ok") return null;
+      const metrics = result.metrics ?? {};
+      if (!Object.keys(metrics).length) return null;
+      if (!Object.values(metrics).every((value) => Number.isFinite(value))) return null;
+      // The cached log path belongs to the run that produced the measurement and
+      // may be gone: never hand a stale path back as if it were fresh evidence.
+      return { ...result, log_path: "", stdout: "", stderr: "", cached: true };
+    } catch {
+      return null;
+    }
+  }
+
+  write(result: ExperimentResult): void {
+    if (this.disabled || result.status !== "ok") return;
+    try {
+      fs.mkdirSync(this.root, { recursive: true });
+      const tmp = `${this.file}.tmp-${process.pid}-${Date.now()}`;
+      fs.writeFileSync(
+        tmp,
+        JSON.stringify({ key: this.key, parts: this.parts, result, recorded_at: new Date().toISOString() }, null, 2),
+        "utf8",
+      );
+      fs.renameSync(tmp, this.file);
+    } catch {
+      /* the cache is an optimization; never fail an experiment on it */
+    }
+  }
+}
 
 /** Expand {scope}/{out}/{repo}/{commit} in an experiment command. */
 export function expandCommand(
@@ -1054,12 +1164,28 @@ export class GitWorkspace implements Workspace {
       label: repo.label,
       env,
     };
+    const cache = this.measurementCache(req, seed);
+    const cached = cache.read();
+    if (cached) {
+      // A recorded measurement for this exact commit and protocol is evidence,
+      // not a rerun: reuse it instead of paying for the same GPU seconds again.
+      this.store.writeJson(`experiments/provenance-${safeName(repo.label)}-${scope}.json`, {
+        request: req,
+        result: cached,
+        commit: repo.commit,
+        branch: repo.branch,
+        cache_key: cache.key,
+      });
+      return cached;
+    }
     const result = await this.runner.run(req);
+    if (result.status === "ok") cache.write(result);
     this.store.writeJson(`experiments/provenance-${safeName(repo.label)}-${scope}.json`, {
       request: req,
       result,
       commit: repo.commit,
       branch: repo.branch,
+      cache_key: cache.key,
     });
     try {
       this.onExperimentResult?.();
@@ -1067,6 +1193,29 @@ export class GitWorkspace implements Workspace {
       /* ledger refresh must never fail an experiment */
     }
     return result;
+  }
+
+  /**
+   * Measurement cache keyed by commit + protocol. The same commit measured
+   * under the same command, datasets, metrics and budget env is the same
+   * evidence, so a resume or a later run must not pay for it twice.
+   */
+  private measurementCache(req: ExperimentRequest, seed?: number): MeasurementCache {
+    const parts = measurementParts({
+      runner: this.config.runner,
+      problem: this.problem,
+      commit: req.repo.commit ?? "",
+      scope: req.scope,
+      seed: seed ?? null,
+      datasets: req.datasets,
+      metrics: req.metrics,
+      env: req.env ?? {},
+    });
+    const key = measurementKey(parts);
+    const root = path.resolve(this.config.outDir || "runs", ".rsi-cache", "measurements");
+    // Smoke and adapter checks demand fresh raw evidence, never a replayed number.
+    const disabled = this.config.runner === "simulated" || this.config.disableMeasurementCache === true;
+    return new MeasurementCache(root, key, parts, disabled);
   }
 
   /** Build a bounded source brief from a git commit, not from copied files. */

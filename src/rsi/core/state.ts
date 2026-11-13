@@ -3,6 +3,7 @@
 import type { Config } from "../config.ts";
 import { asArray, asRecord, canonical } from "../json.ts";
 import type {
+  AblationPlan,
   AblationResult,
   Diagnosis,
   Evidence,
@@ -14,6 +15,7 @@ import type {
   RepoRef,
   Review,
   Trace,
+  TraceCheckpoint,
   Verdict,
 } from "../types.ts";
 import { rankKey } from "../agents/ideas.ts";
@@ -35,8 +37,15 @@ export class ResearchState {
   baselineSource: "reproduced" | "incumbent" | "manual" | "promoted" | "mixed" = "reproduced";
   baselinePath = "";
   traces: Trace[] = [];
+  /** Mid-idea progress by idea id; survives a restart so measured seeds are not re-run. */
+  checkpoints: Record<string, TraceCheckpoint> = {};
+  /** True once the search loop reached its end, so a resume does not restart §3.2. */
+  searchDone = false;
   round = 0;
   evaluatedIds = new Set<string>();
+
+  /** Candidate pool as it grows; a restart continues scoring instead of redoing it. */
+  ideaPool: Idea[] = [];
 
   bestIdea: Idea | null = null;
   bestEvidence: Evidence | null = null;
@@ -45,6 +54,7 @@ export class ResearchState {
   bestCode: RepoRef | null = null;
 
   ablations: AblationResult[] = [];
+  ablationPlans: AblationPlan[] = [];
   ablationRound = 0;
   /** Last attribution verdict; the data gate requires acceptance. */
   ablationVerdict: Verdict | null = null;
@@ -83,13 +93,17 @@ export class ResearchState {
       : "reproduced";
     state.baselinePath = String(item.baseline_path ?? "");
     state.traces = asArray(item.traces) as Trace[];
+    state.checkpoints = (asRecord(item.checkpoints) ?? {}) as ResearchState["checkpoints"];
+    state.searchDone = item.search_done === true;
     state.round = Number(item.round ?? 0) || 0;
     state.evaluatedIds = new Set(asArray(item.evaluated_ids).map(String));
     state.bestIdea = (item.best_idea ?? null) as Idea | null;
     state.bestEvidence = (item.best_evidence ?? null) as Evidence | null;
     state.bestSubset = (item.best_subset ?? null) as Evidence | null;
     state.bestCode = (item.best_code ?? null) as ResearchState["bestCode"];
+    state.ideaPool = asArray(item.idea_pool) as Idea[];
     state.ablations = asArray(item.ablations) as AblationResult[];
+    state.ablationPlans = asArray(item.ablation_plans) as AblationPlan[];
     state.ablationRound = Number(item.ablation_round ?? 0) || 0;
     state.ablationVerdict = (item.ablation_verdict ?? null) as Verdict | null;
     state.manuscript = (item.manuscript ?? null) as Manuscript | null;
@@ -132,6 +146,17 @@ export class ResearchState {
   record(trace: Trace): void {
     this.traces.push(trace);
     this.evaluatedIds.add(trace.idea.id);
+    delete this.checkpoints[trace.idea.id];
+  }
+
+  /** Persist in-flight progress for one idea without marking it evaluated. */
+  checkpoint(progress: TraceCheckpoint): void {
+    this.checkpoints[progress.idea_id] = progress;
+  }
+
+  /** Resume point for an idea that was interrupted mid-measurement. */
+  checkpointFor(ideaId: string): TraceCheckpoint | null {
+    return this.checkpoints[ideaId] ?? null;
   }
 
   adopt(idea: Idea, evidence: Evidence): void {
@@ -157,13 +182,17 @@ export class ResearchState {
       baseline_source: this.baselineSource,
       baseline_path: this.baselinePath,
       traces: this.traces,
+      checkpoints: this.checkpoints,
+      search_done: this.searchDone,
       round: this.round,
       evaluated_ids: [...this.evaluatedIds].sort(),
+      idea_pool: this.ideaPool,
       best_idea: this.bestIdea,
       best_evidence: this.bestEvidence,
       best_subset: this.bestSubset,
       best_code: this.bestCode,
       ablations: this.ablations,
+      ablation_plans: this.ablationPlans,
       ablation_round: this.ablationRound,
       ablation_verdict: this.ablationVerdict,
       manuscript: this.manuscript,

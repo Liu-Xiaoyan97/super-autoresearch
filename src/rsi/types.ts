@@ -175,6 +175,8 @@ export interface ExperimentResult {
   stdout: string;
   stderr: string;
   wall_time_s: number;
+  /** True when the result came from the measurement cache, not a new run. */
+  cached?: boolean;
 }
 
 export interface SeedSample {
@@ -212,6 +214,22 @@ export interface Trace {
   feedback: string;
   round: number;
   lessons: string[];
+}
+
+/**
+ * Mid-idea progress, persisted after every measurement so a host restart does
+ * not discard experiments that were already paid for (§3.2 resumability).
+ */
+export interface TraceCheckpoint {
+  idea_id: string;
+  round: number;
+  trace: Trace;
+  stage: "subset" | "full" | "done";
+  verdict: Verdict | null;
+  subset_rounds: number;
+  subset_repairs: number;
+  full_rounds: number;
+  full_repairs: number;
 }
 
 export interface AblationPlan {
@@ -386,6 +404,21 @@ export function makeEvidence(over: Partial<Evidence> = {}): Evidence {
 
 export function makeVerdict(over: Partial<Verdict> = {}): Verdict {
   return { decision: "bad", feedback: "", metrics: {}, notes: "", ...over };
+}
+
+export function makeCheckpoint(over: Partial<TraceCheckpoint> = {}): TraceCheckpoint {
+  return {
+    idea_id: "",
+    round: 0,
+    trace: makeTrace(),
+    stage: "subset",
+    verdict: null,
+    subset_rounds: 0,
+    subset_repairs: 0,
+    full_rounds: 0,
+    full_repairs: 0,
+    ...over,
+  };
 }
 
 export function makeTrace(over: Partial<Trace> = {}): Trace {

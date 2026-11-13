@@ -39,7 +39,18 @@ export class ArtifactStore {
 
   writeText(rel: string, text: string): string {
     const file = this.artifact(rel);
-    fs.writeFileSync(file, text, "utf8");
+    // Atomic replace: a kill during a checkpoint must never leave a truncated
+    // state.json behind, or the run becomes unresumable.
+    const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tmp, text, "utf8");
+    fs.renameSync(tmp, file);
+    return file;
+  }
+
+  /** Append one JSON line under artifacts/ (candidate ledger, run journals). */
+  appendJsonl(rel: string, value: unknown): string {
+    const file = this.artifact(rel);
+    fs.appendFileSync(file, `${JSON.stringify(value)}\n`, "utf8");
     return file;
   }
 

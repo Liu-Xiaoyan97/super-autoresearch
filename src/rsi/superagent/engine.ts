@@ -857,6 +857,30 @@ export class Engine {
     this.emit({ type: "ticket.ended", at, data: { ticketId: ticket.id, by, outcome, reason } });
   }
 
+  /**
+   * Continue an ended run ticket as a new attempt, keeping the same ticket id.
+   * A resume is not a new run: the ticket, its reports and its thread stay, so
+   * the person who started it still sees one object and one history.
+   */
+  reopen(ticketId: string, reason = "resumed", run?: Ticket["run"]): Ticket {
+    return this.store.atomic(() => {
+      const ticket = this.requireTicket(ticketId);
+      if (ticket.kind !== "run") throw new ProtocolError(`ticket ${ticketId} is not a run ticket`);
+      const attempt = ticket.assignments.length + 1;
+      // The resumed spec keeps the same root but records attempt/resumed_from,
+      // so status readers see one run that was attempted twice.
+      if (run) ticket.run = run;
+      if (ticket.ended) {
+        delete ticket.ended;
+        ticket.updatedAt = this.nowDate();
+        this.store.tickets.save(ticket);
+        this.emit({ type: "ticket.reopened", at: ticket.updatedAt, data: { ticketId, attempt, reason } });
+      }
+      this.startAssignment(this.requireTicket(ticketId), attempt);
+      return this.requireTicket(ticketId);
+    });
+  }
+
   /** A person's stop. It ends the Ticket and withdraws its Mandate; nothing resumes it. */
   stop(ticketId: string, reason = "stopped by a person"): Ticket {
     return this.store.atomic(() => {
@@ -871,8 +895,7 @@ export class Engine {
   }
 
   /** Close a Ticket from the host, such as a run whose artifacts were exported. */
-  finish(ticketId: string, outcome: TicketOutcome, reason: string): Ticket {
-    return this.store.atomic(() => {
+  finish(ticketId: string, outcome: TicketOutcome, reason: string): Ticket {    return this.store.atomic(() => {
       const ticket = this.requireTicket(ticketId);
       const assignment = runningAssignment(ticket);
       if (assignment) this.endAssignment(ticket, assignment, reason);
