@@ -115,7 +115,6 @@ export class PiWorker implements TaskWorker {
   private sdkPromise: Promise<any> | null = null;
   private runtimePromise: Promise<any> | null = null;
   private copiedProviders = new Map<string, { native?: any; config?: any }>();
-  private loaders = new Map<string, Promise<any>>();
   private sessions = new Set<PiSession>();
 
   constructor(opts: PiWorkerOptions) {
@@ -214,27 +213,27 @@ export class PiWorker implements TaskWorker {
     return runtime;
   }
 
+  /**
+   * A loader owns one session's extension instances. Reusing a loader across
+   * sessions makes every later binding's extension ctx stale, and its tools
+   * then fail with "This extension ctx is stale after session replacement or
+   * reload" (seen as a web_search failure in novelty workers). One loader per
+   * worker session is therefore deliberate.
+   */
   private async loaderFor(systemPrompt: string, withExtensions: boolean): Promise<any> {
-    const key = `${withExtensions ? "web" : "plain"}:${systemPrompt}`;
-    const pending = this.loaders.get(key);
-    if (pending) return pending;
-    const created = (async () => {
-      const sdk = await this.sdk();
-      const loader = new sdk.DefaultResourceLoader({
-        cwd: this.cwd,
-        agentDir: sdk.getAgentDir(),
-        noExtensions: !withExtensions,
-        noSkills: !withExtensions,
-        noPromptTemplates: true,
-        noThemes: true,
-        noContextFiles: true,
-        systemPrompt,
-      });
-      await loader.reload();
-      return loader;
-    })();
-    this.loaders.set(key, created);
-    return created;
+    const sdk = await this.sdk();
+    const loader = new sdk.DefaultResourceLoader({
+      cwd: this.cwd,
+      agentDir: sdk.getAgentDir(),
+      noExtensions: !withExtensions,
+      noSkills: !withExtensions,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      systemPrompt,
+    });
+    await loader.reload();
+    return loader;
   }
 
   /** The report tool; it records the envelope and answers the model. */
