@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { inspectRun, reconstructDecisionPath, replayRun } from "../src/rsi/run.ts";
-import { mockRun, fixture, readJson } from "./helpers.ts";
+import { mockRun, defaultMockPlan, fixture, readJson } from "./helpers.ts";
 
 test("offline happy path runs §3.1–§3.6 and exports artifacts", async () => {
   const result = await mockRun();
@@ -54,7 +54,7 @@ test("offline happy path runs §3.1–§3.6 and exports artifacts", async () => 
 });
 
 test("the full baseline is lazy and is not measured when no candidate reaches full", async () => {
-  const result = await mockRun({ configOverrides: { subsetMargin: 10 } });
+  const result = await mockRun({ configOverrides: { subsetMargin: 10, maxIdeaRetries: 0 } });
   const state = result.state as any;
   assert.ok(state.baseline, "the subset baseline is still measured");
   assert.equal(state.baseline_full, null);
@@ -107,13 +107,44 @@ test("the data gate blocks paper writing without multi-round evidence", async ()
 });
 
 test("abort case dead-ends with no_good_ideas and still exports", async () => {
-  const result = await mockRun({ problem: fixture("abort_case") });
+  const result = await mockRun({ problem: fixture("abort_case"), configOverrides: { maxIdeaRetries: 0 } });
   assert.equal(result.final.aborted, true);
   assert.equal(result.final.abort_reason, "no_good_ideas");
   const traces = (result.state as any).traces as any[];
   assert.ok(traces.length > 0);
   assert.ok(traces.every((trace) => trace.decision !== "good"));
   assert.equal(readJson(path.join(result.root, "final.json")).aborted, true);
+});
+
+test("the problem's max_retry.idea bounds the retries and max_retry.paper is separate", async () => {
+  const raw = readJson(fixture("abort_case"));
+  const file = path.join(fs.mkdtempSync("/tmp/rsi-retry-"), "problem.json");
+  fs.writeFileSync(file, JSON.stringify({ ...raw, max_retry: { idea: 1, paper: 0 } }));
+  const result = await mockRun({ problem: file });
+  const tokens = result.final.decision_path;
+  assert.equal(result.final.abort_reason, "no_good_ideas");
+  assert.ok(tokens.includes("seeds.retry:1"), "one retry was used");
+  assert.ok(!tokens.includes("seeds.retry:2"), "the problem budget stops the second retry");
+  assert.equal((result.state as any).idea_retries, 1);
+  assert.equal((result.state as any).paper_retries, 0);
+});
+
+test("the paper loop retries a non-accepted review within max_retry.paper", async () => {
+  const raw = readJson(fixture("meta_refine"));
+  const dir = fs.mkdtempSync("/tmp/rsi-paper-retry-");
+  const write = (name: string, paper: number): string => {
+    const file = path.join(dir, `${name}.json`);
+    fs.writeFileSync(file, JSON.stringify({ ...raw, max_retry: { idea: 0, paper } }));
+    return file;
+  };
+  // A meta-reviewer that never accepts: only the retry policy can end the loop.
+  const script = { ...defaultMockPlan, "review.meta": { decision: "refine", critique: "The mechanism needs a measured algorithmic change.", score: 5 } };
+  const stopped = await mockRun({ problem: write("stop", 0), mockScript: script, configOverrides: { nSeed: 1, minLimitations: 7, maxMetaRounds: 0 } });
+  const retried = await mockRun({ problem: write("retry", 1), mockScript: script, configOverrides: { nSeed: 1, minLimitations: 7, maxMetaRounds: 0 } });
+  assert.ok(!stopped.final.decision_path.some((token) => token.startsWith("paper.retry:")), "paper 0 never retries");
+  assert.ok(retried.final.decision_path.includes("paper.retry:1"), "one paper retry");
+  assert.ok(!retried.final.decision_path.some((token) => token.startsWith("paper.retry:2")), "the paper budget bounds it");
+  assert.equal((retried.state as any).paper_retries, 1);
 });
 
 test("replay rebuilds the path from traces only and detects tampering", async () => {

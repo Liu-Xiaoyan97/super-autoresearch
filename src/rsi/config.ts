@@ -56,6 +56,8 @@ export interface Config {
   subsetMargin: number; // [CHOICE] 2% relative
 
   // §3.3 idea refinement
+  maxIdeaRetries: number; // an exhausted idea pool seeds a new round up to this count
+  maxPaperRetries: number; // an unaccepted paper loop re-drafts up to this count
   maxRefineRounds: number; // [PAPER] up to four rounds k>=1
   successTarget: number; // [PAPER]
   /** Minimum independent full-set winners, across at least two rounds, before writing starts. */
@@ -136,6 +138,8 @@ export function defaultConfig(over: Partial<Config> = {}): Config {
     subsetSeeds: 3,
     subsetMargin: 0.02,
 
+    maxIdeaRetries: 2,
+    maxPaperRetries: 1,
     maxRefineRounds: 4,
     successTarget: 4,
     minGoodTraces: 2,

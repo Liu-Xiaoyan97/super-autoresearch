@@ -41,6 +41,10 @@ export class ResearchState {
   checkpoints: Record<string, TraceCheckpoint> = {};
   /** True once the search loop reached its end, so a resume does not restart §3.2. */
   searchDone = false;
+  /** Completed idea-exhaustion retries; persisted so a resume continues the count. */
+  ideaRetries = 0;
+  /** Completed paper-loop retries (re-draft + re-review after a non-accept). */
+  paperRetries = 0;
   round = 0;
   evaluatedIds = new Set<string>();
 
@@ -95,6 +99,8 @@ export class ResearchState {
     state.traces = asArray(item.traces) as Trace[];
     state.checkpoints = (asRecord(item.checkpoints) ?? {}) as ResearchState["checkpoints"];
     state.searchDone = item.search_done === true;
+    state.ideaRetries = Math.max(0, Number(item.idea_retries ?? 0) || 0);
+    state.paperRetries = Math.max(0, Number(item.paper_retries ?? 0) || 0);
     state.round = Number(item.round ?? 0) || 0;
     state.evaluatedIds = new Set(asArray(item.evaluated_ids).map(String));
     state.bestIdea = (item.best_idea ?? null) as Idea | null;
@@ -184,6 +190,8 @@ export class ResearchState {
       traces: this.traces,
       checkpoints: this.checkpoints,
       search_done: this.searchDone,
+      idea_retries: this.ideaRetries,
+      paper_retries: this.paperRetries,
       round: this.round,
       evaluated_ids: [...this.evaluatedIds].sort(),
       idea_pool: this.ideaPool,

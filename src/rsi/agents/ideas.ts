@@ -83,11 +83,28 @@ function normalizeIds(
   return out;
 }
 
+/** A measured idea that did not beat the baseline; seeds must not repeat it. */
+export interface Refutation {
+  id: string;
+  hypothesis: string;
+  decision?: string | null;
+  feedback?: string;
+  metrics?: Record<string, number>;
+}
+
+function refutedBlock(refuted?: Refutation[]): string {
+  if (!refuted?.length) return "";
+  const items = refuted
+    .map((item) => ({ id: item.id, hypothesis: item.hypothesis, decision: item.decision ?? null, feedback: item.feedback ?? "", metrics: item.metrics ?? {} }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  return `Already measured and refuted (do NOT repeat these mechanisms or hypotheses): ${stableString(items)}\n`;
+}
+
 export class InitialIdeaGenerator extends BaseAgent {
   readonly NAME = "initial_idea_generator";
   readonly task = "ideas.initial";
 
-  async generate(limitations: Limitation[], opts: { findings?: DiagnosisFinding[] } = {}): Promise<Idea> {
+  async generate(limitations: Limitation[], opts: { findings?: DiagnosisFinding[]; refuted?: Refutation[] } = {}): Promise<Idea> {
     const findings = [...(opts.findings ?? [])].sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
     const batch = await this.ask(IdeaBatch, {
       user:
@@ -95,7 +112,9 @@ export class InitialIdeaGenerator extends BaseAgent {
         "and concrete mechanism addressing the limitations. When measured findings " +
         "are supplied, target the highest-severity measured defect; a mechanism that " +
         "cannot be justified from those findings is a hypothesis, not a measured claim. " +
-        "Record target_limitations and direction_ids. Never use a forbidden approach.\n" +
+        "Record target_limitations and direction_ids. Never use a forbidden approach. " +
+        "When refuted ideas are listed, the new mechanism must differ from every one of them.\n" +
+        refutedBlock(opts.refuted) +
         `Measured findings (primary first): ${stableString(findings)}\n` +
         `Problem: ${this.ctx.problem.statement}\n` +
         `Limitations: ${stableString([...limitations].sort((a, b) => a.id.localeCompare(b.id)))}\n` +
@@ -157,7 +176,7 @@ export class IdeaGenerator extends BaseAgent {
   readonly NAME = "idea_generator";
   readonly task = "ideas.expand";
 
-  async generate(opts: { limitations: Limitation[]; existing: Idea[]; n: number; findings?: DiagnosisFinding[] }): Promise<Idea[]> {
+  async generate(opts: { limitations: Limitation[]; existing: Idea[]; n: number; findings?: DiagnosisFinding[]; refuted?: Refutation[] }): Promise<Idea[]> {
     const { limitations, existing, n } = opts;
     const findings = [...(opts.findings ?? [])].sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id));
     if (n <= 0) return [];
@@ -165,7 +184,9 @@ export class IdeaGenerator extends BaseAgent {
       user:
         `Propose ${n} distinct, higher-novelty testable ideas with unique IDs. ` +
         "Do not repeat existing hypotheses or IDs. Address limitations, " +
-        "supply direction_ids, and avoid all forbidden approaches.\n" +
+        "supply direction_ids, and avoid all forbidden approaches. " +
+        "When refuted ideas are listed, every new mechanism must differ from all of them.\n" +
+        refutedBlock(opts.refuted) +
         `Problem: ${this.ctx.problem.statement}\n` +
         `Measured findings (primary first): ${stableString(findings)}\n` +
         `Limitations: ${stableString([...limitations].sort((a, b) => a.id.localeCompare(b.id)))}\n` +

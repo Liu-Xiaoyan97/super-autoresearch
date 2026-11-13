@@ -194,5 +194,9 @@
     "changing the lm-eval lambada_openai task or acc metric"
   ],
   "venue": "ICLR",
-  "audience_note": "External target: snapshot the authorized current dense stack, not old HEAD, into isolated rsi-bench. Production budget comes from stages/pretrain-dense-158m-025b.json (954 steps, effective batch 256, sequence 1024). No baseline is asserted for this snapshot; only a successful real train/evaluate run may populate word_ppl and lambada_openai acc. Explicit limited subset smoke is plumbing evidence, not a full-protocol score."
+  "audience_note": "External target: snapshot the authorized current dense stack, not old HEAD, into isolated rsi-bench. Production budget comes from stages/pretrain-dense-158m-025b.json (954 steps, effective batch 256, sequence 1024). No baseline is asserted for this snapshot; only a successful real train/evaluate run may populate word_ppl and lambada_openai acc. Explicit limited subset smoke is plumbing evidence, not a full-protocol score.",
+  "max_retry": {
+    "idea": 3,
+    "paper": 2
+  }
 }

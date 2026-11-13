@@ -24,6 +24,7 @@ import {
   NoveltyChecker,
   filterByGuidance,
   rankKey,
+  type Refutation,
 } from "../agents/ideas.ts";
 import {
   MethodCodeAuditor,
@@ -53,6 +54,7 @@ import {
   type Scope,
   type SeedSample,
   type Trace,
+  type DiagnosisFinding,
   type TraceCheckpoint,
   type Verdict,
   evidenceOk,
@@ -216,12 +218,10 @@ export class Orchestrator {
       if (!resume || !limitsDone) await this.limitations();
       if (!resume || !this.state.seeds.length) await this.seedIdeas();
       if (!this.ctx.problem.diagnose_command) await this.baseline();
-      if (!resume || !this.state.searchDone) {
-        await this.ideaSearch();
-      } else if (!this.state.goodTraces().length) {
-        // The search already ran and refuted every idea; do not spend the GPU
-        // budget again, reproduce the same scientific outcome.
-        throw new ScientificAbort("no_good_ideas");
+      // An exhausted search is not the end of the science: a refuted pool seeds
+      // another idea round (bounded by maxSeedRounds) before the run gives up.
+      if (!resume || !this.state.searchDone || !this.state.goodTraces().length) {
+        await this.ideaSearchWithReseeding();
       }
       const needsPaper = !resume || !this.state.manuscript || !this.state.review;
       if (needsPaper) {
@@ -237,8 +237,10 @@ export class Orchestrator {
         this.transition("stage.gate", "data.gate:attribution", { reason: "attribution" });
         throw new ScientificAbort("data_gate_not_met");
       }
-      if (needsPaper) await this.draftAndReview();
-      if (!resume || !this.state.metaReview) await this.metaReview();
+      // A paper that was already accepted is finished work; anything else
+      // (missing, rejected, or an unaccepted resume) enters the bounded loop.
+      const paperAccepted = resume && !!this.state.manuscript && !!this.state.review && this.state.metaReview?.decision === "accept";
+      if (needsPaper && !paperAccepted) await this.paperLoop();
     } catch (error) {
       if (error instanceof BudgetExceeded) {
         this.state.aborted = true;
@@ -400,7 +402,7 @@ export class Orchestrator {
     return !!this.state.diagnosis?.findings.length && this.ctx.config.searchPolicy === "depth";
   }
 
-  private async seedIdeas(): Promise<void> {
+  private async seedIdeas(round = 1): Promise<void> {
     progress(this.ctx, "§3.1 generating seed ideas");
     const findings = this.findings();
     // A resumed run may carry a previously over-extracted limitation set.
@@ -416,7 +418,12 @@ export class Orchestrator {
     // narrows the defect, not the number of ideas; otherwise one low-novelty
     // idea aborts the entire run before any experiment.
     const nSeed = Math.max(1, this.ctx.config.nSeed);
-    const initial = await this.agents.initialIdeaGenerator.generate(this.state.limitations, { findings });
+    const refuted = this.refutations();
+    if (round > 1) {
+      await this.seedAnotherRound(round, findings, refuted);
+      return;
+    }
+    const initial = await this.agents.initialIdeaGenerator.generate(this.state.limitations, { findings, refuted });
     if (depth && initial.target_limitations.length === 0) {
       initial.target_limitations = [this.state.limitations.find((item) => /^D\d+$/.test(item.id))?.id ?? "D1"];
     }
@@ -436,6 +443,7 @@ export class Orchestrator {
         existing: pool,
         n: nSeed - pool.length,
         findings,
+        refuted,
       });
       const ids = new Set(pool.map((idea) => idea.id));
       const clean = byId(extra).filter((idea) => !ids.has(idea.id));
@@ -482,6 +490,93 @@ export class Orchestrator {
       this.transition("stage.seeds", `seeds.partial:${pool.length}`);
     }
     if (!this.state.seeds.length) throw new ScientificAbort("no_eligible_seeds");
+  }
+
+  /** Measured refutations: the evidence a new seed round must not repeat. */
+  private refutations(): Refutation[] {
+    return this.state.traces
+      .filter((trace) => trace.decision !== "good")
+      .map((trace) => ({
+        id: trace.idea.id,
+        hypothesis: trace.idea.hypothesis,
+        decision: trace.decision,
+        feedback: trace.feedback,
+        metrics: trace.evidence[trace.evidence.length - 1]?.metrics ?? {},
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /**
+   * A round whose whole pool was refuted is a finding, not a stopping rule:
+   * the generator must propose mechanisms that differ from the measured
+   * failures. Rounds stay bounded so a dead end cannot spend without limit.
+   */
+  private async seedAnotherRound(round: number, findings: DiagnosisFinding[], refuted: Refutation[]): Promise<void> {
+    const nSeed = Math.max(1, this.ctx.config.nSeed);
+    const known = new Set<string>(this.state.evaluatedIds);
+    for (const idea of this.state.seeds) known.add(idea.id);
+    const existing = this.state.ideaPool.slice();
+    const fresh = await this.agents.ideaGenerator.generate({
+      limitations: this.state.limitations,
+      existing,
+      n: nSeed,
+      findings,
+      refuted,
+    });
+    // A generator may reuse an id for a different mechanism; the identity is
+    // the hypothesis, so a colliding id is renamed instead of discarding the idea.
+    const seenIds = new Set<string>([...known, ...existing.map((item) => item.id)]);
+    const seenHypotheses = new Set(existing.map((item) => item.hypothesis.trim().toLowerCase()));
+    const unseen: Idea[] = [];
+    for (const idea of byId(fresh)) {
+      const hypothesis = idea.hypothesis.trim();
+      if (!hypothesis || seenHypotheses.has(hypothesis.toLowerCase())) continue;
+      let id = idea.id;
+      for (let suffix = 2; seenIds.has(id); suffix += 1) id = `${idea.id}r${round}${suffix > 2 ? suffix : ""}`;
+      seenIds.add(id);
+      seenHypotheses.add(hypothesis.toLowerCase());
+      unseen.push({ ...idea, id, round });
+    }
+    const scored: Idea[] = [];
+    for (const idea of unseen) {
+      this.ctx.budget.check();
+      scored.push(await this.agents.noveltyChecker.score(idea, { findings, round }));
+    }
+    const eligible = filterByGuidance(scored, this.ctx.problem, this.ctx.config).sort((a, b) => {
+      const ar = -rankKey(a, this.ctx.config.guidanceWeight);
+      const br = -rankKey(b, this.ctx.config.guidanceWeight);
+      return ar === br ? a.id.localeCompare(b.id) : ar - br;
+    });
+    this.state.ideaPool = existing.concat(scored);
+    this.state.seeds = eligible;
+    this.transition("stage.seeds", `seeds.round:${round}`, {
+      round,
+      ids: eligible.map((idea) => idea.id),
+      refuted: refuted.map((item) => item.id),
+    });
+    if (!eligible.length) this.transition("stage.seeds", `seeds.round:${round}.empty`, { round });
+    this.persist();
+  }
+
+  private async ideaSearchWithReseeding(): Promise<void> {
+    const maxRetries = Math.max(0, this.ctx.config.maxIdeaRetries);
+    for (;;) {
+      if (!this.state.searchDone) await this.ideaSearch();
+      if (this.state.goodTraces().length) return;
+      // The pool is exhausted: retry with fresh, non-overlapping ideas until
+      // the problem's own retry budget is spent. Exhaustion never stops the
+      // run on its own.
+      if (this.state.ideaRetries >= maxRetries) throw new ScientificAbort("no_good_ideas");
+      this.state.ideaRetries += 1;
+      this.state.searchDone = false;
+      this.transition("stage.seeds", `seeds.retry:${this.state.ideaRetries}`, {
+        retry: this.state.ideaRetries,
+        max_retry: maxRetries,
+      });
+      // The counter is durable: a resume continues the same retry budget.
+      this.persist();
+      await this.seedIdeas(this.state.ideaRetries + 1);
+    }
   }
 
   private async baseline(): Promise<void> {
@@ -700,11 +795,6 @@ export class Orchestrator {
       const candidates = byId(eligible).concat(seeds.filter((idea) => !evolvedIds.has(idea.id)));
       await this.evaluate(candidates, round);
       if (!candidates.length) this.transition("stage.round", `round${round}.empty`, { round });
-    }
-    if (!this.state.goodTraces().length) {
-      this.state.searchDone = true;
-      this.persist();
-      throw new ScientificAbort("no_good_ideas");
     }
     this.state.searchDone = true;
     this.persist();
@@ -981,6 +1071,34 @@ export class Orchestrator {
       this.state.reviews.length >= size &&
       this.state.reviews.every((review) => review.score >= this.ctx.config.reviewThreshold)
     );
+  }
+
+  /**
+   * §3.5–§3.6 paper loop. An unaccepted manuscript is not terminal: the
+   * critiques seed another draft and another review, up to maxPaperRetries.
+   * The retry counter is persisted so a resume does not restart the budget.
+   */
+  private async paperLoop(): Promise<void> {
+    for (;;) {
+      // A rejected meta-review is feedback: the next draft must answer it.
+      const critique = this.state.metaReview && this.state.metaReview.decision !== "accept" ? this.state.metaReview.critique : "";
+      await this.draftAndReview(critique);
+      await this.metaReview();
+      const accepted = this.state.metaReview?.decision === "accept" && (this.state.review?.score ?? 0) >= this.ctx.config.reviewThreshold;
+      if (accepted) return;
+      if (this.state.paperRetries >= Math.max(0, this.ctx.config.maxPaperRetries)) return;
+      this.state.paperRetries += 1;
+      this.transition("stage.paper", `paper.retry:${this.state.paperRetries}`, {
+        retry: this.state.paperRetries,
+        max_retry: this.ctx.config.maxPaperRetries,
+        reason: this.state.exportReason || this.state.metaReview?.decision || "not_accepted",
+      });
+      // A retry starts a fresh round: the next draft must answer the critiques.
+      this.state.metaReview = null;
+      this.state.review = null;
+      this.state.metaRound = 0;
+      this.persist();
+    }
   }
 
   private async metaReview(): Promise<void> {

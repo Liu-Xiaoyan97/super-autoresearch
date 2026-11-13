@@ -102,6 +102,8 @@ export interface Problem {
   forbidden: string[];
   venue: string;
   audience_note: string;
+  /** Bounded retries per loop: an exhausted idea pool or paper loop re-runs. */
+  max_retry: { idea: number; paper: number } | null;
 }
 
 export interface DiagnosisFinding {
@@ -353,6 +355,7 @@ export function makeProblem(over: Partial<Problem> = {}): Problem {
     forbidden: [],
     venue: "ICLR",
     audience_note: "",
+    max_retry: null,
     ...over,
   };
 }

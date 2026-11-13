@@ -187,7 +187,25 @@ export function parseProblem(raw: unknown): Problem {
     forbidden: strArray(item.forbidden),
     venue: str(item.venue, "ICLR"),
     audience_note: str(item.audience_note),
+    max_retry: parseMaxRetry(item.max_retry),
   });
+}
+
+/**
+ * Loop-retry policy from the problem fixture. Two loops have independent
+ * budgets: the idea loop reseeds a refuted pool, the paper loop re-drafts an
+ * unaccepted manuscript.
+ */
+function parseMaxRetry(raw: unknown): Problem["max_retry"] {
+  const item = asRecord(raw);
+  if (!item) return null;
+  const count = (value: unknown, fallback: number): number => {
+    const parsed = Number(value);
+    if (value === undefined || value === null) return fallback;
+    if (!Number.isInteger(parsed) || parsed < 0) throw new Error(`max_retry must be a non-negative integer, got ${String(value)}`);
+    return parsed;
+  };
+  return { idea: count(item.idea, 2), paper: count(item.paper, 1) };
 }
 
 /** Load a Problem from a JSON file or an inline JSON object. */
@@ -272,6 +290,11 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
   const cwd = opts.cwd ?? process.cwd();
   const problem = loadProblem(opts.problem, cwd);
   const config = buildConfig(opts);
+  // examples/*.json carries the loop policy; an explicit caller override wins.
+  if (problem.max_retry) {
+    if (opts.configOverrides?.maxIdeaRetries === undefined) config.maxIdeaRetries = problem.max_retry.idea;
+    if (opts.configOverrides?.maxPaperRetries === undefined) config.maxPaperRetries = problem.max_retry.paper;
+  }
   // No user-facing wall flag: a remote fixture's own execution limit is the
   // real bound. Keep an internal safety margin for two experiments plus drafting.
   if (opts.maxWallTimeS === undefined && opts.configOverrides?.maxWallTimeS === undefined && problem.remote?.timeout_s) {

@@ -118,6 +118,11 @@ test("state round-trip keeps checkpoints and the search-complete flag", () => {
   const restored = ResearchState.fromDict(problem, config, JSON.parse(JSON.stringify(state.toDict())));
   assert.equal(restored.searchDone, true);
   assert.equal(restored.checkpointFor("h1")?.trace.evidence[0].metrics.score, 2);
+  state.ideaRetries = 2;
+  state.paperRetries = 1;
+  const retried = ResearchState.fromDict(problem, config, JSON.parse(JSON.stringify(state.toDict())));
+  assert.equal(retried.ideaRetries, 2, "idea-exhaustion retries survive a restart");
+  assert.equal(retried.paperRetries, 1, "paper-loop retries survive a restart");
   assert.equal(restored.evaluatedIds.has("h1"), false);
   restored.record(trace);
   assert.equal(restored.checkpointFor("h1"), null);
@@ -317,7 +322,7 @@ test("a resume keeps the run id and continues after a deleted external baseline"
   // baseline this run already recorded.
   const result = await runResearch({
     problem: problemFile, outDir, runId: "resume-baseline-s7", resumeFrom: "resume-baseline-s7",
-    mock: true, seed: 7, baseline: baselineFile,
+    mock: true, seed: 7, baseline: baselineFile, configOverrides: { maxIdeaRetries: 0 },
   });
   const state = readJson(path.join(result.root, "state.json"));
   assert.equal(result.runId, "resume-baseline-s7", "a resume must not create a new run id");
@@ -348,4 +353,49 @@ test("a shutdown does not overwrite the outcome a finished run recorded", async 
   const state = readJson(path.join(session.root, "state.json"));
   assert.equal(state.abort_reason, "no_good_ideas", "the recorded outcome survives the shutdown");
   assert.equal(state.interrupted, undefined, "a finished run is not marked interrupted");
+});
+
+test("a resume restores the idea-exhaustion count instead of restarting the budget", async () => {
+  const { runResearch } = await import("../src/rsi/run.ts");
+  const outDir = tempDir("rsi-resume-retries-");
+  const repo = tempDir("rsi-resume-retries-repo-");
+  fs.writeFileSync(path.join(repo, "adapter.py"), "rate = 1\n");
+  const git = (args: string[]) => {
+    const result = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git(["init", "-q"]);
+  git(["add", "adapter.py"]);
+  git(["-c", "user.name=Test", "-c", "user.email=test@local", "commit", "-qm", "baseline"]);
+  const commit = git(["rev-parse", "HEAD"]);
+  const problemFile = path.join(outDir, "problem.json");
+  fs.writeFileSync(problemFile, JSON.stringify({ ...readJson(fixture("ood_frozen_encoder")), repo, repo_ref: commit, max_retry: { idea: 1, paper: 0 } }));
+
+  const root = path.join(outDir, "resume-retries-s7");
+  fs.mkdirSync(root, { recursive: true });
+  const baseline = {
+    idea_id: "baseline", scope: "subset", label: "baseline-manual",
+    code: { path: repo, label: "baseline-manual", parent: null, patch: "", repo, commit, branch: "detached" },
+    metrics: { auroc: 0.5 }, baseline_metrics: {}, samples: [],
+    result: { status: "ok", metrics: { auroc: 0.5 }, log_path: "", stdout: "", stderr: "", wall_time_s: 0 },
+  };
+  // The pool was already refuted and the one allowed retry was already spent:
+  // a restart must not hand the run a fresh retry budget.
+  fs.writeFileSync(path.join(root, "state.json"), JSON.stringify({
+    aborted: true, abort_reason: "no_good_ideas", decision_path: ["baseline.ok", "limits.ok:7", "run.abort"],
+    baseline, baseline_source: "manual", search_done: true, idea_retries: 1,
+    limitations: [{ id: "L1", text: "measured limit", axis: "method", evidence: "e", severity: 0.9, actionable: true }],
+    seeds: [{ id: "h4", hypothesis: "refuted mechanism", mechanism: "m", target_limitations: ["L1"], novelty_score: 0.9, novelty_refs: [], parent_ids: [], round: 0, origin: "seed", expected_gain: 0, direction_ids: [], domain_fit: 0.9, notes: "" }],
+    evaluated_ids: ["h4"],
+  }));
+
+  const result = await runResearch({
+    problem: problemFile, outDir, runId: "resume-retries-s7", resumeFrom: "resume-retries-s7",
+    mock: true, seed: 7,
+  });
+  const state = readJson(path.join(result.root, "state.json"));
+  assert.equal(result.final.abort_reason, "no_good_ideas");
+  assert.equal(state.idea_retries, 1, "the spent retry survives the restart");
+  assert.ok(!result.final.decision_path.some((token: string) => token.startsWith("seeds.retry:")), "no fresh retry budget");
 });

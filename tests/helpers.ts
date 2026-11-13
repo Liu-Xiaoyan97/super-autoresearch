@@ -27,7 +27,7 @@ export function tempDir(prefix = "rsi-test-"): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
-const defaultMockPlan = {
+export const defaultMockPlan = {
   "ablation.plan": {
     plans: [
       "safe component C",
