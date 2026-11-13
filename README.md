@@ -215,8 +215,17 @@ ledger/
 project
   └─ model family
        ├─ baseline subset / full
-       └─ subset → full → ablation → rebuttal
+       └─ candidate
+            └─ engineer
+                 └─ full (dashed edge from subset candidate)
+                      └─ ablation / rebuttal
 ```
+
+- `candidate` 是 initial subset implementation；
+- `engineer` 是 candidate 的下一代，记录 repair/core idea；
+- candidate/engineer 都会记录核心思路（来自 provenance patch 的 Mechanism/Hypothesis/Critique）；
+- initial full-set 节点用**虚线**连接最后一个 subset candidate/engineer 节点；
+- `provenance-*.json` 里的实验也会进入台账，因此即使 run 因失败没有写入 `state.traces`，candidate/engineer 仍会保留。
 
 - **同族判定**：比较目标仓库中模型定义文件的 git blob，不比较 commit 或阶段配置。
   `RSI_CORAL_MODEL_FILE` 指向的文件不变时，E/H、LR、batch、steps、优化器等超参数变化都属于同族；

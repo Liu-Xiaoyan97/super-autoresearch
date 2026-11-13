@@ -26,6 +26,8 @@ COLORS = {
     "root": "#6f5b8a",
     "family": "#4a6fa5",
     "baseline": "#187c91",
+    "candidate": "#187c91",
+    "engineer": "#c6811c",
     "subset": "#187c91",
     "full": "#0f6b46",
     "ablation": "#18865a",
@@ -116,9 +118,11 @@ def main() -> int:
         x1, y1 = x[parent] * spacing, -depth[parent] * 1.1
         x2, y2 = x[node["id"]] * spacing, -depth[node["id"]] * 1.1
         mid = y2 + 0.45
-        ax.plot([x1, x1], [y1, mid], color="#b9c6d4", lw=1.4, zorder=1, solid_capstyle="round")
-        ax.plot([x1, x2], [mid, mid], color="#b9c6d4", lw=1.4, zorder=1, solid_capstyle="round")
-        ax.plot([x2, x2], [mid, y2], color="#b9c6d4", lw=1.4, zorder=1, solid_capstyle="round")
+        line_style = (0, (4, 3)) if node.get("edge") == "dashed" else "solid"
+        line_color = "#6f8fa8" if node.get("edge") == "dashed" else "#b9c6d4"
+        ax.plot([x1, x1], [y1, mid], color=line_color, lw=1.4, zorder=1, solid_capstyle="round", linestyle=line_style)
+        ax.plot([x1, x2], [mid, mid], color=line_color, lw=1.4, zorder=1, solid_capstyle="round", linestyle=line_style)
+        ax.plot([x2, x2], [mid, y2], color=line_color, lw=1.4, zorder=1, solid_capstyle="round", linestyle=line_style)
 
     for node in nodes.values():
         kind = node.get("kind", "subset")
@@ -135,8 +139,9 @@ def main() -> int:
                        linewidth=2.4 if node.get("kind") == "selected" else 1.6, zorder=3)
         label = str(node.get("label", node["id"]))
         detail = str(node.get("detail", ""))
+        core = str(node.get("core", ""))
         label_lines = textwrap.wrap(label, width=30, break_long_words=False) or [label]
-        detail_lines = textwrap.wrap(detail, width=42, break_long_words=False) or [detail]
+        detail_lines = textwrap.wrap((core + (" · " if core else "") + detail), width=42, break_long_words=False) or [detail]
         ax.text(xnode + 0.28, ynode + 0.18, "\n".join(label_lines[:2]),
                 fontsize=9.5, color="#22364b", va="center", ha="left", weight="bold", zorder=4)
         ax.text(xnode + 0.28, ynode - 0.34, "\n".join(detail_lines[:2]),
@@ -150,12 +155,16 @@ def main() -> int:
         Patch(color=COLORS["root"], label="project root"),
         Patch(color=COLORS["family"], label="model family"),
         Patch(color=COLORS["baseline"], label="baseline"),
-        Patch(color=COLORS["subset"], label="subset experiment"),
+        Patch(color=COLORS["candidate"], label="candidate"),
+        Patch(color=COLORS["engineer"], label="engineer"),
         Patch(color=COLORS["full"], label="full experiment"),
         Patch(color=COLORS["ablation"], label="ablation"),
         Patch(color=COLORS["rebuttal"], label="rebuttal"),
     ]
     fig.legend(handles=legend, loc="lower left", bbox_to_anchor=(0.035, 0.018), ncol=7, frameon=False, fontsize=9)
+    from matplotlib.lines import Line2D
+    fig.legend(handles=[Line2D([0], [0], color="#6f8fa8", lw=1.4, linestyle=(0, (4, 3)), label="subset → full (dashed)")],
+               loc="lower right", bbox_to_anchor=(0.97, 0.018), frameon=False, fontsize=9)
     notes = data.get("family_rule", "")
     if notes:
         fig.text(0.035, 0.105, "Family rule: " + notes, fontsize=8.5, color="#627287")

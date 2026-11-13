@@ -17,7 +17,7 @@ import path from "node:path";
 import type { AgentContext } from "../agents/base.ts";
 import type { Evidence, Problem } from "../types.ts";
 
-export type LedgerKind = "baseline" | "subset" | "full" | "ablation" | "rebuttal" | "pending";
+export type LedgerKind = "baseline" | "candidate" | "engineer" | "full" | "ablation" | "rebuttal" | "pending";
 
 export interface LedgerExperiment {
   id: string;
@@ -33,6 +33,8 @@ export interface LedgerExperiment {
   commit: string | null;
   label: string;
   decision: string;
+  edge: "solid" | "dashed";
+  core: string;
   metrics: Record<string, number>;
   samples: number;
   timestamp: string;
@@ -169,6 +171,24 @@ function metricText(metrics: Record<string, number>): string {
   return Object.keys(metrics).sort().map((name) => `${name}=${metrics[name]}`).join(", ") || "no metrics";
 }
 
+function ideaCore(idea: unknown, fallback = ""): string {
+  const value = record(idea);
+  const mechanism = string(value.mechanism);
+  const hypothesis = string(value.hypothesis);
+  const text = [mechanism, hypothesis ? `hypothesis: ${hypothesis}` : ""].filter(Boolean).join(" · ");
+  return (text || fallback).replace(/\s+/g, " ").slice(0, 260);
+}
+
+/** The patch is the only durable per-step record after trace.idea is refined. */
+function coreFromEvidence(evidence: Evidence, fallback: string): string {
+  const patch = evidence.code?.patch ?? "";
+  const mechanism = /^Mechanism:\s*(.+)$/m.exec(patch)?.[1]?.trim() ?? "";
+  const hypothesis = /^Hypothesis:\s*(.+)$/m.exec(patch)?.[1]?.trim() ?? "";
+  const critique = /^Critique:\s*(.+)$/m.exec(patch)?.[1]?.trim() ?? "";
+  const text = [mechanism, hypothesis, critique ? `repair: ${critique}` : ""].filter(Boolean).join(" · ");
+  return (text || fallback).replace(/\s+/g, " ").slice(0, 260);
+}
+
 function runDirs(root: string): string[] {
   if (!fs.existsSync(root)) return [];
   try {
@@ -212,7 +232,7 @@ function addEvidence(
   state: RunState,
   evidence: Evidence | null,
   kind: LedgerKind,
-  opts: { ideaId?: string; parentCommit?: string | null; decision?: string; selected?: boolean } = {},
+  opts: { ideaId?: string; parentCommit?: string | null; decision?: string; selected?: boolean; core?: string; edge?: "solid" | "dashed"; timestamp?: string } = {},
 ): void {
   if (!evidence || !evidence.scope) return;
   const commit = evidence.code?.commit ?? null;
@@ -236,9 +256,11 @@ function addEvidence(
     commit,
     label,
     decision: opts.decision ?? (kind === "baseline" ? "baseline" : "candidate"),
+    edge: opts.edge ?? "solid",
+    core: opts.core ?? (kind === "baseline" ? "unmodified baseline" : ""),
     metrics: evidence.metrics,
     samples: evidence.samples?.length ?? 0,
-    timestamp: state.updatedAt,
+    timestamp: opts.timestamp ?? state.updatedAt,
     model_file: model.file,
     model_blob: model.blob,
     selected: opts.selected === true,
@@ -253,19 +275,92 @@ function collectRun(state: RunState): PendingExperiment[] {
   const best = state.state.best_evidence as Evidence | null;
   const bestCommit = best?.code?.commit ?? null;
 
-  addEvidence(out, state, baseline, "baseline", { ideaId: "baseline", decision: "baseline" });
+  addEvidence(out, state, baseline, "baseline", { ideaId: "baseline", decision: "baseline", core: "unmodified baseline" });
   addEvidence(out, state, baselineFull, "baseline", {
     ideaId: "baseline-full",
     parentCommit: baseline?.code?.commit ?? null,
     decision: "baseline",
+    core: "unmodified baseline · full protocol",
   });
 
   const baselineCommit = (scope: string): string | null =>
     scope === "full" ? baselineFull?.code?.commit ?? baseline?.code?.commit ?? null : baseline?.code?.commit ?? null;
 
+  // Provenance files are written for every actual workspace run, including
+  // attempts that never reached a state trace (for example a failed engineer
+  // rerun). They are primary ledger evidence, not optional metadata.
+  const provenanceDir = path.join(state.root, "artifacts", "experiments");
+  const provenanceFiles = (() => {
+    try {
+      return fs.readdirSync(provenanceDir)
+        .filter((name) => /^provenance-.*\.json$/.test(name))
+        .map((name) => path.join(provenanceDir, name))
+        .sort((a, b) => {
+          try { return fs.statSync(a).mtimeMs - fs.statSync(b).mtimeMs || a.localeCompare(b); }
+          catch { return a.localeCompare(b); }
+        });
+    } catch {
+      return [];
+    }
+  })();
+  const lastIdeaCommit = new Map<string, string>();
+  const provenanceIdeas = new Set<string>();
+  for (const file of provenanceFiles) {
+    const raw = readJson(file) as Record<string, unknown> | null;
+    const request = record(raw?.request);
+    const repoRef = record(request.repo);
+    const result = record(raw?.result);
+    const ideaId = string(request.idea_id);
+    const scope = string(request.scope) || "subset";
+    const label = string(repoRef.label) || path.basename(file, ".json");
+    const commit = string(raw?.commit) || string(repoRef.commit) || null;
+    if (!ideaId || !["subset", "full", "ablation", "rebuttal"].includes(scope)) continue;
+    provenanceIdeas.add(ideaId);
+    const patch = string(repoRef.patch);
+    const parent = string(repoRef.parent) || (scope === "subset" ? baselineCommit("subset") : baselineCommit(scope));
+    const prior = lastIdeaCommit.get(`${ideaId}:${scope}`);
+    // Prefer the immediately preceding run for the same idea/scope. A
+    // provenance parent can point at an intermediate commit that was not itself
+    // recorded as an experiment.
+    const parentCommit = prior ?? parent;
+    const kind: LedgerKind = /engineer|engineered|-eng-/i.test(label)
+      ? "engineer"
+      : scope === "full" ? "full" : scope === "ablation" ? "ablation" : scope === "rebuttal" ? "rebuttal" : "candidate";
+    const evidence: Evidence = {
+      idea_id: ideaId,
+      scope: scope as Evidence["scope"],
+      metrics: result.metrics && typeof result.metrics === "object" ? result.metrics as Record<string, number> : {},
+      baseline_metrics: {},
+      code: {
+        path: string(repoRef.path),
+        label,
+        parent: parentCommit,
+        patch,
+        repo: string(repoRef.repo) || undefined,
+        commit: commit ?? undefined,
+        branch: string(raw?.branch) || undefined,
+      },
+      result: (result.status ? result : null) as Evidence["result"],
+      label,
+      samples: [],
+    };
+    const source = coreFromEvidence(evidence, ideaCore(null, label));
+    addEvidence(out, state, evidence, kind, {
+      ideaId,
+      parentCommit,
+      decision: result.status === "ok" ? "measured" : string(result.status) || "failed",
+      edge: kind === "full" ? "dashed" : "solid",
+      core: source,
+      timestamp: (() => { try { return fs.statSync(file).mtime.toISOString(); } catch { return state.updatedAt; } })(),
+    });
+    if (commit) lastIdeaCommit.set(`${ideaId}:${scope}`, commit);
+  }
+
   // Seeds that have not reached a measured trace are still part of the run's
   // experiment tree; show them as pending leaves instead of dropping them.
   const evaluated = new Set(array(state.state.evaluated_ids).map(String));
+  for (const rawTrace of traces) evaluated.add(string(record(rawTrace.idea).id));
+  for (const idea of provenanceIdeas) evaluated.add(idea);
   for (const rawSeed of array(state.state.seeds) as Array<Record<string, unknown>>) {
     const id = string(rawSeed.id);
     if (!id || evaluated.has(id)) continue;
@@ -283,6 +378,7 @@ function collectRun(state: RunState): PendingExperiment[] {
       ideaId: id,
       parentCommit: baseline?.code?.commit ?? null,
       decision: "pending",
+      core: ideaCore(rawSeed),
     });
   }
 
@@ -291,14 +387,34 @@ function collectRun(state: RunState): PendingExperiment[] {
     const ideaId = string(idea.id) || "idea";
     const evidenceList = array(rawTrace.evidence) as Evidence[];
     let previousCommit: string | null = null;
+    let subsetCount = 0;
+    let fullCount = 0;
     for (let index = 0; index < evidenceList.length; index += 1) {
       const evidence = evidenceList[index];
       if (!evidence?.scope) continue;
-      const parent = previousCommit ?? evidence.code?.parent ?? baselineCommit(evidence.scope);
-      addEvidence(out, state, evidence, evidence.scope === "full" ? "full" : "subset", {
+      const scope = evidence.scope;
+      let kind: LedgerKind;
+      let edge: "solid" | "dashed" = "solid";
+      let core = coreFromEvidence(evidence, ideaCore(idea));
+      if (scope === "full") {
+        fullCount += 1;
+        kind = fullCount === 1 ? "full" : "engineer";
+        // The first full-set measurement is the dashed transition from the
+        // last subset candidate/engineer into the full protocol.
+        if (fullCount === 1 && previousCommit) edge = "dashed";
+        if (kind === "engineer") core = `${core} · full engineer: ${evidence.label}`;
+      } else {
+        subsetCount += 1;
+        kind = subsetCount === 1 ? "candidate" : "engineer";
+        if (kind === "engineer") core = `${core} · subset engineer: ${evidence.label}`;
+      }
+      const parent = previousCommit ?? evidence.code?.parent ?? baselineCommit(scope);
+      addEvidence(out, state, evidence, kind, {
         ideaId,
         parentCommit: parent,
         decision: index === evidenceList.length - 1 ? string(rawTrace.decision) : "candidate",
+        core,
+        edge,
       });
       previousCommit = evidence.code?.commit ?? previousCommit;
     }
@@ -310,6 +426,7 @@ function collectRun(state: RunState): PendingExperiment[] {
       ideaId: string(raw.plan_id) || "ablation",
       parentCommit: bestCommit,
       decision: raw.ok === true ? "good" : "refine",
+      core: `component ablation: ${string(raw.component) || string(raw.plan_id) || "component"}`,
     });
   }
   for (const evidence of array(state.state.rebuttals) as Evidence[]) {
@@ -317,6 +434,7 @@ function collectRun(state: RunState): PendingExperiment[] {
       ideaId: evidence.idea_id,
       parentCommit: bestCommit,
       decision: "rebuttal",
+      core: `rebuttal experiment: ${evidence.label}`,
     });
   }
   // Mark the final evidence selected without duplicating it.
@@ -342,10 +460,12 @@ function resolveParents(experiments: LedgerExperiment[]): void {
   for (const item of experiments) {
     let parent: LedgerExperiment | undefined;
     if (item.parent_commit) {
-      parent = byCommitAndScope.get(`${item.run_id}:${item.parent_commit}:${item.scope}`) ??
-        byCommitAndScope.get(`${item.run_id}:${item.parent_commit}:subset`) ??
-        byCommitAndScope.get(`${item.run_id}:${item.parent_commit}:full`);
-      if (parent?.id === item.id) parent = undefined;
+      const candidates = [
+        byCommitAndScope.get(`${item.run_id}:${item.parent_commit}:${item.scope}`),
+        byCommitAndScope.get(`${item.run_id}:${item.parent_commit}:subset`),
+        byCommitAndScope.get(`${item.run_id}:${item.parent_commit}:full`),
+      ];
+      parent = candidates.find((candidate) => candidate && candidate.id !== item.id);
     }
     if (!parent) {
       const baseline = baselines.get(`${item.run_id}:${item.family_id}:${item.scope}`) ??
@@ -389,7 +509,7 @@ function mermaid(project: string, families: LedgerFamily[], experiments: LedgerE
     lines.push(`  subgraph ${node}["${escapeMermaid(`family: ${family.label}`)}"]`);
     for (const item of experiments.filter((candidate) => candidate.family_id === family.id)) {
       const label = family.label ? `${item.kind} ${item.idea_id}` : `${item.kind} ${item.idea_id}`;
-      const detail = [item.commit ? item.commit.slice(0, 8) : item.label, metricText(item.metrics), item.decision]
+      const detail = [item.core, item.commit ? item.commit.slice(0, 8) : item.label, metricText(item.metrics), item.decision]
         .filter(Boolean).join(" · ");
       lines.push(`    ${ids.get(item.id)}["${escapeMermaid(`${label} · ${detail}`)}"]`);
     }
@@ -397,7 +517,10 @@ function mermaid(project: string, families: LedgerFamily[], experiments: LedgerE
     lines.push(`  P --> ${node}`);
   }
   for (const item of experiments) {
-    if (item.parent_id) lines.push(`  ${ids.get(item.parent_id)} --> ${ids.get(item.id)}`);
+    if (item.parent_id) {
+      const arrow = item.edge === "dashed" ? "-.->" : "-->";
+      lines.push(`  ${ids.get(item.parent_id)} ${arrow} ${ids.get(item.id)}`);
+    }
   }
   lines.push("```", "");
   return lines.join("\n");
@@ -423,7 +546,10 @@ function dot(project: string, families: LedgerFamily[], experiments: LedgerExper
     lines.push(`  P -> cluster_${family.id.replace(/[^A-Za-z0-9_]/g, "_")} [style=dashed, arrowhead=none];`);
   }
   for (const item of experiments) {
-    if (item.parent_id) lines.push(`  ${ids.get(item.parent_id)} -> ${ids.get(item.id)};`);
+    if (item.parent_id) {
+      const style = item.edge === "dashed" ? " [style=dashed]" : "";
+      lines.push(`  ${ids.get(item.parent_id)} -> ${ids.get(item.id)}${style};`);
+    }
   }
   lines.push("}", "");
   return lines.join("\n");
@@ -453,7 +579,8 @@ function tree(project: string, families: LedgerFamily[], experiments: LedgerExpe
     const roots = experiments.filter((item) => item.family_id === family.id && !item.parent_id);
     const render = (item: LedgerExperiment, prefix: string, last: boolean) => {
       const selected = item.selected ? " *selected*" : "";
-      lines.push(`${prefix}${last ? "└─" : "├─"} ${item.kind} ${item.idea_id} · ${item.commit?.slice(0, 8) ?? item.label} · ${metricText(item.metrics)} · ${item.decision}${selected}`);
+      const edge = item.edge === "dashed" ? " [dashed subset→full]" : "";
+      lines.push(`${prefix}${last ? "└─" : "├─"} ${item.kind} ${item.idea_id} · ${item.core} · ${item.commit?.slice(0, 8) ?? item.label} · ${metricText(item.metrics)} · ${item.decision}${selected}${edge}`);
       const kids = children.get(item.id) ?? [];
       kids.forEach((child, index) => render(child, `${prefix}${last ? "   " : "│  "}`, index === kids.length - 1));
     };
@@ -470,11 +597,11 @@ function markdown(snapshot: LedgerSnapshot): string {
     "",
     `Families: ${snapshot.families.length}; experiments: ${snapshot.experiments.length}; runs: ${snapshot.runs.length}`,
     "",
-    "| family | kind | idea | scope | metrics | decision | commit | run |",
-    "|---|---|---|---|---|---|---|---|",
+    "| family | kind | idea | scope | core idea vs baseline | metrics | decision | commit | run |",
+    "|---|---|---|---|---|---|---|---|---|",
   ];
   for (const item of snapshot.experiments) {
-    lines.push(`| ${item.family_label} | ${item.kind} | ${item.idea_id} | ${item.scope} | ${metricText(item.metrics)} | ${item.decision}${item.selected ? " + selected" : ""} | ${item.commit?.slice(0, 10) ?? item.label} | ${item.run_ids.join(", ")} |`);
+    lines.push(`| ${item.family_label} | ${item.kind} | ${item.idea_id} | ${item.scope} | ${item.core.replace(/\|/g, "\\|")} | ${metricText(item.metrics)} | ${item.decision}${item.selected ? " + selected" : ""} | ${item.commit?.slice(0, 10) ?? item.label} | ${item.run_ids.join(", ")} |`);
   }
   lines.push("", "## Graph", "", "See [`graph.md`](graph.md) and [`tree.txt`](tree.txt).", "");
   return lines.join("\n");
@@ -497,6 +624,8 @@ interface LineageNode {
   detail: string;
   kind: string;
   parent: string | null;
+  edge: "solid" | "dashed";
+  core: string;
   family: string;
 }
 
@@ -508,6 +637,8 @@ function lineageNodes(project: string, families: LedgerFamily[], experiments: Le
     detail: "RSI experiment lineage",
     kind: "root",
     parent: null,
+    edge: "solid",
+    core: "",
     family: "",
   }];
   const familyNode = new Map<string, string>();
@@ -520,6 +651,8 @@ function lineageNodes(project: string, families: LedgerFamily[], experiments: Le
       detail: `${family.experiments} experiment${family.experiments === 1 ? "" : "s"} · same model definition`,
       kind: "family",
       parent: "project",
+      edge: "solid",
+      core: "",
       family: family.id,
     });
   }
@@ -532,9 +665,12 @@ function lineageNodes(project: string, families: LedgerFamily[], experiments: Le
     nodes.push({
       id: item.id,
       label,
-      detail: `${metricText(item.metrics)} · ${item.decision}${item.selected ? " · SELECTED" : ""} · ${item.commit?.slice(0, 8) ?? item.label}`,
-      kind: item.kind === "baseline" ? "baseline" : item.kind,
+      detail: [metricText(item.metrics), item.decision, item.selected ? "SELECTED" : "", item.commit?.slice(0, 8) ?? item.label]
+        .filter(Boolean).join(" · "),
+      kind: item.kind,
       parent,
+      edge: item.edge,
+      core: item.core,
       family: item.family_id,
     });
   }
