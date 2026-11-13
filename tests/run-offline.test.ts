@@ -143,6 +143,7 @@ test("the paper loop retries a non-accepted review within max_retry.paper", asyn
   const retried = await mockRun({ problem: write("retry", 1), mockScript: script, configOverrides: { nSeed: 1, minLimitations: 7, maxMetaRounds: 0 } });
   assert.ok(!stopped.final.decision_path.some((token) => token.startsWith("paper.retry:")), "paper 0 never retries");
   assert.ok(retried.final.decision_path.includes("paper.retry:1"), "one paper retry");
+  assert.ok(retried.final.decision_path.includes("paper.revised"), "the retry revises the manuscript instead of re-drafting");
   assert.ok(!retried.final.decision_path.some((token) => token.startsWith("paper.retry:2")), "the paper budget bounds it");
   assert.equal((retried.state as any).paper_retries, 1);
 });

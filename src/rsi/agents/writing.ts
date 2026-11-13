@@ -306,7 +306,10 @@ export class PaperEnhancer extends BaseAgent {
     manuscript: Manuscript;
     review: Review;
     rebuttal: Evidence[];
+    /** Meta-review / area-chair critique: revise the paper, never re-draft it. */
+    feedback?: string;
   }): Promise<Manuscript> {
+    const feedback = (opts.feedback ?? "").trim();
     const supplementary: Record<string, number> = {};
     for (const evidence of opts.rebuttal) Object.assign(supplementary, measurements(evidence));
     const ledger = { ...opts.manuscript.evidence_ledger, ...supplementary };
@@ -317,7 +320,10 @@ export class PaperEnhancer extends BaseAgent {
         "Preserve scientific identity and required sections. New claims are permitted ONLY for " +
         "metrics and exact values measured in successful rebuttal evidence, with non-empty " +
         "evidence_ref. Drop or downgrade unsupported claims. Do not invent experimental findings, " +
-        "rewrite the core method, or treat reviewer suggestions as results.\n" +
+        "rewrite the core method, or treat reviewer suggestions as results. " +
+        "When meta-review feedback is supplied, revise THIS manuscript to answer it " +
+        "(claims, framing, limitations, reported evidence); do not start a new paper.\n" +
+        (feedback ? `Meta-review feedback to answer: ${feedback}\n` : "") +
         guidance(this.ctx) +
         "\n" +
         stableString({
@@ -325,6 +331,7 @@ export class PaperEnhancer extends BaseAgent {
           review: opts.review,
           rebuttal: opts.rebuttal,
           rebuttal_metrics: supplementary,
+          meta_feedback: feedback,
         }),
       meta: { manuscript_id: opts.manuscript.id, round: opts.manuscript.round + 1 },
     });

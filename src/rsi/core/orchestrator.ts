@@ -1079,11 +1079,9 @@ export class Orchestrator {
    * The retry counter is persisted so a resume does not restart the budget.
    */
   private async paperLoop(): Promise<void> {
+    if (!this.state.manuscript || !this.state.review) await this.draftAndReview();
     for (;;) {
-      // A rejected meta-review is feedback: the next draft must answer it.
-      const critique = this.state.metaReview && this.state.metaReview.decision !== "accept" ? this.state.metaReview.critique : "";
-      await this.draftAndReview(critique);
-      await this.metaReview();
+      if (!this.state.metaReview) await this.metaReview();
       const accepted = this.state.metaReview?.decision === "accept" && (this.state.review?.score ?? 0) >= this.ctx.config.reviewThreshold;
       if (accepted) return;
       if (this.state.paperRetries >= Math.max(0, this.ctx.config.maxPaperRetries)) return;
@@ -1093,12 +1091,44 @@ export class Orchestrator {
         max_retry: this.ctx.config.maxPaperRetries,
         reason: this.state.exportReason || this.state.metaReview?.decision || "not_accepted",
       });
-      // A retry starts a fresh round: the next draft must answer the critiques.
+      // The critique is spent once it has been answered by a revision.
+      const critique = this.state.metaReview?.critique ?? "";
       this.state.metaReview = null;
-      this.state.review = null;
       this.state.metaRound = 0;
       this.persist();
+      await this.reviseAndReview(critique);
     }
+  }
+
+  /**
+   * Paper-loop revision: the manuscript is enhanced against its review and the
+   * meta critique, then the panel re-reviews the same paper. The identity of
+   * the draft is preserved; only its content and evidence change.
+   */
+  private async reviseAndReview(feedback: string): Promise<void> {
+    const manuscript = this.state.manuscript;
+    if (!manuscript) throw new ScientificAbort("missing_manuscript");
+    this.ctx.budget.check();
+    this.state.manuscript = await this.agents.paperEnhancer.enhance({
+      manuscript,
+      review: this.state.review ?? makeReview({
+        manuscript_id: manuscript.id,
+        strengths: [],
+        weaknesses: [],
+        questions: [],
+        score: 0,
+      }),
+      rebuttal: this.state.rebuttals.slice(),
+      feedback,
+    });
+    // The revised paper gets a fresh panel; the previous rounds are spent.
+    this.state.peerRound = 0;
+    this.state.reviewRefinements = 0;
+    this.state.reviews = [];
+    this.state.review = null;
+    this.transition("stage.paper", "paper.revised", { manuscript_id: this.state.manuscript.id });
+    this.persist();
+    await this.reviewPanel(0);
   }
 
   private async metaReview(): Promise<void> {
