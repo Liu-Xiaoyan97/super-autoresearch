@@ -23,80 +23,96 @@ Pi 会话中执行；目标项目的训练、checkpoint、评测和指标代码�
 `critic.selector` 是确定性 gate，不产生模型 ticket。
 
 ```text
-problem / repo_ref
-       │
-       ├─ 有 diagnose_command ──> code.baseline ──> diagnose.run
-       │                                              │
-       │                                              ▼
-       │                                      limitations.extract
-       │                                              │
-       │                                      limitations.verify
-       │                                              │
-       │                                      ideas.initial
-       │                                              │
-       │                                      ideas.novelty (批内 ∥)
-       │                                              │
-       │                                      ideas.expand
-       │                                              │
-       └─ 无 diagnose_command ──> limitations → seeds ─┘
-                                                      │
-                                                      ▼
-                                               code.baseline
-                                                      │
-                                               code.implement
-                                                      │
-                                               code.subset
-                                                      │
-                                               critic.subset
-                                                 │        │
-                                                 │        └─ engineer.subset ──┐
-                                                 │                              │
-                                                 └────────────── loop ──────────┘
-                                                      │
-                                               code.full
-                                                      │
-                                               critic.full
-                                                 │        │
-                                                 │        └─ engineer.full ────┐
-                                                 │                              │
-                                                 └────────────── loop ──────────┘
-                                                      │
-                                               ideas.evolve (breadth rounds)
-                                                      │
-                                               critic.selector (确定性)
-                                                      │
-                                               critic.compare (确定性)
-                                                      │
-                                               ablation.plan
-                                                      │
-                                               code.ablation (每个 plan 串行)
-                                                      │
-                                               ablation.critic
-                                                      │
-                                      data gate / attribution
-                                                      │
-                                               write.draft
-                                                      │
-                                            review.peer ×3 (∥)
-                                                      │
-                                            review.rebuttal_plan
-                                                      │
-                                            code.rebuttal (每个 task 串行)
-                                                      │
-                                            write.enhance
-                                                      │
-                                            review.peer (下一轮)
-                                                      │
-                                               review.meta
-                                                 │          │
-                                            accept │          └─ engineer.full
-                                                 │                    │
-                                                 │             ablation / draft
-                                                 │
-                                     integrity.spec (每个 good trace)
-                                     integrity.refs ∥ integrity.method_code
-                                                 │
-                                               export
+[problem / repo_ref]
+          │
+          ▼
+[code.baseline]                 diagnose_command path
+          │
+          ▼
+[diagnose.run]                  target measurement, not LLM
+          │
+          ▼
+[limitations.extract]
+          │
+          ▼
+[limitations.verify]
+          │
+          ▼
+[ideas.initial]
+          │
+          ▼
+[ideas.novelty ×N]              same batch: parallel
+          │
+          ▼
+[ideas.expand]
+          │
+          ▼
+[code.baseline]                 no diagnose_command path
+          │
+          ▼
+[code.implement]
+          │
+          ▼
+[code.subset]
+          │
+          ▼
+[critic.subset]  ◄── engineer.subset loop
+          │
+          ▼
+[code.full]
+          │
+          ▼
+[critic.full]    ◄── engineer.full loop
+          │
+          ▼
+[ideas.evolve]                  breadth rounds
+          │
+          ▼
+[critic.selector]               deterministic
+          │
+          ▼
+[critic.compare]                deterministic
+          │
+          ▼
+[ablation.plan]
+          │
+          ▼
+[code.ablation]                 one plan at a time
+          │
+          ▼
+[ablation.critic]
+          │
+          ▼
+[data gate / attribution]
+          │
+          ▼
+[write.draft]
+          │
+          ▼
+[review.peer ×3]                parallel panel
+          │
+          ▼
+[review.rebuttal_plan]          if review fails
+          │
+          ▼
+[code.rebuttal]                 one task at a time
+          │
+          ▼
+[write.enhance]
+          │
+          ▼
+[review.peer ×3]                repeat until pass/budget
+          │
+          ▼
+[review.meta]                   accept → export; refine → engineer.full
+          │
+          ▼
+[integrity.refs ∥ integrity.method_code]
+          │
+          ▼
+[export]
+
+integrity.spec: each good trace ──► evidence, during search
 ```
 
 ### 并行组
