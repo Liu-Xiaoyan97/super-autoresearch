@@ -150,15 +150,15 @@ export class Selector extends BaseAgent {
     const rank = (trace: Trace): [number, number, number] => {
       const evidence = finalEvidence(trace);
       if (!evidence) return [Number.NEGATIVE_INFINITY, 0, 0];
-      let primary = Number.NEGATIVE_INFINITY;
-      if (specs.length) {
-        const spec = specs[0];
-        const value = evidence.metrics[spec.name];
-        if (Number.isFinite(value)) primary = spec.direction === "max" ? value : -value;
-      }
       const deltas = metricDeltas(evidence.metrics, opts.baseline.metrics, specs);
+      // Rank on every declared metric and dataset, not just metrics[0].
+      // Deltas are already signed so higher is better for min and max metrics.
+      const weighted = specs.reduce((sum, spec) => {
+        const delta = deltas[spec.name];
+        return sum + (Number.isFinite(delta) ? delta * spec.weight : Number.NEGATIVE_INFINITY);
+      }, 0);
       const improved = specs.filter((spec) => (deltas[spec.name] ?? Number.NEGATIVE_INFINITY) > spec.tolerance).length;
-      return [primary, improved, trace.idea.novelty_score];
+      return [weighted, improved, trace.idea.novelty_score];
     };
 
     let best = candidates[0];

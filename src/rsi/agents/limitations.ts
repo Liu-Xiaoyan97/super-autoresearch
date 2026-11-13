@@ -34,7 +34,7 @@ export class LimitationExtractor extends BaseAgent {
       "or depend on any forbidden approach. Ground each limitation in a measured " +
       "finding when one is supplied; label genuinely unmeasured gaps as hypotheses. " +
       "Write one sentence per text and evidence field. Never use semicolons. " +
-      "Copy every metric name, id and path exactly, including word_ppl.\n" +
+      `Copy every metric name and dataset name exactly: ${this.ctx.problem.metrics.map((metric) => metric.name).join(", ") || "none declared"}.\n` +
       `Measured findings (primary first): ${stableString(promptFindings)}\n` +
       `Problem: ${this.ctx.problem.statement}\n` +
       `Source: ${this.ctx.problem.source_paper}\n` +

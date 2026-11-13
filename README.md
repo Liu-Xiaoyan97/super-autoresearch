@@ -130,7 +130,7 @@ git switch -c rsi-bench
 Adapter 需要实现：
 
 ```text
-真实训练 → 保存 checkpoint → 新进程重载 → 官方 lm-eval → word_ppl
+真实训练 → 保存 checkpoint → 新进程重载 → 官方 lm-eval → word_ppl + lambada_openai acc
 ```
 
 支持 scope：
@@ -184,6 +184,7 @@ training_skipped: false
 executed_train_steps: 1
 checkpoint_step: 1
 run_kind: smoke
+metrics: word_ppl + acc
 ```
 
 这只是 adapter 可用性证据，不是 baseline，也不是科学结果。
@@ -213,7 +214,7 @@ rm -rf /workspace/RSI/.rsi-baseline/coral-wikitext-ppl-*
 
 - `/rsi run` 没有 `--repo`；容器已设置 `RSI_TARGET_REPO=/repos/coral-rsi`。
 - provider/model 继承容器配置。
-- 完整流程会做 subset 3 seeds × 95、full 954、data gate、ablation、paper。
+- 完整流程会做 subset 3 seeds × 95、full 954、data gate、ablation、paper；每个阶段都评测 `word_ppl` 和 lambada_openai `acc`。
 - full 运行使用 954 步协议；`RSI_CORAL_TRAIN_STEPS` 只用于 smoke/iteration。
 - 远端源码直接复用 `/home/sl/coral-rsi`，不再创建 `projects/<run>` 源码副本。
 - 产物在 `/home/sl/coral-rsi/results/coral-<run_id>/`。
@@ -305,6 +306,7 @@ RSI 在 lint 前会规范化限制文本：
 ```text
 分号分隔的 measured evidence → 拆成独立句子
 word ppl / word-ppl 等变体 → 恢复成 canonical word_ppl
+lambada_openai accuracy → 使用 canonical acc
 ```
 
 因此 adapter 诊断 findings 里的分号不会再把限制提取拖进“拆句还是保留指标名”的死循环。

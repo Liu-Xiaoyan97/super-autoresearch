@@ -13,6 +13,8 @@ export type IdeaOrigin = "seed" | "evolved" | "meta";
 
 export interface MetricSpec {
   name: string;
+  /** Dataset this metric belongs to; null for a dataset-agnostic metric. */
+  dataset?: string | null;
   direction: MetricDirection;
   /** Relative noise band: smaller differences are not evidence. */
   tolerance: number;
@@ -301,6 +303,7 @@ export interface FinalArtifacts {
 export function metricSpec(over: Partial<MetricSpec> = {}): MetricSpec {
   return {
     name: "score",
+    dataset: null,
     direction: "max",
     tolerance: 1e-3,
     weight: 1,

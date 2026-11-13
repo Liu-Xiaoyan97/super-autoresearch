@@ -77,6 +77,7 @@ function parseMetric(raw: unknown): MetricSpec {
     : null;
   return metricSpec({
     name: str(item.name, "score"),
+    dataset: typeof item.dataset === "string" && item.dataset.trim() ? item.dataset.trim() : null,
     direction: item.direction === "min" ? "min" : "max",
     tolerance: num(item.tolerance, 1e-3),
     weight: num(item.weight, 1),
@@ -147,6 +148,15 @@ export function parseProblem(raw: unknown): Problem {
   const item = asRecord(raw);
   if (!item) throw new Error("problem JSON must be an object");
   const metrics = Array.isArray(item.metrics) ? item.metrics.map(parseMetric) : [];
+  const datasets = strArray(item.datasets);
+  const seenMetrics = new Set<string>();
+  for (const metric of metrics) {
+    if (seenMetrics.has(metric.name)) throw new Error(`duplicate metric name: ${metric.name}`);
+    seenMetrics.add(metric.name);
+    if (metric.dataset && !datasets.includes(metric.dataset)) {
+      throw new Error(`metric ${metric.name} names dataset ${metric.dataset}, which is not in datasets`);
+    }
+  }
   return makeProblem({
     id: str(item.id, "problem"),
     statement: str(item.statement),
@@ -166,7 +176,7 @@ export function parseProblem(raw: unknown): Problem {
     job_worker: typeof item.job_worker === "string" && item.job_worker.trim() ? item.job_worker.trim() : null,
     remote: parseRemote(item.remote),
     budget: parseBudget(item.budget),
-    datasets: strArray(item.datasets),
+    datasets,
     subset_datasets: strArray(item.subset_datasets),
     metrics,
     reported_metrics: numRecord(item.reported_metrics),

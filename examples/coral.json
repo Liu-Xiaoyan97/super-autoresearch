@@ -1,6 +1,6 @@
 {
   "id": "coral-wikitext-ppl",
-  "statement": "Improve CORAL, a non-Transformer causal kernel / state-space language model, so that wikitext word perplexity measured by the fixed lm-eval protocol decreases without adding self-attention or transformer blocks.",
+  "statement": "Improve CORAL, a non-Transformer causal kernel / state-space language model, so that official lm-eval WikiText word perplexity decreases and lambada_openai accuracy increases without adding self-attention or transformer blocks.",
   "domain": "state space models",
   "subfield": "causal kernel and state-space language modeling",
   "source_paper": "CORAL dense causal-kernel language model (internal prototype)",
@@ -84,24 +84,38 @@
     "setup": "export CUDA_HOME=/usr/local/cuda-12.8; export PATH=\"$CUDA_HOME/bin:$PATH\"; export LD_LIBRARY_PATH=\"$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}\"; export PYTHONPATH=\"$PWD${PYTHONPATH:+:$PYTHONPATH}\""
   },
   "datasets": [
-    "wikitext-2-raw-v1"
+    "wikitext-2-raw-v1",
+    "lambada_openai"
   ],
   "subset_datasets": [
-    "wikitext-2-raw-v1"
+    "wikitext-2-raw-v1",
+    "lambada_openai"
   ],
   "metrics": [
     {
       "name": "word_ppl",
+      "dataset": "wikitext-2-raw-v1",
       "direction": "min",
       "tolerance": 0.005,
       "weight": 1.0,
       "bounds": null
+    },
+    {
+      "name": "acc",
+      "dataset": "lambada_openai",
+      "direction": "max",
+      "tolerance": 0.05,
+      "weight": 1.0,
+      "bounds": [
+        0.0,
+        1.0
+      ]
     }
   ],
   "reported_metrics": {},
   "constraints": [
     "Keep CORAL a non-Transformer model: no self-attention, transformer blocks, or pretrained transformer backbone",
-    "Evaluate with the official lm-eval wikitext task and report word_perplexity (lower is better)",
+    "Evaluate both fixed official lm-eval tasks: wikitext word_perplexity (lower is better) and lambada_openai acc (higher is better)",
     "Use the same tokenizer, context length, evaluation split, and effective training budget for every candidate",
     "Do not train on wikitext test data or add extra evaluation data",
     "The GPU server is offline: use preinstalled packages and local data/model caches",
@@ -175,8 +189,9 @@
     "training on wikitext test data",
     "using extra evaluation data",
     "changing the tokenizer or evaluation split",
-    "loading a pretrained transformer backbone"
+    "loading a pretrained transformer backbone",
+    "changing the lm-eval lambada_openai task or acc metric"
   ],
   "venue": "ICLR",
-  "audience_note": "External target: snapshot the authorized current dense stack, not old HEAD, into isolated rsi-bench. Production budget comes from stages/pretrain-dense-158m-025b.json (954 steps, effective batch 256, sequence 1024). No baseline is asserted for this snapshot; only a successful real train/evaluate run may populate word_ppl. Explicit limited subset smoke is plumbing evidence, not a full-protocol score."
+  "audience_note": "External target: snapshot the authorized current dense stack, not old HEAD, into isolated rsi-bench. Production budget comes from stages/pretrain-dense-158m-025b.json (954 steps, effective batch 256, sequence 1024). No baseline is asserted for this snapshot; only a successful real train/evaluate run may populate word_ppl and lambada_openai acc. Explicit limited subset smoke is plumbing evidence, not a full-protocol score."
 }

@@ -30,6 +30,12 @@ test("the coral fixture targets the non-Transformer dense stack", () => {
   assert.equal(problem.metrics[0].name, "word_ppl");
   assert.equal(problem.metrics[0].direction, "min");
   assert.equal(problem.metrics[0].tolerance, 0.005);
+  assert.equal(problem.metrics[0].dataset, "wikitext-2-raw-v1");
+  assert.equal(problem.metrics[1].name, "acc");
+  assert.equal(problem.metrics[1].dataset, "lambada_openai");
+  assert.equal(problem.metrics[1].direction, "max");
+  assert.equal(problem.metrics[1].tolerance, 0.05);
+  assert.deepEqual(problem.datasets, ["wikitext-2-raw-v1", "lambada_openai"]);
   assert.equal(problem.repo_ref, "rsi-bench");
   assert.equal(problem.remote?.gpu_ids, "0");
   assert.equal(problem.remote?.env.RSI_CORAL_TRAIN_DATA, "/home/sl/SlimPajama-10B");

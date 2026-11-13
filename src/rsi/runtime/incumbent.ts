@@ -37,7 +37,8 @@ export function protocolFingerprint(problem: Problem, env: Record<string, string
     .filter(([key]) => key !== "RSI_SEED" && !key.endsWith("_SEED"))
     .sort(([a], [b]) => a.localeCompare(b)));
   const metrics = problem.metrics.map((metric) => ({
-    name: metric.name, direction: metric.direction, tolerance: metric.tolerance, bounds: metric.bounds,
+    name: metric.name, dataset: metric.dataset ?? null, direction: metric.direction,
+    tolerance: metric.tolerance, bounds: metric.bounds,
   })).sort((a, b) => a.name.localeCompare(b.name));
   return {
     repo: problem.repo ? path.resolve(problem.repo) : null,

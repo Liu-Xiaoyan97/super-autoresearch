@@ -6,7 +6,7 @@ RSI 的研究问题配置都在 **Problem JSON fixture** 里。RSI 是深度集�
 
 | 你要定义的东西 | 字段 | 例子 |
 |---|---|---|
-| 指标 | `metrics` | `{"name":"mse","direction":"min","tolerance":0.01}` |
+| 指标 | `metrics` | `[{"name":"mse","dataset":"dev","direction":"min","tolerance":0.01}]` |
 | 研究方向 | `domain`、`subfield`、`directions`、`forbidden`、`constraints` | 见下方完整示例 |
 | 研究代码路径 | `repo`、`repo_ref`、`experiment_command` | `/repos/mamba`、`rsi-bench`、`bench/rsi_dfm_train_eval.py` |
 | 远程 GPU / 路径映射 | `remote` | `host`、`worktree`、`out`、`python`、`setup`、`gpu_ids` |
@@ -79,10 +79,19 @@ RSI 的研究问题配置都在 **Problem JSON fixture** 里。RSI 是深度集�
   "metrics": [
     {
       "name": "word_ppl",          // lm-eval wikitext word_perplexity
+      "dataset": "wikitext-2-raw-v1",
       "direction": "min",          // 越低越好
       "tolerance": 0.01,           // 1% 相对噪声带
       "weight": 1.0,
       "bounds": null
+    },
+    {
+      "name": "acc",               // lm-eval lambada_openai acc
+      "dataset": "lambada_openai",
+      "direction": "max",
+      "tolerance": 0.05,
+      "weight": 1.0,
+      "bounds": [0.0, 1.0]
     }
   ],
 
@@ -121,11 +130,13 @@ RSI 的研究问题配置都在 **Problem JSON fixture** 里。RSI 是深度集�
 
 | 位置 | 作用 |
 |---|---|
-| `Problem.metrics` | 唯一允许触发 promotion 的指标集合 |
+| `Problem.metrics` | 唯一允许触发 promotion 的指标集合；可以有多个 dataset 的多个指标 |
+| `metrics[].dataset` | 指标所属数据集；必须出现在 `datasets` 中。无 dataset 的指标可省略该字段 |
 | `metrics[0]` | **主指标**；subset 阶段还要额外满足 `subsetMargin`（默认 2%） |
 | `direction` + `tolerance` | `isStrictlyBetter()`：所有指标不得回退超过 tolerance，且至少一个改进超过 tolerance |
 | `bounds` | 模拟 runner 和 ablation 的 clamp；**真实 runner 不会被自动 clamp**，请在自己的 benchmark 里保证数值合法 |
-| benchmark 输出 | 必须包含 `metrics` 中的键；额外键会记录，但不参与门 |
+| benchmark 输出 | 必须包含所有 `metrics` 键，且不能有额外键；每个数据集由目标 adapter 的真实 evaluator 测量 |
+| selector | 按所有指标的加权 signed delta 排序，再按改进指标数和 novelty 排序 |
 | `reported_metrics` | 模拟/上下文；不是比较目标。subprocess 模式比较的是**测得的 baseline**（复现或已验证 incumbent） |
 
 实现：
@@ -210,11 +221,12 @@ node src/rsi/cli.ts run examples/my_problem.json --mock --strict-directions
 - benchmark 必须把 metrics 写到 `--out`：
 
 ```json
-{"metrics": {"word_ppl": 18.42}}
+{"metrics": {"word_ppl": 18.42, "acc": 0.42}}
 ```
 
-- `datasets` / `subset_datasets` 目前是 prompt/manuscript 元数据，**不会自动传给
-  benchmark**；需要时在 `experiment_command` 里自己加参数，或在 benchmark 内固定。
+- `datasets` / `subset_datasets` 描述完整和 subset 评测的数据集；`metrics[].dataset`
+  指向其中一个。它们不会自动变成 benchmark 命令行参数；目标 adapter 通过自己的
+  `remote.env` / 固定协议保证每个数据集真的被评测，并输出所有 metric 键。
 - 代码不会复制：`runs/<run_id>/worktree` 是唯一 checkout；
   候选是目标仓库里的 `rsi/<run_id>-<hash>/<label>-N` 分支 + commit。
 

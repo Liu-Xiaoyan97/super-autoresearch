@@ -21,16 +21,20 @@ protocol is genuinely unspecified or a resource decision is needed.
 
 **Definition of done:** real data → complete small-budget training → newly
 saved checkpoint → load that checkpoint → real lm-eval (or the fixture's real
-equivalent) inference → finite, exact metric report, through actual rsync/SSH.
-`--help`, mock tests, an existing checkpoint, and checkpoint-only eval cannot
-satisfy this gate. Small budget means a complete short run, not skipped stages.
+equivalent) inference on every declared dataset/metric pair → one finite,
+exact metric report, through actual rsync/SSH. `--help`, mock tests, an existing
+checkpoint, and checkpoint-only eval cannot satisfy this gate. Small budget
+means a complete short run, not skipped stages.
 
 ## 1. Read the fixture and inspect the target
 
 Read the entire Problem JSON first. Extract `repo`, `repo_ref`, the exact
-`experiment_command`, scopes/datasets, metric names/direction/bounds, forbidden
-changes, `remote` host/Python/GPU/env/setup/excludes/timeouts and output paths.
-Use fixture paths as hints, not proof that they match the actual target.
+`experiment_command`, scopes, every dataset and every metric's `name`,
+`dataset`, `direction`, `tolerance` and `bounds`, forbidden changes, `remote`
+host/Python/GPU/env/setup/excludes/timeouts and output paths. A metric with a
+`dataset` belongs to that dataset; a fixture may evaluate several datasets and
+several metrics in one report. Use fixture paths as hints, not proof that they
+match the actual target.
 
 Inspect actual train/eval CLI, data loader/schema/split, model and checkpoint
 loader, metric implementation/artifact and existing tests **before writing**.
@@ -39,8 +43,8 @@ Use structural navigation where available, then file reads/search. Record:
 ```text
 source commit / dirty changes:
 real train command and required arguments:
-real eval command and metric JSON key:
-dataset schema, split and path on execution host:
+real eval command and metric JSON key(s), one per declared dataset:
+dataset schema, split and path for every declared dataset on the execution host:
 checkpoint save and reload format:
 tokenizer/model/cache assets on execution host:
 subset and full budgets / unchanged metric protocol:
@@ -103,10 +107,12 @@ The adapter contract is:
    subset scope, add explicit validated per-scope budget configuration; record
    actual budget. Keep the original real scoring math, task and normalization.
    Never rename checkpoints or bypass integrity checks to make it pass.
-6. For lm-eval use the fixed real task and its own metric, e.g.
-   `results[task]["word_perplexity,none"]`, mapped to the exact fixture key.
-   Reject missing/extra keys, booleans, strings, nonfinite or out-of-bounds
-   values; do not clamp, reuse stale reports or substitute reported_metrics.
+6. For each declared dataset use its fixed real task and metric, for example
+   `results["wikitext"]["word_perplexity,none"]` → `word_ppl` and
+   `results["lambada_openai"]["acc,none"]` → `acc`. Reject missing/extra keys,
+   booleans, strings, nonfinite or out-of-bounds values; do not clamp, reuse
+   stale reports or substitute reported_metrics. Cross-check every summary
+   value against the raw evaluator output.
 7. Keep offline dependencies/assets local; no implicit network fallback. Respect
    `CUDA_VISIBLE_DEVICES`; device indices are relative to the assigned devices.
 8. Write success and failure reports atomically; any failure exits nonzero with
@@ -132,8 +138,10 @@ Success report includes auditable pipeline details:
 }
 ```
 
-The numbers above are schema examples, never measurement evidence. On failure:
-`{"status":"failed","metrics":{},"error":"actual cause"}`.
+The numbers above are schema examples, never measurement evidence. The report
+must contain every declared metric name exactly once, no extras, and each
+dataset's evaluator must use that dataset's fixed task/split/tokenizer. On
+failure: `{"status":"failed","metrics":{},"error":"actual cause"}`.
 
 Also add a **real measured diagnosis** owned by the target:
 `bench/rsi_<project>_diagnose.py` (or an existing analysis command) that reads

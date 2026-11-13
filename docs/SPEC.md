@@ -486,7 +486,7 @@ A fixture is a plain serialized `Problem` (see `types.Problem`), e.g.:
   "source_paper": "X-Mahalanobis (Wei et al., 2025)",
   "datasets": ["cifar10", "cifar100", "imagenet-r"],
   "subset_datasets": ["cifar10"],
-  "metrics": [{"name": "auroc", "direction": "max", "tolerance": 0.002}],
+  "metrics": [{"name": "auroc", "dataset": "cifar10", "direction": "max", "tolerance": 0.002}],
   "reported_metrics": {"auroc": 0.87},
   "directions": [{"id": "d1", "title": "geometric alignment", "weight": 1.0}],
   "forbidden": ["retraining the encoder"]
