@@ -69,6 +69,7 @@ export interface LedgerSnapshot {
   runs: LedgerRun[];
   families: LedgerFamily[];
   experiments: LedgerExperiment[];
+  parent_warnings: string[];
 }
 
 export interface LedgerOptions {
@@ -564,6 +565,51 @@ function resolveParents(experiments: LedgerExperiment[]): void {
   // definition changes, where that is the actual lineage.
 }
 
+/** Check the lineage invariants before drawing any edge. */
+export function validateParents(experiments: LedgerExperiment[]): string[] {
+  const byId = new Map(experiments.map((item) => [item.id, item]));
+  const warnings: string[] = [];
+  for (const item of experiments) {
+    if (item.kind === "baseline") {
+      if (item.parent_id) warnings.push(`${item.id}: baseline has parent ${item.parent_id}`);
+      continue;
+    }
+    if (!item.parent_id) {
+      warnings.push(`${item.id}: ${item.kind} has no parent`);
+      continue;
+    }
+    const parent = byId.get(item.parent_id);
+    if (!parent) {
+      warnings.push(`${item.id}: parent ${item.parent_id} is missing`);
+      continue;
+    }
+    if (parent.id === item.id) warnings.push(`${item.id}: self-parent`);
+    if (item.kind === "candidate" && parent.kind !== "baseline") {
+      warnings.push(`${item.id}: candidate parent is ${parent.kind}, expected baseline`);
+    }
+    if (item.kind === "engineer" && !["candidate", "engineer", "full"].includes(parent.kind)) {
+      warnings.push(`${item.id}: engineer parent is ${parent.kind}`);
+    }
+    if (item.kind === "full" && !["candidate", "engineer", "full"].includes(parent.kind)) {
+      warnings.push(`${item.id}: full parent is ${parent.kind}`);
+    }
+    if (item.kind === "full" && item.edge !== "dashed") {
+      warnings.push(`${item.id}: subset→full edge must be dashed`);
+    }
+    const seen = new Set([item.id]);
+    let cursor: LedgerExperiment | undefined = parent;
+    while (cursor) {
+      if (seen.has(cursor.id)) {
+        warnings.push(`${item.id}: parent cycle through ${cursor.id}`);
+        break;
+      }
+      seen.add(cursor.id);
+      cursor = cursor.parent_id ? byId.get(cursor.parent_id) : undefined;
+    }
+  }
+  return warnings.sort();
+}
+
 function mergeExperiments(pending: PendingExperiment[]): LedgerExperiment[] {
   const map = new Map<string, LedgerExperiment>();
   for (const item of pending) {
@@ -683,6 +729,9 @@ function markdown(snapshot: LedgerSnapshot): string {
   ];
   for (const item of snapshot.experiments) {
     lines.push(`| ${item.family_label} | ${item.kind} | ${item.idea_id} | ${item.scope} | ${item.core.replace(/\|/g, "\\|")} | ${metricText(item.metrics)} | ${item.decision}${item.selected ? " + selected" : ""} | ${item.commit?.slice(0, 10) ?? item.label} | ${item.run_ids.join(", ")} |`);
+  }
+  if (snapshot.parent_warnings.length) {
+    lines.push("", "## Parent validation warnings", "", ...snapshot.parent_warnings.map((item) => `- ${item}`));
   }
   lines.push("", "## Graph", "", "See [`graph.md`](graph.md) and [`tree.txt`](tree.txt).", "");
   return lines.join("\n");
@@ -839,6 +888,7 @@ export function refreshLedger(options: LedgerOptions): LedgerSnapshot {
     item.family_label = family.label;
   }
   resolveParents(experiments);
+  const parentWarnings = validateParents(experiments);
   const families = familyNodes(familyMap);
   const project = runs[0]?.problem.id ?? path.basename(projectRoot);
   const snapshot: LedgerSnapshot = {
@@ -849,6 +899,7 @@ export function refreshLedger(options: LedgerOptions): LedgerSnapshot {
     runs: runRows,
     families,
     experiments,
+    parent_warnings: parentWarnings,
   };
   const jsonText = `${JSON.stringify(snapshot, null, 2)}\n`;
   const graphFamilies = families;
@@ -867,6 +918,7 @@ export function refreshLedger(options: LedgerOptions): LedgerSnapshot {
     nodes: lineageNodes(project, experiments),
     families,
     runs: runRows,
+    parent_warnings: parentWarnings,
   };
   renderLineage(ledgerDir, lineage);
   return snapshot;

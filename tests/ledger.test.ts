@@ -135,5 +135,6 @@ test("candidate and engineer generations are linked, and subset→full is dashed
   assert.equal(engineerNode.parent_id, candidateNode.id);
   assert.equal(fullNode.parent_id, engineerNode.id);
   assert.equal(fullNode.edge, "dashed");
+  assert.deepEqual(snapshot.parent_warnings, [], "every lineage edge must satisfy its parent invariant");
   assert.notEqual(engineerNode.family_id, candidateNode.family_id, "model-definition change is a new family");
 });

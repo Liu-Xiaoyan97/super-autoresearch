@@ -225,7 +225,11 @@ project
 - `engineer` 是 candidate 的下一代，记录 repair/core idea；
 - candidate/engineer 都会记录核心思路（来自 provenance patch 的 Mechanism/Hypothesis/Critique）；
 - initial full-set 节点用**虚线**连接最后一个 subset candidate/engineer 节点；
-- `provenance-*.json` 里的实验也会进入台账，因此即使 run 因失败没有写入 `state.traces`，candidate/engineer 仍会保留。
+- `provenance-*.json` 和编号 `remote-*.json` 里的实验都会进入台账，因此即使 run 因失败没有写入 `state.traces`，candidate/engineer 仍会保留；
+- 只有真实 remote/provenance 结果或后续触发逻辑出现时才加入下一个版本；未观察到结果的分支不会被提前画入族谱；
+- PNG 会把同一代码版本的 seed 复验合并为一个节点并在详情中列出所有 seed 数值，`ledger.json` / `experiments.jsonl` 仍保留每个实验；
+- 每次真实实验返回（包括 failed）后立即刷新台账；
+- `ledger.json` 的 `parent_warnings` 会校验父节点、cycle、candidate/engineer/full 关系和 subset→full 虚线，正常应为空。
 
 - **同族判定**：比较目标仓库中模型定义文件的 git blob，不比较 commit 或阶段配置。
   `RSI_CORAL_MODEL_FILE` 指向的文件不变时，E/H、LR、batch、steps、优化器等超参数变化都属于同族；
