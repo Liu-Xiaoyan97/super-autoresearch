@@ -771,7 +771,13 @@ function stagesFromProgress(summary: string | undefined, facts: RunFacts): Set<S
   if (text.startsWith("diagnose")) return new Set<Stage>(["diagnose"]);
   if (text.includes("extracting limitations")) return new Set<Stage>(["limits"]);
   if (text.includes("generating seed ideas")) return new Set<Stage>(["seeds"]);
-  if (text.includes("reproducing the baseline")) return new Set<Stage>(["baseline"]);
+  if (
+    text.includes("reproducing the baseline") ||
+    text.includes("baseline ready") ||
+    text.includes("measuring the baseline")
+  ) {
+    return new Set<Stage>(["baseline"]);
+  }
   if (text.includes("searching ideas") || text.startsWith("§3.2 round")) return new Set<Stage>(["search"]);
   if (text.includes("selecting the incumbent")) return new Set<Stage>(["select"]);
   if (text.includes("running ablations")) return new Set<Stage>(["ablations"]);

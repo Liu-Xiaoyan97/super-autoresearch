@@ -289,7 +289,7 @@ export class Orchestrator {
   private async diagnose(): Promise<void> {
     if (!this.ctx.problem.diagnose_command) return;
     if (this.state.diagnosis?.findings.length) return;
-    progress(this.ctx, "diagnose: measuring the reproduced baseline");
+    progress(this.ctx, "diagnose: measuring the baseline");
     const code = this.state.baseline?.code;
     if (!this.ctx.problem.repo || !code?.repo || !code.commit) {
       throw new ScientificAbort("diagnosis_requires_baseline");
@@ -451,22 +451,29 @@ export class Orchestrator {
   }
 
   private async baseline(): Promise<void> {
-    progress(this.ctx, "§3.2 reproducing the baseline");
     this.ctx.budget.check();
     const baselineOk =
       !!this.state.baseline &&
       evidenceOk(this.state.baseline) &&
       Object.keys(this.state.baseline.metrics).length > 0;
+    const fullOk =
+      !!this.state.baselineFull &&
+      evidenceOk(this.state.baselineFull) &&
+      Object.keys(this.state.baselineFull.metrics).length > 0;
+    progress(
+      this.ctx,
+      baselineOk && fullOk
+        ? "§3.2 baseline ready (reused)"
+        : baselineOk
+          ? "§3.2 baseline ready (subset; full baseline lazy)"
+          : "§3.2 measuring the baseline",
+    );
     if (!baselineOk) {
       // A previous attempt may have recorded a failed subset baseline. Rerun
       // only that scope; a valid full baseline is still reusable.
       this.state.baseline = null;
       this.state.baseline = await this.agents.baselineCoder.reproduce({ scope: "subset" });
     }
-    const fullOk =
-      !!this.state.baselineFull &&
-      evidenceOk(this.state.baselineFull) &&
-      Object.keys(this.state.baselineFull.metrics).length > 0;
     if (!baselineOk || !fullOk) {
       this.state.baselineSource = baselineOk || fullOk ? "mixed" : "reproduced";
       this.state.baselinePath = "";
@@ -578,6 +585,7 @@ export class Orchestrator {
   }
 
   private async ideaSearch(): Promise<void> {
+    progress(this.ctx, "§3.2 searching ideas");
     // Depth: one measured defect, one candidate, measured once. Breadth keeps
     // the original N0 seed batch and evolution rounds.
     const depth = this.depthSearch();

@@ -133,6 +133,26 @@ test("stage rows follow the run's deliverables, not ended task tickets", () => {
   assert.equal(done.done, 1, "a completed reused baseline shows its declared task count");
 
   fs.writeFileSync(stateFile, JSON.stringify({
+    decision_path: ["limits.ok:66", "seeds:4", "baseline.ok"],
+    baseline: { metrics: { word_ppl: 1 } }, baseline_full: null, seeds: [{}, {}, {}, {}], limitations: [],
+  }));
+  const reused = statusOfSnapshot(
+    makeSnapshot([{ ...progress, summary: "§3.2 baseline ready (reused)" }]),
+    "run-1",
+    root,
+  ).stages.find((stage) => stage.stage === "baseline")!;
+  assert.equal(reused.state, "done", "a reused baseline is done without a task ticket");
+
+  const search = statusOfSnapshot(
+    makeSnapshot([{ ...progress, summary: "§3.2 searching ideas" }]),
+    "run-1",
+    root,
+  ).stages.find((stage) => stage.stage === "search")!;
+  assert.equal(search.state, "working", "idea-search progress selects the search stage");
+  assert.equal(search.tasks, 8);
+  assert.equal(search.done, 0);
+
+  fs.writeFileSync(stateFile, JSON.stringify({
     decision_path: ["limits.ok:66", "seeds:4"], baseline: null, baseline_full: null, seeds: [{}, {}, {}, {}], limitations: [],
   }));
   const failed = statusOfSnapshot(

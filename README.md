@@ -240,16 +240,26 @@ rm -rf /workspace/RSI/.rsi-baseline/coral-wikitext-ppl-*
 运行中的 run 会写到 Pi 的 footer status 和编辑器上方的 widget：
 
 ```text
-RSI <run_id> · §3.1 Seed ideas (3/3) · progress ...
+RSI <run_id> · §3.2–§3.3 Idea search (0/8) · §3.2 searching ideas
 ```
 
+- `·` 前是当前阶段和完成的任务数，`·` 后是最近一次 progress 消息；
 - 每秒刷新一次；
 - 多个 run 各占一行；
 - 需要人回答时显示 `NEEDS PERSON`；
 - run 完成、失败或停止后自动清除，不残留旧状态。
 
+baseline 进度会区分来源：
+
+```text
+§3.2 baseline ready (reused)                    # subset + full 都复用，不训练
+§3.2 baseline ready (subset; full baseline lazy) # subset 复用，full 等候选进入 full 时再测
+§3.2 measuring the baseline                     # 真正重新测量 baseline
+```
+
 `/rsi status` 里的 `progress:` 是最近一次阶段消息；真正的阶段状态以 stage rows 和
-`decision_path` 为准。阶段切换现在会立即上报，不再被 1.5 秒节流吞掉。
+`decision_path` 为准。阶段切换现在会立即上报，不再被 1.5 秒节流吞掉；进入 idea
+search 时也会显示 `§3.2 searching ideas`，不会停留在 baseline 文案。
 
 ## 常见失败
 
