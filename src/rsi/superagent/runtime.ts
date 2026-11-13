@@ -11,8 +11,8 @@
  *   list() / status(...)   read every run on disk, live or not
  *
  * An open run whose process is gone can resume from its durable state into a
- * new attempt. A run that already ended (completed, failed, or stopped) stays
- * readable; resuming an ended run is limited to the failed and aborted cases.
+ * new attempt. A run that already ended (completed) stays readable and is not
+ * resumed; failed, aborted and stopped runs resume from their checkpoint.
  */
 
 import fs from "node:fs";
@@ -697,20 +697,20 @@ export class SuperagentRuntime {
     // No live session in this runtime means the previous owner process is gone.
     // Its open state is a valid checkpoint; resume it as a new attempt.
     const orphanedOpen = !live && !ended;
-    // A person's stop is final even though interruption cleanup writes an
-    // aborted final while releasing the run.
-    const stopped = ended?.outcome === "stopped";
+    // A stop ends the run but never the person's authority over it: resume is
+    // itself a person's explicit request, so a stopped run can continue from
+    // its durable checkpoint like any aborted one.
     const resumable =
-      !stopped &&
-      (aborted ||
-        ended?.outcome === "failed" ||
-        ended?.outcome === "dropped" ||
-        ended?.outcome === "aborted" ||
-        failedOpen ||
-        orphanedOpen);
+      aborted ||
+      ended?.outcome === "failed" ||
+      ended?.outcome === "dropped" ||
+      ended?.outcome === "aborted" ||
+      ended?.outcome === "stopped" ||
+      failedOpen ||
+      orphanedOpen;
     if (!resumable) {
       if (live && !ended) throw new Error(`run ${runId} is still live; wait for it to end`);
-      throw new Error(`run ${runId} ended ${ended?.outcome ?? "without a final state"}; only aborted/failed runs can resume`);
+      throw new Error(`run ${runId} ended ${ended?.outcome ?? "without a final state"} and has no durable checkpoint to resume`);
     }
     // Attempt numbering reads the previous owner first: a live engine, then
     // the durable ticket log (an in-memory runtime may have neither).
