@@ -40,8 +40,31 @@ class WorkerReportError extends Error {
  * accepts a JSON object in `output`; this only rejects a report with no
  * answer at all, or with prose where the task requires JSON.
  */
+/** A report that repeats its own field name instead of saying anything. */
+const STUB_REPORT = /^(?:placeholder|stub|todo|tbd|n\/a|none|example|unknown|\.\.\.)$/i;
+
+function isStubReport(text: string): boolean {
+  const trimmed = text.trim().replace(/[.!?]+$/, "");
+  return !trimmed || STUB_REPORT.test(trimmed);
+}
+
 function reportProblem(envelope: WorkerReportEnvelope, schemaName?: string): string {
-  if (envelope.state !== "ready") return "";
+  if (envelope.state === "blocked") {
+    // A placeholder is never a question: rejecting it here makes the model
+    // answer in this turn instead of opening attention a person cannot use.
+    if (isStubReport(envelope.question ?? "")) {
+      return "state=blocked requires a concrete question in `question`; that value is a placeholder. " +
+        `Do the task and report its answer with state=ready, or ask the one real question a person must answer with ${REPORT_TOOL_NAME}.`;
+    }
+    return "";
+  }
+  if (envelope.state === "failed") {
+    if (isStubReport(envelope.summary)) {
+      return "state=failed requires a summary that names the real error; that value is a placeholder. " +
+        `Do the task and report its answer with state=ready.`;
+    }
+    return "";
+  }
   const text = outputText(envelope.output);
   if (!text.trim()) {
     return "state=ready requires the answer in output.text, but output.text is missing or empty. " +
