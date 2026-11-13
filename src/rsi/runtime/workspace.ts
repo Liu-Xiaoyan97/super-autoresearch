@@ -108,6 +108,8 @@ export interface Workspace {
   writePatch(repo: RepoRef, patch: string, label: string): Promise<RepoRef>;
   diff(a: RepoRef, b: RepoRef): Promise<string>;
   run(repo: RepoRef, scope: Scope, idea?: Idea | null, seed?: number): Promise<ExperimentResult>;
+  /** Called after each actual benchmark result, including failures. */
+  onExperimentResult?: () => void;
   /** Source context for coding agents (git tree + relevant files at a commit). */
   brief?(repo: RepoRef, query?: string, maxChars?: number): string;
 }
@@ -794,6 +796,7 @@ function tokensOf(text: string): Set<string> {
 
 export class GitWorkspace implements Workspace {
   readonly problem: Problem;
+  onExperimentResult?: () => void;
   readonly config: Config;
   readonly root: string;
   readonly store: ArtifactStore;
@@ -1030,6 +1033,11 @@ export class GitWorkspace implements Workspace {
       commit: repo.commit,
       branch: repo.branch,
     });
+    try {
+      this.onExperimentResult?.();
+    } catch {
+      /* ledger refresh must never fail an experiment */
+    }
     return result;
   }
 

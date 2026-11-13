@@ -105,18 +105,18 @@ def main() -> int:
     max_depth = max(depth.values(), default=0)
     max_x = max(x.values(), default=0)
     spacing = 8.2
-    fig = plt.figure(figsize=(max(16, (max_x + 1) * spacing * .82), max(12, (max_depth + 1) * 3.5 + 3.2)), facecolor="#f7f9fc")
+    fig = plt.figure(figsize=(max(16, (max_x + 1) * spacing * .82), max(12, (max_depth + 1) * 5.0 + 3.2)), facecolor="#f7f9fc")
     ax = fig.add_axes([0.035, 0.18, 0.93, 0.70])
     ax.set_xlim(-1.2, max_x * spacing + 9.0)
-    ax.set_ylim(-max_depth * 3.0 - 3.2, 1.2)
+    ax.set_ylim(-max_depth * 4.6 - 3.4, 1.2)
     ax.axis("off")
 
     for node in nodes.values():
         parent = node.get("parent")
         if parent not in nodes or parent == node["id"]:
             continue
-        x1, y1 = x[parent] * spacing, -depth[parent] * 3.0
-        x2, y2 = x[node["id"]] * spacing, -depth[node["id"]] * 3.0
+        x1, y1 = x[parent] * spacing, -depth[parent] * 4.6
+        x2, y2 = x[node["id"]] * spacing, -depth[node["id"]] * 4.6
         mid = y2 + 0.45
         line_style = (0, (4, 3)) if node.get("edge") == "dashed" else "solid"
         line_color = "#6f8fa8" if node.get("edge") == "dashed" else "#b9c6d4"
@@ -129,7 +129,7 @@ def main() -> int:
         color = COLORS.get(kind, "#187c91")
         size = 135 if kind in ("root", "family") else 92
         xnode = x[node["id"]] * spacing
-        ynode = -depth[node["id"]] * 1.1
+        ynode = -depth[node["id"]] * 4.6
         if kind == "family":
             ax.scatter([xnode], [ynode], s=size, marker="s", facecolor=color, edgecolor=color, zorder=3)
         else:
@@ -142,10 +142,10 @@ def main() -> int:
         core = str(node.get("core", ""))
         label_lines = textwrap.wrap(label, width=30, break_long_words=False) or [label]
         detail_lines = textwrap.wrap((core + ("\n" if core else "") + detail), width=52, break_long_words=False) or [detail]
-        ax.text(xnode + 0.28, ynode + 0.18, "\n".join(label_lines[:2]),
+        ax.text(xnode + 0.28, ynode, "\n".join(label_lines[:2]),
                 fontsize=9.5, color="#22364b", va="center", ha="left", weight="bold", zorder=4)
-        ax.text(xnode + 0.28, ynode - 0.34, "\n".join(detail_lines[:6]),
-                fontsize=8.0, color="#5f7085", va="top", ha="left", zorder=4)
+        ax.text(xnode + 0.28, ynode - 0.38, "\n".join(detail_lines[:4]),
+                fontsize=7.8, color="#5f7085", va="top", ha="left", zorder=4)
 
     fig.text(0.035, 0.962, "RSI Experiment Lineage (stump tree)", fontsize=22, weight="bold", color="#25364b")
     fig.text(0.035, 0.928,

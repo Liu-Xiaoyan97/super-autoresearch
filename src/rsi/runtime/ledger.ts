@@ -437,51 +437,6 @@ function collectRun(state: RunState): PendingExperiment[] {
     if (item.commit && remoteCommits.has(item.commit)) out.splice(index, 1);
   }
 
-  // A branch created for the next verification may not have a remote-*.json
-  // yet. Include it as a pending node so the lineage is current while the job
-  // is still running.
-  const gitRepo = state.problem.repo ? path.resolve(state.problem.repo) : null;
-  if (gitRepo) {
-    try {
-      const refs = spawnSync("git", ["-C", gitRepo, "for-each-ref", "--format=%(refname:short)%09%(objectname)", "refs/heads/rsi"], { encoding: "utf8", timeout: 5000 });
-      for (const line of (refs.status === 0 ? refs.stdout : "").split("\n").filter(Boolean)) {
-        const [branch, commit] = line.split("\t");
-        if (!branch?.startsWith(`rsi/${state.runId}-`)) continue;
-        if (!commit || remoteCommits.has(commit) || out.some((item) => item.commit === commit)) continue;
-        const label = branch.split("/").at(-1) ?? branch;
-        const kind: LedgerKind = /engineer|engineered|-eng-/i.test(label) ? "engineer" : /full/i.test(label) ? "full" : "candidate";
-        const parent = (() => {
-          try {
-            const shown = spawnSync("git", ["-C", gitRepo, "show", "-s", "--format=%P", commit], { encoding: "utf8", timeout: 5000 });
-            return shown.status === 0 ? (shown.stdout.trim().split(/\s+/)[0] || null) : null;
-          } catch { return null; }
-        })();
-        const ideaId = string((array(state.state.seeds)[0] as Record<string, unknown> | undefined)?.id) ?? "experiment";
-        const verifyingLabel = `v10 pending ${kind} ${ideaId} (${label})`;
-        const evidence: Evidence = {
-          idea_id: ideaId,
-          scope: "subset",
-          metrics: {},
-          baseline_metrics: {},
-          code: { path: "", label: verifyingLabel, parent: parent ?? baselineCommit("subset"), patch: "", commit },
-          result: null,
-          label: verifyingLabel,
-          samples: [],
-        };
-        addEvidence(out, state, evidence, kind, {
-          ideaId,
-          parentCommit: parent ?? baselineCommit("subset"),
-          decision: "verifying",
-          edge: kind === "full" ? "dashed" : "solid",
-          core: `verifying: ${label}`,
-          timestamp: new Date().toISOString(),
-        });
-      }
-    } catch {
-      /* branch discovery is best effort */
-    }
-  }
-
   // Seeds that have not reached a measured trace are still part of the run's
   // experiment tree; show them as pending leaves instead of dropping them.
   const evaluated = new Set(array(state.state.evaluated_ids).map(String));

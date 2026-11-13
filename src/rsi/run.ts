@@ -340,6 +340,9 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
     signal: opts.signal,
     onProgress: opts.onProgress,
   };
+  if (config.runner !== "simulated") {
+    workspace.onExperimentResult = () => refreshLedgerFromContext(ctx);
+  }
 
   try {
     const orchestrator = new Orchestrator(ctx, undefined, resumedState);

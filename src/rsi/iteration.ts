@@ -22,6 +22,7 @@ import {
   incumbentFileFor, loadIncumbent, protocolFingerprint, writeIncumbent, type IncumbentLedger,
 } from "./runtime/incumbent.ts";
 import { Budget, BudgetExceeded } from "./runtime/budget.ts";
+import { refreshLedgerFromContext } from "./runtime/ledger.ts";
 import { ArtifactStore, TraceStore, type TraceRecord } from "./runtime/store.ts";
 import {
   GitWorkspace, RemoteRunner, SubprocessRunner, evidenceFromResult, extractUnifiedDiff,
@@ -449,6 +450,7 @@ export async function runIteration(opts: IterationOptions): Promise<IterationRes
   };
   const ctx: AgentContext = { problem, config, llm: wrapped, workspace: guarded, store, traces, budget,
     scratch: {}, projectRoot: cwd, signal, onProgress: opts.onProgress };
+  if (config.runner !== "simulated") native.onExperimentResult = () => refreshLedgerFromContext(ctx);
   store.writeJson("problem.json", problem);
   store.writeJson("config.json", config);
   try {
