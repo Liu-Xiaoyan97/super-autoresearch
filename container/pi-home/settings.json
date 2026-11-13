@@ -9,5 +9,6 @@
     "/workspace/RSI",
     "npm:pi-web-search"
   ],
-  "lastChangelogVersion": "1.5.2"
+  "lastChangelogVersion": "1.5.2",
+  "sessionDir": ".rsi/pi-sessions"
 }

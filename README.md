@@ -82,6 +82,49 @@ pi
 /rsi help
 ```
 
+### Pi session 存在项目里
+
+容器里的 `container/pi-home/settings.json` 已设置：
+
+```json
+"sessionDir": ".rsi/pi-sessions"
+```
+
+这是相对路径，按当前工作目录解析；容器内就是：
+
+```text
+/workspace/RSI/.rsi/pi-sessions
+```
+
+它同时映射回宿主机仓库根目录下的：
+
+```text
+<repo>/.rsi/pi-sessions
+```
+
+所以容器重建、换 `docker exec` 都能继续同一批 session。
+
+```bash
+# 继续当前项目最近的 session
+docker exec -it \
+  -e RSI_SUPERAGENT_POLICY=yolo \
+  -w /workspace/RSI \
+  pi-agent-rsi pi -c
+
+# 选择 session
+docker exec -it \
+  -e RSI_SUPERAGENT_POLICY=yolo \
+  -w /workspace/RSI \
+  pi-agent-rsi pi -r
+```
+
+旧的容器 session 已经迁移到 `.rsi/pi-sessions/`。这些文件包含聊天和工具输出，已在
+`.gitignore` 中忽略，不会提交。
+
+宿主机 Pi 默认仍用 `~/.pi/agent`；如果你也想让宿主机 Pi 和容器共享，在宿主机的
+`~/.pi/agent/settings.json` 里设置同样的 `"sessionDir": ".rsi/pi-sessions"`，并从仓库
+根目录启动 Pi。
+
 ## 使用：coral-rsi
 
 目标仓库在容器内是 `/repos/coral-rsi`，远端是 `8818:/home/sl/coral-rsi`。
