@@ -183,9 +183,8 @@ function ideaCore(idea: unknown, fallback = ""): string {
 function coreFromEvidence(evidence: Evidence, fallback: string): string {
   const patch = evidence.code?.patch ?? "";
   const mechanism = /^Mechanism:\s*(.+)$/m.exec(patch)?.[1]?.trim() ?? "";
-  const hypothesis = /^Hypothesis:\s*(.+)$/m.exec(patch)?.[1]?.trim() ?? "";
   const critique = /^Critique:\s*(.+)$/m.exec(patch)?.[1]?.trim() ?? "";
-  const text = [mechanism, hypothesis, critique ? `repair: ${critique}` : ""].filter(Boolean).join(" · ");
+  const text = [mechanism, critique ? `repair: ${critique}` : ""].filter(Boolean).join(" · ");
   return (text || fallback).replace(/\s+/g, " ").slice(0, 260);
 }
 
@@ -354,6 +353,133 @@ function collectRun(state: RunState): PendingExperiment[] {
       timestamp: (() => { try { return fs.statSync(file).mtime.toISOString(); } catch { return state.updatedAt; } })(),
     });
     if (commit) lastIdeaCommit.set(`${ideaId}:${scope}`, commit);
+  }
+
+  // Actual remote attempts are the primary experiment records. A run can
+  // overwrite its in-memory trace (or fail before writing one), but the
+  // remote-*.json files retain every numbered attempt and its measured result.
+  const remoteDir = path.join(state.root, "artifacts", "experiments");
+  const remoteFiles = (() => {
+    try {
+      return fs.readdirSync(remoteDir)
+        .filter((name) => /^remote-\d+\.json$/.test(name))
+        .map((name) => path.join(remoteDir, name))
+        .sort((a, b) => a.localeCompare(b));
+    } catch {
+      return [];
+    }
+  })();
+  const provenanceMeta = new Map<string, { ideaId: string; label: string; kind: LedgerKind; core: string }>();
+  for (const item of out) {
+    if (item.commit && (item.kind === "candidate" || item.kind === "engineer" || item.kind === "full")) {
+      provenanceMeta.set(item.commit, { ideaId: item.idea_id, label: item.label, kind: item.kind, core: item.core });
+    }
+  }
+  const remoteEntries = remoteFiles.map((file) => {
+    const raw = readJson(file) as Record<string, unknown> | null;
+    const command = string(raw?.command);
+    const result = record(raw?.result);
+    const commit = /--commit\s+([0-9a-f]+)/i.exec(command)?.[1] ?? "";
+    const seed = /RSI_CORAL_SEED=(\d+)/.exec(command)?.[1] ?? "";
+    const scope = /--scope\s+(\w+)/.exec(command)?.[1] ?? "subset";
+    const version = Number(/(\d+)\.json$/.exec(file)?.[1] ?? 0);
+    return { file, raw, result, commit, seed, scope, version };
+  }).filter((item) => item.commit && item.version > 0).sort((a, b) => a.version - b.version);
+  const remoteCommits = new Set(remoteEntries.map((item) => item.commit));
+  const provenanceCount = out.length;
+  const commitOrder: string[] = [];
+  const commitParent = new Map<string, string | null>();
+  for (const item of remoteEntries) {
+    if (!commitOrder.includes(item.commit)) {
+      const previous = commitOrder.at(-1) ?? null;
+      commitOrder.push(item.commit);
+      commitParent.set(item.commit, previous ?? baseline?.code?.commit ?? null);
+    }
+  }
+  for (const item of remoteEntries) {
+    const meta = provenanceMeta.get(item.commit);
+    const kind: LedgerKind = item.scope === "full"
+      ? "full"
+      : item.commit === commitOrder[0] ? "candidate" : "engineer";
+    const ideaId = meta?.ideaId ?? string((array(state.state.seeds)[0] as Record<string, unknown> | undefined)?.id) ?? "experiment";
+    const parent = commitParent.get(item.commit) ?? baseline?.code?.commit ?? null;
+    const label = `v${item.version} ${kind} ${ideaId}${item.seed ? ` seed ${item.seed}` : ""}`;
+    const status = string(item.result.status) || "failed";
+    const metrics = record(item.result.metrics);
+    const evidence: Evidence = {
+      idea_id: ideaId,
+      scope: item.scope as Evidence["scope"],
+      metrics: Object.fromEntries(Object.entries(metrics).filter(([, value]) => Number.isFinite(Number(value))).map(([key, value]) => [key, Number(value)])),
+      baseline_metrics: {},
+      code: {
+        path: string((item.raw as Record<string, unknown> | null)?.remote_worktree),
+        label,
+        parent,
+        patch: "",
+        commit: item.commit,
+      },
+      result: item.result as unknown as Evidence["result"],
+      label,
+      samples: [],
+    };
+    addEvidence(out, state, evidence, kind, {
+      ideaId,
+      parentCommit: parent,
+      decision: status === "ok" ? "measured" : status,
+      edge: kind === "full" ? "dashed" : "solid",
+      core: meta?.core ?? `${kind === "candidate" ? "candidate" : "engineer"}: ${ideaId} · ${label}`,
+      timestamp: (() => { try { return fs.statSync(item.file).mtime.toISOString(); } catch { return state.updatedAt; } })(),
+    });
+  }
+  // Drop provenance aggregate duplicates for commits with numbered remotes.
+  for (let index = provenanceCount - 1; index >= 0; index -= 1) {
+    const item = out[index];
+    if (item.commit && remoteCommits.has(item.commit)) out.splice(index, 1);
+  }
+
+  // A branch created for the next verification may not have a remote-*.json
+  // yet. Include it as a pending node so the lineage is current while the job
+  // is still running.
+  const gitRepo = state.problem.repo ? path.resolve(state.problem.repo) : null;
+  if (gitRepo) {
+    try {
+      const refs = spawnSync("git", ["-C", gitRepo, "for-each-ref", "--format=%(refname:short)%09%(objectname)", "refs/heads/rsi"], { encoding: "utf8", timeout: 5000 });
+      for (const line of (refs.status === 0 ? refs.stdout : "").split("\n").filter(Boolean)) {
+        const [branch, commit] = line.split("\t");
+        if (!branch?.startsWith(`rsi/${state.runId}-`)) continue;
+        if (!commit || remoteCommits.has(commit) || out.some((item) => item.commit === commit)) continue;
+        const label = branch.split("/").at(-1) ?? branch;
+        const kind: LedgerKind = /engineer|engineered|-eng-/i.test(label) ? "engineer" : /full/i.test(label) ? "full" : "candidate";
+        const parent = (() => {
+          try {
+            const shown = spawnSync("git", ["-C", gitRepo, "show", "-s", "--format=%P", commit], { encoding: "utf8", timeout: 5000 });
+            return shown.status === 0 ? (shown.stdout.trim().split(/\s+/)[0] || null) : null;
+          } catch { return null; }
+        })();
+        const ideaId = string((array(state.state.seeds)[0] as Record<string, unknown> | undefined)?.id) ?? "experiment";
+        const verifyingLabel = `v10 pending ${kind} ${ideaId} (${label})`;
+        const evidence: Evidence = {
+          idea_id: ideaId,
+          scope: "subset",
+          metrics: {},
+          baseline_metrics: {},
+          code: { path: "", label: verifyingLabel, parent: parent ?? baselineCommit("subset"), patch: "", commit },
+          result: null,
+          label: verifyingLabel,
+          samples: [],
+        };
+        addEvidence(out, state, evidence, kind, {
+          ideaId,
+          parentCommit: parent ?? baselineCommit("subset"),
+          decision: "verifying",
+          edge: kind === "full" ? "dashed" : "solid",
+          core: `verifying: ${label}`,
+          timestamp: new Date().toISOString(),
+        });
+      }
+    } catch {
+      /* branch discovery is best effort */
+    }
   }
 
   // Seeds that have not reached a measured trace are still part of the run's
@@ -629,8 +755,8 @@ interface LineageNode {
   family: string;
 }
 
-/** Org-chart input: project → model-definition family → experiments. */
-function lineageNodes(project: string, families: LedgerFamily[], experiments: LedgerExperiment[]): LineageNode[] {
+/** Org-chart input: project → model-definition family → grouped experiments. */
+function lineageNodes(project: string, experiments: LedgerExperiment[]): LineageNode[] {
   const nodes: LineageNode[] = [{
     id: "project",
     label: project,
@@ -641,38 +767,59 @@ function lineageNodes(project: string, families: LedgerFamily[], experiments: Le
     core: "",
     family: "",
   }];
-  const familyNode = new Map<string, string>();
-  for (const family of families) {
-    const id = `family-${family.id}`;
-    familyNode.set(family.id, id);
-    nodes.push({
-      id,
-      label: family.label,
-      detail: `${family.experiments} experiment${family.experiments === 1 ? "" : "s"} · same model definition`,
-      kind: "family",
-      parent: "project",
-      edge: "solid",
-      core: "",
-      family: family.id,
-    });
-  }
+
+  // Several remote seeds share one code commit. Keep every measurement in
+  // ledger.json, but draw one compact family-tree node per code version with
+  // all seed values in its detail.
+  const groups = new Map<string, LedgerExperiment[]>();
   for (const item of experiments) {
-    const fallback = familyNode.get(item.family_id) ?? "project";
-    const parent = item.kind === "baseline" ? fallback : item.parent_id ?? fallback;
-    const label = item.kind === "baseline"
-      ? `baseline ${item.scope} · ${item.commit?.slice(0, 8) ?? item.label}`
-      : `${item.kind} ${item.idea_id}`;
-    nodes.push({
-      id: item.id,
-      label,
-      detail: [metricText(item.metrics), item.decision, item.selected ? "SELECTED" : "", item.commit?.slice(0, 8) ?? item.label]
-        .filter(Boolean).join(" · "),
-      kind: item.kind,
+    const key = `${item.kind}|${item.scope}|${item.commit ?? item.label}|${item.idea_id}`;
+    const list = groups.get(key) ?? [];
+    list.push(item);
+    groups.set(key, list);
+  }
+  const groupId = new Map<string, string>();
+  const groupByExperiment = new Map<string, string>();
+  for (const [key, items] of groups) {
+    const id = `group-${hash(key).slice(0, 12)}`;
+    for (const item of items) {
+      groupId.set(item.id, id);
+      groupByExperiment.set(item.id, id);
+    }
+  }
+  for (const items of groups.values()) {
+    const first = items[0];
+    const id = groupId.get(first.id)!;
+    const parentExp = first.parent_id;
+    const parent = parentExp ? (groupByExperiment.get(parentExp) ?? "project") : "project";
+    const versions = [...new Set(items.map((item) => /^v(\d+)/.exec(item.label)?.[1]).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
+    const versionText = versions.length > 1 ? `v${versions[0]}-v${versions[versions.length - 1]}` : versions.length ? `v${versions[0]}` : "";
+    const metrics: Record<string, number[]> = {};
+    for (const item of items) for (const [name, value] of Object.entries(item.metrics)) {
+      if (!Number.isFinite(value)) continue;
+      (metrics[name] ??= []).push(value);
+    }
+    const metricText = Object.keys(metrics).sort().map((name) => {
+      const values = [...new Set(metrics[name].map((value) => Number(value.toFixed(6))))];
+      return `${name}=${values.slice(0, 4).join("/")}${metrics[name].length > 4 ? "/…" : ""}`;
+    }).join(", ") || "no metrics";
+    const labels = [...new Set(items.map((item) => item.label))].sort();
+    const decision = [...new Set(items.map((item) => item.decision))].join("/");
+    const selected = items.some((item) => item.selected);
+    const core = items.find((item) => item.core)?.core ?? "";
+    const kind = first.kind;
+    const edge = items.some((item) => item.edge === "dashed") ? "dashed" : "solid";
+    const node: LineageNode = {
+      id,
+      label: `${kind} ${first.idea_id}${versionText ? ` (${versionText})` : ""}`,
+      detail: [versionText, labels.length > 1 ? `${items.length} runs` : "", metricText, decision, `family ${first.family_id.replace(/^fam-/, "").slice(0, 8)}`, selected ? "SELECTED" : ""].filter(Boolean).join(" · "),
+      kind,
       parent,
-      edge: item.edge,
-      core: item.core,
-      family: item.family_id,
-    });
+      edge,
+      core,
+      family: first.family_id,
+    };
+    nodes.push(node);
   }
   return nodes;
 }
@@ -762,7 +909,7 @@ export function refreshLedger(options: LedgerOptions): LedgerSnapshot {
     updated_at: snapshot.updated_at,
     layout: "org-chart tree; y=inheritance level; one primary parent; families are model-definition blobs",
     family_rule: "same model-definition file blob = same family; hyperparameter-only changes remain in the family",
-    nodes: lineageNodes(project, graphFamilies, experiments),
+    nodes: lineageNodes(project, experiments),
     families,
     runs: runRows,
   };
