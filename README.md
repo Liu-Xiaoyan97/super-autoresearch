@@ -16,6 +16,166 @@ Pi 会话中执行；目标项目的训练、checkpoint、评测和指标代码�
 - **adapter 验收与研究运行分离**：adapter skill 只验证“能训练、能存 checkpoint、
   能重载、能评测”；subset/full/paper 属于独立的 RSI 研究运行。
 
+## Superagent 上下游关系
+
+任务名就是 superagent task ticket。`→` 表示必须等待的上游，`∥` 表示同一批
+独立任务并行。`diagnose.run` 是目标仓库的真实测量命令；`critic.compare` 和
+`critic.selector` 是确定性 gate，不产生模型 ticket。
+
+```text
+problem / repo_ref
+       │
+       ├─ 有 diagnose_command ──> code.baseline ──> diagnose.run
+       │                                              │
+       │                                              ▼
+       │                                      limitations.extract
+       │                                              │
+       │                                      limitations.verify
+       │                                              │
+       │                                      ideas.initial
+       │                                              │
+       │                                      ideas.novelty (批内 ∥)
+       │                                              │
+       │                                      ideas.expand
+       │                                              │
+       └─ 无 diagnose_command ──> limitations → seeds ─┘
+                                                      │
+                                                      ▼
+                                               code.baseline
+                                                      │
+                                               code.implement
+                                                      │
+                                               code.subset
+                                                      │
+                                               critic.subset
+                                                 │        │
+                                                 │        └─ engineer.subset ──┐
+                                                 │                              │
+                                                 └────────────── loop ──────────┘
+                                                      │
+                                               code.full
+                                                      │
+                                               critic.full
+                                                 │        │
+                                                 │        └─ engineer.full ────┐
+                                                 │                              │
+                                                 └────────────── loop ──────────┘
+                                                      │
+                                               ideas.evolve (breadth rounds)
+                                                      │
+                                               critic.selector (确定性)
+                                                      │
+                                               critic.compare (确定性)
+                                                      │
+                                               ablation.plan
+                                                      │
+                                               code.ablation (每个 plan 串行)
+                                                      │
+                                               ablation.critic
+                                                      │
+                                      data gate / attribution
+                                                      │
+                                               write.draft
+                                                      │
+                                            review.peer ×3 (∥)
+                                                      │
+                                            review.rebuttal_plan
+                                                      │
+                                            code.rebuttal (每个 task 串行)
+                                                      │
+                                            write.enhance
+                                                      │
+                                            review.peer (下一轮)
+                                                      │
+                                               review.meta
+                                                 │          │
+                                            accept │          └─ engineer.full
+                                                 │                    │
+                                                 │             ablation / draft
+                                                 │
+                                     integrity.spec (每个 good trace)
+                                     integrity.refs ∥ integrity.method_code
+                                                 │
+                                               export
+```
+
+### 并行组
+
+| 并行任务 | 上游 | 下游 |
+|---|---|---|
+| `review.peer` × 3 | `write.draft`、当前 manuscript | 聚合 review → `review.rebuttal_plan` |
+| `ideas.novelty`（同批 seed/evolved） | `ideas.initial` / `ideas.expand` | seed pool / 下一轮 search |
+| `integrity.refs` ∥ `integrity.method_code` | manuscript、best code、incumbent evidence | final integrity / acceptance |
+
+### 串行链路与上下游
+
+| 串行任务 | 上游 | 下游 |
+|---|---|---|
+| `code.baseline` | `Problem.repo_ref`、baseline 配置 | `diagnose.run` 或 search |
+| `diagnose.run` | reproduced baseline | limitations、seeds |
+| `limitations.extract` | diagnosis / baseline / constraints | `limitations.verify` |
+| `limitations.verify` | extracted limitations | `ideas.initial` |
+| `ideas.initial` | verified limitations | `ideas.novelty` |
+| `ideas.expand` | limitations、已有 seed pool | `ideas.novelty`、search |
+| `code.implement` | selected seed idea、baseline | `code.subset` |
+| `code.subset` | implementation patch、subset budget | `critic.subset` |
+| `critic.subset` | subset evidence vs subset baseline | `engineer.subset` 或 `code.full` |
+| `engineer.subset` | subset critic feedback | `critic.subset` |
+| `code.full` | subset-good candidate、full budget | `critic.full` |
+| `critic.full` | full evidence vs full baseline | `engineer.full` 或 selector |
+| `engineer.full` | full critic / meta-review feedback | `critic.full` 或 re-adopt |
+| `ideas.evolve` | traces from a search round | next round candidates |
+| `critic.selector` | all full-set good traces | `critic.compare` / ablations |
+| `critic.compare` | candidate evidence、baseline/incumbent | adopt/reject |
+| `ablation.plan` | selected incumbent | `code.ablation` |
+| `code.ablation` | one ablation plan、subset control | `ablation.critic` |
+| `ablation.critic` | all ablation evidence | data gate / paper |
+| `write.draft` | incumbent evidence、ablations、data gate | `review.peer` |
+| `review.rebuttal_plan` | aggregated peer review | `code.rebuttal` |
+| `code.rebuttal` | one rebuttal task | `write.enhance` |
+| `write.enhance` | review + rebuttal evidence | next `review.peer` |
+| `review.meta` | final aggregate review | accept/export 或 `engineer.full` |
+| `integrity.spec` | each good trace/evidence | final integrity |
+| `integrity.refs` / `integrity.method_code` | manuscript、best code、evidence | acceptance/export |
+
+### 每个 Superagent 的职责
+
+| Task | 负责什么 |
+|---|---|
+| `code.baseline` | 用未修改的 `repo_ref` 复现实测 baseline；不会应用模型 patch |
+| `diagnose.run` | 执行目标仓库声明的只读诊断命令，产出 measured findings（不是 LLM） |
+| `limitations.extract` | 从诊断、问题和约束中提取可执行 limitation |
+| `limitations.verify` | 判断 limitation 数量和 axis 是否足够，决定是否进入 seed |
+| `ideas.initial` | 生成第一个 seed idea |
+| `ideas.novelty` | 评估 idea 的新颖性、机制相关性和引用质量 |
+| `ideas.expand` | 从 limitations 和已有 seeds 扩展 seed pool |
+| `ideas.evolve` | 根据 traces 进化下一轮候选 idea |
+| `code.implement` | 生成实现 instruction，驱动 candidate 的 subset 实现 |
+| `code.subset` | 生成 candidate diff 并在真实 subset 预算/多 seed 上测量 |
+| `critic.subset` | 判断 subset 是否严格优于 baseline；invalid 进入修复，worse 进入工程循环 |
+| `engineer.subset` | 根据 subset critic 反馈修改 candidate，再测量 subset |
+| `code.full` | 把 subset 验证过的方案扩展到 full 954 协议 |
+| `critic.full` | 判断 full 是否严格优于 full baseline，决定 engineer/adopt |
+| `engineer.full` | 根据 full critic 或 meta critique 修改完整方案 |
+| `critic.compare` | 确定性 adoption gate：所有指标不回退且至少一个改进（无 LLM） |
+| `critic.selector` | 从 full-set good traces 中按多指标加权 delta 选出 incumbent（无 LLM） |
+| `ablation.plan` | 规划可执行的 component ablation，不允许超参数 sweep |
+| `code.ablation` | 为每个 ablation plan 生成 patch，并在 subset control 上测量 |
+| `ablation.critic` | 判断每个组件是否有真实贡献，决定 keep/refine |
+| `write.draft` | 根据 incumbent、baseline、ablations 和 evidence 写论文初稿 |
+| `review.peer` | 独立 reviewer 评估新颖性、实验有效性、可复现性和归因；3 个并行 |
+| `review.rebuttal_plan` | 将 reviewer 问题转成可执行的 supplementary experiments |
+| `code.rebuttal` | 实现并运行每个 rebuttal experiment |
+| `write.enhance` | 根据 review 和 rebuttal evidence 改进 manuscript |
+| `review.meta` | meta-review 决定 accept 或 refine，并给出具体 critique |
+| `integrity.spec` | 检查 trace/evidence 是否违反 Problem 的 forbidden/spec 约束 |
+| `integrity.refs` | 审计引用、claim 和 reference 是否可验证 |
+| `integrity.method_code` | 审计 manuscript 方法描述与 candidate code diff 是否对齐 |
+
+> 并行只针对独立 superagent 调用。`code.subset`、`code.full`、`code.ablation`、
+> `code.rebuttal` 和 seed screen 仍串行，因为它们共享 remote GPU、worktree、
+> commit 和 checkpoint 资源。
+
 ## 安装（仅容器）
 
 ### 1. 配置 `container/.env`
