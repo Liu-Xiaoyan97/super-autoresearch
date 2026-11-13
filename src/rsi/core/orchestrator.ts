@@ -423,10 +423,15 @@ export class Orchestrator {
       const ids = new Set(pool.map((idea) => idea.id));
       const clean = byId(extra).filter((idea) => !ids.has(idea.id));
       if (!clean.length) break;
-      for (const idea of clean.slice(0, nSeed - pool.length)) {
-        this.ctx.budget.check();
-        pool.push(await this.agents.noveltyChecker.score(idea, { findings }));
-      }
+      // Novelty scoring is independent per idea; parallelize the superagent
+      // calls while retaining the deterministic byId order in the pool.
+      const scored = await Promise.all(
+        clean.slice(0, nSeed - pool.length).map(async (idea) => {
+          this.ctx.budget.check();
+          return this.agents.noveltyChecker.score(idea, { findings });
+        }),
+      );
+      pool.push(...scored);
     }
     let eligible = pool.filter(
       (idea) => idea.hypothesis.trim() && idea.novelty_score >= this.ctx.config.minNovelty,
@@ -613,11 +618,13 @@ export class Orchestrator {
         n,
         round,
       });
-      const scored: Idea[] = [];
-      for (const idea of byId(evolved)) {
-        this.ctx.budget.check();
-        scored.push(await this.agents.noveltyChecker.score(idea, { round }));
-      }
+      // Evolved ideas are independent; score them concurrently.
+      const scored: Idea[] = await Promise.all(
+        byId(evolved).map(async (idea) => {
+          this.ctx.budget.check();
+          return this.agents.noveltyChecker.score(idea, { round });
+        }),
+      );
       const eligible = filterByGuidance(scored, this.ctx.problem, this.ctx.config);
       const evolvedIds = new Set(eligible.map((idea) => idea.id));
       const candidates = byId(eligible).concat(seeds.filter((idea) => !evolvedIds.has(idea.id)));
@@ -837,11 +844,16 @@ export class Orchestrator {
   private async reviewPanel(round: number): Promise<void> {
     if (!this.state.manuscript) throw new ScientificAbort("missing_manuscript");
     const size = Math.max(1, this.ctx.config.reviewPanelSize);
-    const reviews: Review[] = [];
-    for (let reviewer = 0; reviewer < size; reviewer++) {
-      this.ctx.budget.check();
-      reviews.push(await this.agents.peerReviewer.review(this.state.manuscript, { round, reviewer }));
-    }
+    const manuscript = this.state.manuscript;
+    // Reviewers are independent superagents evaluating the same frozen
+    // manuscript. Run the whole panel concurrently; the aggregate below keeps
+    // reviewer order deterministic.
+    const reviews: Review[] = await Promise.all(
+      Array.from({ length: size }, async (_unused, reviewer) => {
+        this.ctx.budget.check();
+        return this.agents.peerReviewer.review(manuscript, { round, reviewer });
+      }),
+    );
     const unique = (items: string[]): string[] => [...new Set(items.map((item) => item.trim()).filter(Boolean))];
     const score = Math.min(...reviews.map((review) => review.score));
     this.state.reviews = reviews;
@@ -926,40 +938,55 @@ export class Orchestrator {
       if (report) reports.push(report);
     }
     if (!this.state.manuscript) return combine(...reports);
-    for (const name of ["reference_auditor", "method_code_auditor"] as const) {
-      try {
-        let report: IntegrityReport;
-        if (name === "reference_auditor") {
-          report = await this.agents.referenceAuditor.audit(this.state.manuscript);
-        } else {
-          let diff = "";
-          const baseline = this.state.baseline;
-          if (baseline?.code && this.state.bestCode) {
-            diff = await this.ctx.workspace.diff(baseline.code, this.state.bestCode);
+    const manuscript = this.state.manuscript;
+    // The two integrity auditors are independent superagents over the same
+    // frozen manuscript. Run them together, then record traces in stable order.
+    const outcomes = await Promise.all(
+      (["reference_auditor", "method_code_auditor"] as const).map(async (name) => {
+        try {
+          let report: IntegrityReport;
+          if (name === "reference_auditor") {
+            report = await this.agents.referenceAuditor.audit(manuscript);
+          } else {
+            let diff = "";
+            const baseline = this.state.baseline;
+            if (baseline?.code && this.state.bestCode) {
+              diff = await this.ctx.workspace.diff(baseline.code, this.state.bestCode);
+            }
+            report = await this.agents.methodCodeAuditor.audit(manuscript, {
+              diff,
+              evidence: this.state.bestEvidence,
+            });
           }
-          report = await this.agents.methodCodeAuditor.audit(this.state.manuscript, {
-            diff,
-            evidence: this.state.bestEvidence,
-          });
+          return { name, report, error: null, budgetExceeded: false };
+        } catch (error) {
+          if ((error as Error)?.name === "AbortError") throw error;
+          return {
+            name,
+            report: {
+              score_verified: false,
+              spec_violations: [],
+              ref_violations: [],
+              method_code_alignment: 0,
+              checked_claims: 0,
+              notes: [`${name} unavailable: ${(error as Error).name}`],
+            } as IntegrityReport,
+            error: error as Error,
+            budgetExceeded: error instanceof BudgetExceeded,
+          };
         }
-        reports.push(report);
-        this.ctx.traces.append("integrity", { agent: name, report });
-      } catch (error) {
-        if ((error as Error)?.name === "AbortError") throw error;
-        reports.push({
-          score_verified: false,
-          spec_violations: [],
-          ref_violations: [],
-          method_code_alignment: 0,
-          checked_claims: 0,
-          notes: [`${name} unavailable: ${(error as Error).name}`],
-        });
-        this.ctx.traces.append("integrity", { agent: name, error: (error as Error).name });
-        if (error instanceof BudgetExceeded) {
+      }),
+    );
+    for (const outcome of outcomes) {
+      reports.push(outcome.report);
+      if (outcome.error) {
+        this.ctx.traces.append("integrity", { agent: outcome.name, error: outcome.error.name });
+        if (outcome.budgetExceeded) {
           this.state.aborted = true;
-          this.state.abortReason = error.message;
-          break;
+          this.state.abortReason = outcome.error.message;
         }
+      } else {
+        this.ctx.traces.append("integrity", { agent: outcome.name, report: outcome.report });
       }
     }
     return combine(...reports);

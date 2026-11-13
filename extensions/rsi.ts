@@ -413,6 +413,17 @@ function progressMatchesStage(summary: string, stage: string | undefined): boole
   }
 }
 
+/** Current task tickets that are actually executing in the worker. */
+export function workingTuiAgents(status: RunStatus): string[] {
+  const counts = new Map<string, number>();
+  for (const ticket of status.tickets) {
+    if (ticket.state !== "working") continue;
+    const task = String(ticket.task ?? ticket.title ?? ticket.id ?? "").trim();
+    if (task) counts.set(task, (counts.get(task) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([task, count]) => (count > 1 ? `${task} ×${count}` : task));
+}
+
 /** Two lines per live run: identity, then current stage and progress. */
 function tuiStatusLines(status: RunStatus): string[] {
   const stage =
@@ -426,11 +437,10 @@ function tuiStatusLines(status: RunStatus): string[] {
   // The stage rows are authoritative; never show a contradictory progress line.
   const progress = rawProgress && progressMatchesStage(rawProgress, stage?.stage) ? rawProgress : "";
   const attention = status.attention ? `NEEDS PERSON: ${status.attention}` : "";
-  const agents = status.tickets
-    .filter((ticket) => ticket.state === "working")
-    .map((ticket) => String(ticket.task ?? ticket.title ?? ticket.id ?? ""))
-    .filter(Boolean);
-  const agent = agents.length ? `Super Agent: ${agents.join(", ")}` : "";
+  const agents = workingTuiAgents(status);
+  const agent = agents.length
+    ? `${agents.length > 1 ? "Super Agents" : "Super Agent"}: ${agents.join(", ")}`
+    : "";
   const clean = (line: string) => line.replace(/\s+/g, " ").slice(0, 240);
   return [
     clean(`${status.run_id} · ${status.run_ticket_id ?? "ticket pending"}`),

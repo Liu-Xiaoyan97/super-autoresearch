@@ -2,7 +2,7 @@ import fs from "node:fs";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import rsiExtension, { currentOpenRuns } from "../extensions/rsi.ts";
+import rsiExtension, { currentOpenRuns, workingTuiAgents } from "../extensions/rsi.ts";
 import { fixture, repoRoot, tempDir } from "./helpers.ts";
 
 function fakeApi(messages: Array<{ message: any; options: any }> = []) {
@@ -54,6 +54,20 @@ test("the extension registers the RSI tools and command without side effects", (
   assert.deepEqual([...tools.keys()], ["rsi_research", "rsi_job_submit", "rsi_job_status", "rsi_job_wait", "rsi_job_cancel", "rsi_job_list", "rsi_adapter_smoke", "rsi_iteration", "rsi_superagent", "rsi_inspect", "rsi_replay"]);
   assert.deepEqual([...commands.keys()], ["rsi"]);
   assert.ok([...tools.values()].every((tool) => tool.description.length > 40));
+});
+
+test("the TUI lists and counts every working Super Agent", () => {
+  const status = {
+    tickets: [
+      { state: "working", task: "review.peer" },
+      { state: "working", task: "review.peer" },
+      { state: "working", task: "review.peer" },
+      { state: "working", task: "code.subset" },
+      { state: "working/queued", task: "engineer.subset" },
+      { state: "ended", task: "code.baseline" },
+    ],
+  } as any;
+  assert.deepEqual(workingTuiAgents(status), ["review.peer ×3", "code.subset"]);
 });
 
 test("reload reattaches only open runs from the current process", () => {

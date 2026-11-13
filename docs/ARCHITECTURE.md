@@ -1,3 +1,5 @@
+
+
 # Architecture (as built)
 
 Companion to `docs/SPEC.md` (the contract) and `docs/analysis/*.md` (the paper
@@ -393,3 +395,15 @@ Intentional differences:
   snapshots and recorded patches without executing them;
 - the test suite is `node:test`; there is no second language runtime to keep in
   sync.
+
+## Execution concurrency
+
+Independent superagent calls in the same stage run concurrently: the three
+peer reviewers, independent novelty scorers, and the reference/method-code
+integrity auditors. Calls with an upstream dependency (limitation extraction →
+verification, manuscript → review, experiment → critique) remain sequential.
+GPU experiments, seed screens and ablations remain serialized because they share
+the target worktree and assigned devices. The TUI shows every task ticket whose
+state is `working`; repeated tasks are rendered with a count, for example
+`Super Agents: review.peer ×3`.
+

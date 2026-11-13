@@ -272,13 +272,16 @@ rm -rf /workspace/RSI/.rsi-baseline/coral-wikitext-ppl-*
 
 ```text
 coral-wikitext-ppl-s7-r1-r1-r2-r1 · run-1olswx6
-§3.2–§3.3 Idea search (0/8) · §3.2 searching ideas · Super Agent: code.subset
+§3.5 drafting and peer review · §3.5 drafting and peer review · Super Agents: review.peer ×3
 ```
 
 - 第一行：run id · 当前 run ticket；
 - 第二行：当前阶段(完成数/任务数) · 最近一次**属于该阶段**的 progress · 正在运行的
-  RSI Super Agent task（例如 `code.subset`）；没有运行中的 task 时省略该字段；
+  RSI Super Agent task；多个 task 会显示为 `review.peer ×3` 这样的计数；没有运行中的
+  task 时省略该字段；
 - 每秒刷新一次；
+- 同一阶段内独立的 superagent 并行执行，存在上下游依赖的步骤保持串行；GPU
+  实验仍按资源和 worktree 约束串行；
 - 多个 run 各占两行，中间空一行；
 - 需要人回答时显示 `NEEDS PERSON`；
 - run 完成、失败或停止后自动清除，不残留旧状态；
