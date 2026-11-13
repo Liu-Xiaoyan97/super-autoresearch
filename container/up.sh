@@ -59,7 +59,8 @@ shift || true
 case "$cmd" in
   build)
     ensure_base
-    "${COMPOSE[@]}" build \
+    DOCKER_BUILDKIT=0 "${COMPOSE[@]}" build \
+      --build-arg "BASE_IMAGE=${BASE_IMAGE:-node:24-bookworm-slim}" \
       --build-arg "APT_PROXY=${APT_PROXY:-http://host.docker.internal:7890}" \
       --build-arg "NPM_PROXY=${NPM_PROXY:-http://host.docker.internal:7890}" \
       "$@"
