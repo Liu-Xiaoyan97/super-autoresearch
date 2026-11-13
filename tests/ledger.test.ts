@@ -85,4 +85,12 @@ test("ledger groups hyperparameter-only commits into one model family", () => {
   assert.ok(fs.existsSync(path.join(ledgerDir, "tree.txt")));
   assert.ok(fs.existsSync(path.join(ledgerDir, "lineage.json")));
   assert.equal(modelDefinitionFile(problem as any), "models/model.py");
+
+  // Two runs with identical measurements remain two run experiments; a run is
+  // part of experiment identity just like the model-family blob.
+  const secondRun = path.join(project, "runs", "run-b");
+  fs.cpSync(run, secondRun, { recursive: true });
+  const withSecond = refreshLedger({ projectRoot: project, runsRoots: [path.join(project, "runs")], ledgerDir });
+  assert.equal(withSecond.experiments.filter((item) => item.kind === "baseline" && item.scope === "subset").length, 2);
+  assert.equal(withSecond.families.length, 2);
 });

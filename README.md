@@ -221,6 +221,8 @@ project
 - **同族判定**：比较目标仓库中模型定义文件的 git blob，不比较 commit 或阶段配置。
   `RSI_CORAL_MODEL_FILE` 指向的文件不变时，E/H、LR、batch、steps、优化器等超参数变化都属于同族；
   模型定义文件内容变化才创建新 family。
+- 每个 run 的实验单独保留；不会把不同 run 中相同 commit/metric 的记录合并掉。
+- 尚未完成测量的 seed 以 `pending` 节点进入族谱。
 - `ledger` 每次状态写入后自动刷新，不需要手工导出。
 - 默认写到 `<项目根>/ledger/`；可用 `RSI_LEDGER_DIR` 覆盖。
 - PNG/SVG 需要 `python3` + matplotlib；容器镜像已包含 `python3-matplotlib`。缺少渲染器时

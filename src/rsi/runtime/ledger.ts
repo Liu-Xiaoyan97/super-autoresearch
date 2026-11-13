@@ -17,7 +17,7 @@ import path from "node:path";
 import type { AgentContext } from "../agents/base.ts";
 import type { Evidence, Problem } from "../types.ts";
 
-export type LedgerKind = "baseline" | "subset" | "full" | "ablation" | "rebuttal";
+export type LedgerKind = "baseline" | "subset" | "full" | "ablation" | "rebuttal" | "pending";
 
 export interface LedgerExperiment {
   id: string;
@@ -221,7 +221,10 @@ function addEvidence(
   const parentCommit = opts.parentCommit ?? evidence.code?.parent ?? null;
   const ideaId = opts.ideaId ?? evidence.idea_id ?? "baseline";
   const label = evidence.label || evidence.scope;
-  const fingerprint = stable({ kind, scope: evidence.scope, ideaId, commit, label, metrics: evidence.metrics });
+  // A ledger is per run as well as per experiment: identical commit/metric
+  // measurements from two attempts are two distinct run experiments, not one
+  // merged node.
+  const fingerprint = stable({ run: state.runId, kind, scope: evidence.scope, ideaId, commit, label, metrics: evidence.metrics });
   output.push({
     id: experimentId(fingerprint),
     family_id: family.id,
@@ -259,6 +262,29 @@ function collectRun(state: RunState): PendingExperiment[] {
 
   const baselineCommit = (scope: string): string | null =>
     scope === "full" ? baselineFull?.code?.commit ?? baseline?.code?.commit ?? null : baseline?.code?.commit ?? null;
+
+  // Seeds that have not reached a measured trace are still part of the run's
+  // experiment tree; show them as pending leaves instead of dropping them.
+  const evaluated = new Set(array(state.state.evaluated_ids).map(String));
+  for (const rawSeed of array(state.state.seeds) as Array<Record<string, unknown>>) {
+    const id = string(rawSeed.id);
+    if (!id || evaluated.has(id)) continue;
+    const pending: Evidence = {
+      idea_id: id,
+      scope: "subset",
+      metrics: {},
+      baseline_metrics: {},
+      code: baseline?.code ?? null,
+      result: null,
+      label: "pending",
+      samples: [],
+    };
+    addEvidence(out, state, pending, "pending", {
+      ideaId: id,
+      parentCommit: baseline?.code?.commit ?? null,
+      decision: "pending",
+    });
+  }
 
   for (const rawTrace of traces) {
     const idea = record(rawTrace.idea);
@@ -310,19 +336,22 @@ function resolveParents(experiments: LedgerExperiment[]): void {
   const byCommitAndScope = new Map<string, LedgerExperiment>();
   const baselines = new Map<string, LedgerExperiment>();
   for (const item of experiments) {
-    if (item.commit) byCommitAndScope.set(`${item.commit}:${item.scope}`, item);
-    if (item.kind === "baseline") baselines.set(`${item.family_id}:${item.scope}`, item);
+    if (item.commit) byCommitAndScope.set(`${item.run_id}:${item.commit}:${item.scope}`, item);
+    if (item.kind === "baseline") baselines.set(`${item.run_id}:${item.family_id}:${item.scope}`, item);
   }
   for (const item of experiments) {
     let parent: LedgerExperiment | undefined;
     if (item.parent_commit) {
-      parent = byCommitAndScope.get(`${item.parent_commit}:${item.scope}`) ??
-        byCommitAndScope.get(`${item.parent_commit}:subset`) ??
-        byCommitAndScope.get(`${item.parent_commit}:full`);
+      parent = byCommitAndScope.get(`${item.run_id}:${item.parent_commit}:${item.scope}`) ??
+        byCommitAndScope.get(`${item.run_id}:${item.parent_commit}:subset`) ??
+        byCommitAndScope.get(`${item.run_id}:${item.parent_commit}:full`);
       if (parent?.id === item.id) parent = undefined;
     }
     if (!parent) {
-      const baseline = baselines.get(`${item.family_id}:${item.scope}`) ??
+      const baseline = baselines.get(`${item.run_id}:${item.family_id}:${item.scope}`) ??
+        baselines.get(`${item.run_id}:${item.family_id}:subset`) ??
+        baselines.get(`${item.run_id}:${item.family_id}:full`) ??
+        baselines.get(`${item.family_id}:${item.scope}`) ??
         baselines.get(`${item.family_id}:subset`) ??
         baselines.get(`${item.family_id}:full`);
       if (baseline && baseline.id !== item.id) parent = baseline;
