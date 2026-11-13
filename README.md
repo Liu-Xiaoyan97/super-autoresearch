@@ -252,9 +252,7 @@ rm -rf /workspace/RSI/.rsi-baseline/coral-wikitext-ppl-*
 
 ### TUI 运行状态
 
-运行中的 run 会写到 Pi 的 footer status 和编辑器上方的 widget：
-
-显示在输入框上方，每个 run 两行：
+运行中的 run 显示在编辑器下方的 widget（`belowEditor`），每个 run 两行：
 
 ```text
 coral-wikitext-ppl-s7-r1-r1-r2-r1 · run-1olswx6

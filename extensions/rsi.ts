@@ -361,6 +361,17 @@ let TUI_TIMER: ReturnType<typeof setInterval> | null = null;
 const TUI_RUNS = new Map<string, TuiRun>();
 const TUI_STATUS_KEY = "rsi";
 const TUI_WIDGET_KEY = "rsi-runs";
+const TUI_WIDGET_OPTIONS = { placement: "belowEditor" } as const;
+type TuiWidgetOptions = { placement: "aboveEditor" | "belowEditor" };
+
+function setTuiWidget(ctx: ToolContext, lines: string[] | undefined): void {
+  const setWidget = ctx.ui.setWidget as unknown as (
+    key: string,
+    content: string[] | undefined,
+    options?: TuiWidgetOptions,
+  ) => void;
+  setWidget(TUI_WIDGET_KEY, lines, TUI_WIDGET_OPTIONS);
+}
 
 function stopTuiTimer(): void {
   if (!TUI_TIMER) return;
@@ -439,7 +450,7 @@ function refreshTui(): void {
   try {
     ctx.ui.setStatus(TUI_STATUS_KEY, undefined);
     if (!active.length) {
-      ctx.ui.setWidget(TUI_WIDGET_KEY, undefined);
+      setTuiWidget(ctx, undefined);
       stopTuiTimer();
       return;
     }
@@ -448,7 +459,7 @@ function refreshTui(): void {
       if (lines.length) lines.push("");
       lines.push(...tuiStatusLines(status));
     }
-    ctx.ui.setWidget(TUI_WIDGET_KEY, lines);
+    setTuiWidget(ctx, lines);
     startTuiTimer();
   } catch {
     /* TUI/RPC UI may be unavailable; the run itself must continue */
@@ -949,7 +960,7 @@ export default function rsiExtension(pi: ExtensionAPI): void {
     if (ctx) {
       try {
         ctx.ui.setStatus(TUI_STATUS_KEY, undefined);
-        ctx.ui.setWidget(TUI_WIDGET_KEY, undefined);
+        setTuiWidget(ctx, undefined);
       } catch {
         /* the UI may already be gone */
       }

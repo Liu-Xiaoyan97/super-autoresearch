@@ -30,7 +30,7 @@ function fakeContext(
   _out: string,
   notes: Array<{ message: string; level?: string }> = [],
   statuses: Array<{ key: string; text?: string }> = [],
-  widgets: Array<{ key: string; lines?: string[] }> = [],
+  widgets: Array<{ key: string; lines?: string[]; placement?: string }> = [],
 ) {
   return {
     cwd: repoRoot,
@@ -40,7 +40,8 @@ function fakeContext(
       select: async () => undefined,
       input: async () => undefined,
       setStatus: (key: string, text?: string) => statuses.push({ key, text }),
-      setWidget: (key: string, lines?: string[]) => widgets.push({ key, lines }),
+      setWidget: (key: string, lines?: string[], options?: { placement?: string }) =>
+        widgets.push({ key, lines, placement: options?.placement }),
     },
     modelRegistry: {},
     model: null,
@@ -59,7 +60,7 @@ test("a live run writes the TUI status and clears it when the run ends", async (
   const { tools } = fakeApi();
   const out = tempDir("rsi-tui-");
   const statuses: Array<{ key: string; text?: string }> = [];
-  const widgets: Array<{ key: string; lines?: string[] }> = [];
+  const widgets: Array<{ key: string; lines?: string[]; placement?: string }> = [];
   const ctx = fakeContext(out, [], statuses, widgets);
   const research = await tools.get("rsi_research").execute(
     "call-tui",
@@ -71,6 +72,7 @@ test("a live run writes the TUI status and clears it when the run ends", async (
   assert.equal(research.details.final.aborted, false);
   const live = widgets.find((entry) => entry.lines?.length === 2);
   assert.ok(live, JSON.stringify(widgets));
+  assert.equal(live.placement, "belowEditor");
   assert.match(live.lines![0], /^[^ ]+ · run-/);
   assert.ok(live.lines![1].length > 0);
   assert.ok(!statuses.some((entry) => entry.text?.startsWith("RSI ")), "footer does not duplicate the widget");
