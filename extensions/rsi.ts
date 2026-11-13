@@ -374,21 +374,56 @@ function startTuiTimer(): void {
   (TUI_TIMER as { unref?: () => void }).unref?.();
 }
 
-function compactTuiStatus(status: RunStatus): string {
+function progressMatchesStage(summary: string, stage: string | undefined): boolean {
+  if (!stage) return true;
+  const text = summary.toLowerCase();
+  switch (stage) {
+    case "diagnose":
+      return text.startsWith("diagnose");
+    case "limits":
+      return text.includes("limitation");
+    case "seeds":
+      return text.includes("seed");
+    case "baseline":
+      return text.includes("baseline");
+    case "search":
+      return text.includes("search") || text.startsWith("§3.2 round");
+    case "select":
+      return text.includes("select");
+    case "ablations":
+      return text.includes("ablation");
+    case "draft":
+    case "review":
+      return text.includes("draft") || text.includes("review");
+    case "meta":
+      return text.includes("meta");
+    default:
+      return true;
+  }
+}
+
+/** Two lines per live run: identity, then current stage and progress. */
+function tuiStatusLines(status: RunStatus): string[] {
   const stage =
     status.stages.find((item) => item.state === "working" || item.state === "blocked") ??
     [...status.stages].reverse().find((item) => item.state !== "done");
   const stageText = stage
     ? `${stage.section} ${stage.title} (${stage.done}/${stage.tasks})`
     : status.progress?.state ?? status.state;
-  const progress = status.progress?.summary ? ` · ${status.progress.summary}` : "";
-  const attention = status.attention ? ` · NEEDS PERSON: ${status.attention}` : "";
-  return `RSI ${status.run_id} · ${stageText}${progress}${attention}`
-    .replace(/\s+/g, " ")
-    .slice(0, 220);
+  const rawProgress = status.progress?.summary?.trim() ?? "";
+  // During a transition the last report can still describe the previous stage.
+  // The stage rows are authoritative; never show a contradictory progress line.
+  const progress = rawProgress && progressMatchesStage(rawProgress, stage?.stage) ? rawProgress : "";
+  const attention = status.attention ? `NEEDS PERSON: ${status.attention}` : "";
+  const clean = (line: string) => line.replace(/\s+/g, " ").slice(0, 240);
+  return [
+    clean(`${status.run_id} · ${status.run_ticket_id ?? "ticket pending"}`),
+    clean([stageText, progress, attention].filter(Boolean).join(" · ")),
+  ];
 }
 
-/** Refresh the footer status and the persistent widget from live run state. */
+/** Refresh the persistent widget from live run state. The footer is deliberately
+ * left to other extensions: showing the same live text there duplicated it. */
 function refreshTui(): void {
   const ctx = TUI_CTX;
   if (!ctx) return;
@@ -402,14 +437,17 @@ function refreshTui(): void {
     active.push(status);
   }
   try {
+    ctx.ui.setStatus(TUI_STATUS_KEY, undefined);
     if (!active.length) {
-      ctx.ui.setStatus(TUI_STATUS_KEY, undefined);
       ctx.ui.setWidget(TUI_WIDGET_KEY, undefined);
       stopTuiTimer();
       return;
     }
-    const lines = active.map(compactTuiStatus);
-    ctx.ui.setStatus(TUI_STATUS_KEY, lines.join(" | ").slice(0, 240));
+    const lines: string[] = [];
+    for (const status of active) {
+      if (lines.length) lines.push("");
+      lines.push(...tuiStatusLines(status));
+    }
     ctx.ui.setWidget(TUI_WIDGET_KEY, lines);
     startTuiTimer();
   } catch {

@@ -239,15 +239,20 @@ rm -rf /workspace/RSI/.rsi-baseline/coral-wikitext-ppl-*
 
 运行中的 run 会写到 Pi 的 footer status 和编辑器上方的 widget：
 
+显示在输入框上方，每个 run 两行：
+
 ```text
-RSI <run_id> · §3.2–§3.3 Idea search (0/8) · §3.2 searching ideas
+coral-wikitext-ppl-s7-r1-r1-r2-r1 · run-1olswx6
+§3.2–§3.3 Idea search (0/8) · §3.2 searching ideas
 ```
 
-- `·` 前是当前阶段和完成的任务数，`·` 后是最近一次 progress 消息；
+- 第一行：run id · 当前 run ticket；
+- 第二行：当前阶段(完成数/任务数) · 最近一次**属于该阶段**的 progress；
 - 每秒刷新一次；
-- 多个 run 各占一行；
+- 多个 run 各占两行，中间空一行；
 - 需要人回答时显示 `NEEDS PERSON`；
-- run 完成、失败或停止后自动清除，不残留旧状态。
+- run 完成、失败或停止后自动清除，不残留旧状态；
+- 不再同时写入底部 footer status，避免同一状态出现两遍。
 
 baseline 进度会区分来源：
 

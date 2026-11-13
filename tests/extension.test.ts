@@ -69,8 +69,11 @@ test("a live run writes the TUI status and clears it when the run ends", async (
     ctx,
   );
   assert.equal(research.details.final.aborted, false);
-  assert.ok(statuses.some((entry) => entry.text?.startsWith("RSI ")), JSON.stringify(statuses));
-  assert.ok(widgets.some((entry) => entry.lines?.length), JSON.stringify(widgets));
+  const live = widgets.find((entry) => entry.lines?.length === 2);
+  assert.ok(live, JSON.stringify(widgets));
+  assert.match(live.lines![0], /^[^ ]+ · run-/);
+  assert.ok(live.lines![1].length > 0);
+  assert.ok(!statuses.some((entry) => entry.text?.startsWith("RSI ")), "footer does not duplicate the widget");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(statuses.at(-1)?.text, undefined, "status cleared after the run ends");
   assert.equal(widgets.at(-1)?.lines, undefined, "widget cleared after the run ends");
