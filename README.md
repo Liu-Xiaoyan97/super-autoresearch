@@ -256,7 +256,9 @@ word ppl / word-ppl 等变体 → 恢复成 canonical word_ppl
 ```
 
 少量 axis 缺失不会阻塞；一轮没有新增限制时停止，不再固定跑满 16 轮。每轮最多补
-`minLimitations - existing` 条，模型一次返回几十条也不会全部进入限制集。
+`minLimitations - existing` 条，模型一次返回几十条也不会全部进入限制集。进入 seed
+阶段前还会把历史限制裁剪到最多 8 条（保留 severity 最高的），避免 resume 时把 59
+条旧限制继续灌进每个 idea/novelty prompt。
 
 如果仍然失败，run 会：
 

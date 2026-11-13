@@ -383,6 +383,14 @@ export class Orchestrator {
   private async seedIdeas(): Promise<void> {
     progress(this.ctx, "§3.1 generating seed ideas");
     const findings = this.findings();
+    // A resumed run may carry a previously over-extracted limitation set.
+    // Keep the highest-severity bounded set; do not feed dozens of historical
+    // limitations into every seed/novelty prompt.
+    const maxLimitations = Math.max(this.ctx.config.minLimitations, 8);
+    this.state.limitations = this.state.limitations
+      .slice()
+      .sort((a, b) => b.severity - a.severity || a.id.localeCompare(b.id))
+      .slice(0, maxLimitations);
     const depth = this.depthSearch();
     // The config N_seed is the seed pool target in both policies. Depth mode
     // narrows the defect, not the number of ideas; otherwise one low-novelty
