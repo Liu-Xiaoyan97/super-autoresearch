@@ -426,10 +426,15 @@ function tuiStatusLines(status: RunStatus): string[] {
   // The stage rows are authoritative; never show a contradictory progress line.
   const progress = rawProgress && progressMatchesStage(rawProgress, stage?.stage) ? rawProgress : "";
   const attention = status.attention ? `NEEDS PERSON: ${status.attention}` : "";
+  const agents = status.tickets
+    .filter((ticket) => ticket.state === "working")
+    .map((ticket) => String(ticket.task ?? ticket.title ?? ticket.id ?? ""))
+    .filter(Boolean);
+  const agent = agents.length ? `Super Agent: ${agents.join(", ")}` : "";
   const clean = (line: string) => line.replace(/\s+/g, " ").slice(0, 240);
   return [
     clean(`${status.run_id} · ${status.run_ticket_id ?? "ticket pending"}`),
-    clean([stageText, progress, attention].filter(Boolean).join(" · ")),
+    clean([stageText, progress, attention, agent].filter(Boolean).join(" · ")),
   ];
 }
 

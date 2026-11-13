@@ -75,6 +75,10 @@ test("a live run writes the TUI status and clears it when the run ends", async (
   assert.equal(live.placement, "belowEditor");
   assert.match(live.lines![0], /^[^ ]+ · run-/);
   assert.ok(live.lines![1].length > 0);
+  assert.ok(
+    widgets.some((entry) => entry.lines?.some((line) => line.includes("Super Agent:"))),
+    JSON.stringify(widgets),
+  );
   assert.ok(!statuses.some((entry) => entry.text?.startsWith("RSI ")), "footer does not duplicate the widget");
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(statuses.at(-1)?.text, undefined, "status cleared after the run ends");
