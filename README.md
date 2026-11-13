@@ -163,8 +163,8 @@ adapter 验收只做到 smoke，不做 subset/full 研究运行。
 1 个 optimizer step
 → checkpoint-1
 → 新进程重载
-→ 一次 lm-eval
-→ 1 个测试样本
+→ 官方 lm-eval 同时运行 wikitext 与 lambada_openai
+→ 每个 task 1 个测试样本
 ```
 
 `--out` 必须是尚未存在的新目录；把 `<fresh-id>` 换成自己的标识。

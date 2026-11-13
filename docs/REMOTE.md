@@ -217,8 +217,9 @@ checkpoint 不代表训练链路通过。记录原始数据来源、训练和评
 
 `examples/dfm_ssm_external.json` 等仍是示例配置；其中的 bench 命令必须存在于
 各自目标 ref。以 word-ppl 为例，目标自有 adapter 执行真实训练 → 保存/重载
-checkpoint → lm-eval wikitext `word_perplexity` → `{"metrics":{"word_ppl":...}}`。
-`word_ppl` 越低越好，训练预算和评测协议由目标文档与 Problem 固定。
+checkpoint → 官方 lm-eval wikitext `word_perplexity` + lambada_openai `acc`
+→ `{"metrics":{"word_ppl":...,"acc":...}}`。`word_ppl` 越低越好，`acc` 越高越好；
+训练预算、任务、split 和 tokenizer 由目标文档与 Problem 固定。
 
 完成远程冒烟后，才启动完整 SOP：
 

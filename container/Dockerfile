@@ -12,11 +12,14 @@ FROM ${BASE_IMAGE}
 
 ARG PI_VERSION=1.5.2
 ARG NPM_REGISTRY=https://registry.npmmirror.com
-# Optional build-time apt proxy, e.g. http://host.docker.internal:7890
+# Optional build-time apt/npm proxy, e.g. http://host.docker.internal:7890
 ARG APT_PROXY
+ARG NPM_PROXY
 
 ENV DEBIAN_FRONTEND=noninteractive \
     NPM_CONFIG_REGISTRY=${NPM_REGISTRY} \
+    NPM_CONFIG_PROXY=${NPM_PROXY} \
+    NPM_CONFIG_HTTPS_PROXY=${NPM_PROXY} \
     PI_CODING_AGENT_DIR=/root/.pi/agent \
     PI_PROVIDER=opencode-go \
     PI_MODEL=deepseek-v4.1-flash
