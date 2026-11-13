@@ -38,3 +38,14 @@ if command -v ssh >/dev/null 2>&1 && [[ -f /root/.ssh/config ]]; then
 else
   echo "[bootstrap] warning: ssh tooling or /root/.ssh config is incomplete" >&2
 fi
+
+# Keep declared Pi packages available after a container/image rebuild. The
+# package directory is a bind-mounted agent home, but a fresh host may not have
+# the npm install yet; settings.json still declares the package.
+if command -v pi >/dev/null 2>&1; then
+  if [[ ! -d /root/.pi/agent/npm/node_modules/@juicesharp/rpiv-ask-user-question ]]; then
+    if ! pi install npm:@juicesharp/rpiv-ask-user-question; then
+      echo "[bootstrap] warning: could not install @juicesharp/rpiv-ask-user-question; check npm/proxy" >&2
+    fi
+  fi
+fi
