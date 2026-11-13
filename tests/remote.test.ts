@@ -179,6 +179,38 @@ test("an aborted remote run kills the detached process group with a fresh SSH ca
   assert.ok(calls.indexOf(cleanup!) < calls.length - 1, "cleanup runs before the result fetch");
 });
 
+test("remote attempts continue after resume and leave no running marker", async () => {
+  const root = tempDir("rsi-remote-sequence-");
+  const experiments = path.join(root, "artifacts", "experiments");
+  fs.mkdirSync(experiments, { recursive: true });
+  fs.writeFileSync(path.join(experiments, "remote-0007.json"), "{}");
+  const marker = path.join(experiments, "remote-0008.running.json");
+  let sawMarker = false;
+  const transport: RemoteTransport = async (binary, args) => {
+    const command = String(args.at(-1) ?? "");
+    if (binary === "rsync") return { code: 0, stdout: "", stderr: "", killed: false };
+    if (command.includes("mkdir -p")) return { code: 0, stdout: "", stderr: "", killed: false };
+    if (command.includes("wait $!")) {
+      sawMarker = fs.existsSync(marker);
+      return { code: 0, stdout: "", stderr: "", killed: false };
+    }
+    if (command.startsWith("cat ")) return { code: 0, stdout: JSON.stringify({ metrics: { acc: 0.7 } }), stderr: "", killed: false };
+    return { code: 0, stdout: "", stderr: "", killed: false };
+  };
+  const runner = new RemoteRunner(root, {
+    remote: { ...remote, worktree: "", out: "" },
+    command: ["{python}", "bench/eval.py", "--scope", "{scope}"],
+    runId: "run-resume",
+    timeoutS: 60,
+    transport,
+  });
+  const result = await runner.run({ ...req, repo: { ...req.repo, path: tempDir("rsi-remote-resume-src-") } });
+  assert.equal(result.status, "ok");
+  assert.equal(sawMarker, true, "the active attempt is visible while the remote process runs");
+  assert.ok(fs.existsSync(path.join(experiments, "remote-0008.json")), "numbering continues after a resume");
+  assert.equal(fs.existsSync(marker), false, "the running marker is removed when the attempt finishes");
+});
+
 test("a Problem with remote selects RemoteRunner", () => {
   const problem = loadProblem(fixture("dfm_ssm_external"));
   assert.ok(problem.remote);

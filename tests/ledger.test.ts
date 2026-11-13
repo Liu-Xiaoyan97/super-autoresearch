@@ -137,4 +137,68 @@ test("candidate and engineer generations are linked, and subset→full is dashed
   assert.equal(fullNode.edge, "dashed");
   assert.deepEqual(snapshot.parent_warnings, [], "every lineage edge must satisfy its parent invariant");
   assert.notEqual(engineerNode.family_id, candidateNode.family_id, "model-definition change is a new family");
+  const lineage = JSON.parse(fs.readFileSync(path.join(ledgerDir, "lineage.json"), "utf8")) as {
+    nodes: Array<{ id: string; parent: string | null; kind: string; label: string; detail: string }>;
+  };
+  const byKind = (kind: string) => lineage.nodes.filter((node) => node.kind === kind);
+  const baselineGroup = byKind("baseline")[0];
+  const candidateGroup = byKind("candidate")[0];
+  const engineerGroup = byKind("engineer")[0];
+  const fullGroup = byKind("full")[0];
+  assert.equal(byKind("candidate").length, 1, "candidate experiments share one node");
+  assert.equal(candidateGroup.parent, baselineGroup.id);
+  assert.equal(engineerGroup.parent, candidateGroup.id);
+  assert.equal(fullGroup.parent, engineerGroup.id);
+  assert.equal(fullGroup.label.includes("full"), true);
+});
+
+test("same-parent seeds share one lineage node and keep every metric", () => {
+  const { repo, first, second, codeChange } = makeRepo();
+  const project = tempDir("rsi-ledger-seeds-");
+  const run = path.join(project, "runs", "run-seeds");
+  const experiments = path.join(run, "artifacts", "experiments");
+  fs.mkdirSync(experiments, { recursive: true });
+  const problem = {
+    id: "ledger-seeds",
+    repo,
+    repo_ref: first,
+    remote: { env: { RSI_CORAL_MODEL_FILE: "models/model.py" } },
+    datasets: ["dev"],
+    metrics: [{ name: "acc", direction: "max", tolerance: 0.01, weight: 1, bounds: [0, 1] }],
+  };
+  const baseline = {
+    idea_id: "baseline", scope: "subset", metrics: { acc: 0.5 }, baseline_metrics: {},
+    code: { commit: first, parent: null, repo, path: run, label: "baseline", patch: "" },
+    result: null, label: "baseline", samples: [],
+  };
+  fs.writeFileSync(path.join(run, "state.json"), JSON.stringify({
+    problem, baseline, baseline_full: null, traces: [], ablations: [], rebuttals: [],
+    best_evidence: null, best_code: null, decision_path: [], aborted: false,
+  }));
+  const remote = (n: number, commit: string, acc: number) => {
+    fs.writeFileSync(path.join(experiments, `remote-${String(n).padStart(4, "0")}.json`), JSON.stringify({
+      command: `python bench/eval.py --scope subset --commit ${commit}`,
+      result: { status: "ok", metrics: { acc } },
+    }));
+  };
+  remote(1, second, 0.6);
+  remote(2, second, 0.61);
+  remote(3, second, 0.62);
+  remote(4, codeChange, 0.7);
+  remote(5, codeChange, 0.71);
+  const ledgerDir = path.join(project, "ledger");
+  const snapshot = refreshLedger({ projectRoot: project, runsRoots: [path.join(project, "runs")], ledgerDir });
+  assert.equal(snapshot.experiments.length, 6);
+  const lineage = JSON.parse(fs.readFileSync(path.join(ledgerDir, "lineage.json"), "utf8")) as {
+    nodes: Array<{ id: string; parent: string | null; kind: string; label: string; detail: string }>;
+  };
+  const candidate = lineage.nodes.find((node) => node.kind === "candidate")!;
+  const engineer = lineage.nodes.find((node) => node.kind === "engineer")!;
+  assert.equal(lineage.nodes.filter((node) => node.kind === "candidate").length, 1);
+  assert.equal(lineage.nodes.filter((node) => node.kind === "engineer").length, 1);
+  assert.match(candidate.label, /candidate \(v1-v3\)/);
+  assert.match(engineer.label, /engineer \(v4-v5\)/);
+  for (const value of ["0.6", "0.61", "0.62"]) assert.ok(candidate.detail.includes(value));
+  for (const value of ["0.7", "0.71"]) assert.ok(engineer.detail.includes(value));
+  assert.equal(engineer.parent, candidate.id);
 });

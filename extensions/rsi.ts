@@ -424,8 +424,24 @@ export function workingTuiAgents(status: RunStatus): string[] {
   return [...counts.entries()].map(([task, count]) => (count > 1 ? `${task} ×${count}` : task));
 }
 
+/** The one remote attempt whose running marker currently exists, if any. */
+export function activeRemoteAttempt(root: string | undefined): number | null {
+  if (!root) return null;
+  try {
+    const dir = path.join(root, "artifacts", "experiments");
+    let current: number | null = null;
+    for (const name of fs.readdirSync(dir)) {
+      const match = /^remote-(\d+)\.running\.json$/.exec(name);
+      if (match) current = Math.max(current ?? 0, Number(match[1]));
+    }
+    return current;
+  } catch {
+    return null;
+  }
+}
+
 /** Two lines per live run: identity, then current stage and progress. */
-function tuiStatusLines(status: RunStatus): string[] {
+export function tuiStatusLines(status: RunStatus): string[] {
   const stage =
     status.stages.find((item) => item.state === "working" || item.state === "blocked") ??
     [...status.stages].reverse().find((item) => item.state !== "done");
@@ -438,9 +454,11 @@ function tuiStatusLines(status: RunStatus): string[] {
   const progress = rawProgress && progressMatchesStage(rawProgress, stage?.stage) ? rawProgress : "";
   const attention = status.attention ? `NEEDS PERSON: ${status.attention}` : "";
   const agents = workingTuiAgents(status);
+  const remote = activeRemoteAttempt(status.root);
+  const remoteText = remote ? `Remoting at ${remote}` : "";
   const agent = agents.length
-    ? `${agents.length > 1 ? "Super Agents" : "Super Agent"}: ${agents.join(", ")}`
-    : "";
+    ? `${agents.length > 1 ? "Super Agents" : "Super Agent"}: ${agents.join(", ")}${remoteText ? ` · ${remoteText}` : ""}`
+    : remoteText ? `Super Agent: ${remoteText}` : "";
   const clean = (line: string) => line.replace(/\s+/g, " ").slice(0, 240);
   return [
     clean(`${status.run_id} · ${status.run_ticket_id ?? "ticket pending"}`),

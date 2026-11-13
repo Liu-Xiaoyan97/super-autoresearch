@@ -213,22 +213,26 @@ ledger/
 
 ```text
 project
-  └─ model family
-       ├─ baseline subset / full
-       └─ candidate
-            └─ engineer
-                 └─ full (dashed edge from subset candidate)
-                      └─ ablation / rebuttal
+  └─ baseline subset / full
+       └─ candidate h4 (v1-v3)          # 同一父节点的 seed 合并
+            └─ engineer h4 (v4-v6)      # 同父节点的 seed 合并
+                 └─ engineer h4 (v7-v9)
+                      └─ engineer h4 (v10-v11)
+                           └─ full (subset → full 虚线)
+                                └─ ablation / rebuttal
 ```
 
 - `candidate` 是 initial subset implementation；
 - `engineer` 是 candidate 的下一代，记录 repair/core idea；
 - candidate/engineer 都会记录核心思路（来自 provenance patch 的 Mechanism/Hypothesis/Critique）；
-- initial full-set 节点用**虚线**连接最后一个 subset candidate/engineer 节点；
+- 同一父节点、同一代码版本、同一 idea 的多个 seed 会合并成**一个节点**（例如 `candidate h4 (v1-v3)`），节点详情保留每个 seed 的 metrics；
+- 不同父节点、不同代码版本或不同 idea 不会合并；下一代的父节点是该代码版本的**第一个**实验，父节点稳定，不随 seed 数变化；
+- initial full-set 节点用**虚线**连接对应的 subset candidate/engineer 节点；
 - `provenance-*.json` 和编号 `remote-*.json` 里的实验都会进入台账，因此即使 run 因失败没有写入 `state.traces`，candidate/engineer 仍会保留；
 - 只有真实 remote/provenance 结果或后续触发逻辑出现时才加入下一个版本；未观察到结果的分支不会被提前画入族谱；
-- PNG 会把同一代码版本的 seed 复验合并为一个节点并在详情中列出所有 seed 数值，`ledger.json` / `experiments.jsonl` 仍保留每个实验；
-- 每次真实实验返回（包括 failed）后立即刷新台账；
+- PNG 每个 seed 组一个卡片节点；`ledger.json` / `experiments.jsonl` 保留每个实验；
+- 卡片按文本自动换行，父子树按子树宽度布局；同一父节点的多个子节点分列显示，节点数或深度增加时画布宽高自动增长，文字不会互相覆盖；
+- 每次真实实验返回（包括 failed）后立即刷新台账；`lineage.png` / `lineage.svg` 随每个新结果重绘；
 - `ledger.json` 的 `parent_warnings` 会校验父节点、cycle、candidate/engineer/full 关系和 subset→full 虚线，正常应为空。
 
 - **同族判定**：比较目标仓库中模型定义文件的 git blob，不比较 commit 或阶段配置。
@@ -505,6 +509,8 @@ coral-wikitext-ppl-s7-r1-r1-r2-r1 · run-1olswx6
 - 第二行：当前阶段(完成数/任务数) · 最近一次**属于该阶段**的 progress · 正在运行的
   RSI Super Agent task；多个 task 会显示为 `review.peer ×3` 这样的计数；没有运行中的
   task 时省略该字段；
+- 如果该 run 正在远程训练，Super Agent 字段会追加 `Remoting at n`，n 是本次 run 的第 n 次
+  remote 实验；编号会从已有 `remote-*.json` 继续，resume 后不会重新从 1 开始；
 - 每秒刷新一次；
 - 同一阶段内独立的 superagent 并行执行，存在上下游依赖的步骤保持串行；GPU
   实验仍按资源和 worktree 约束串行；

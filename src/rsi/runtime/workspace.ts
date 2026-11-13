@@ -492,6 +492,21 @@ export interface RemoteOptions {
   transport?: RemoteTransport;
 }
 
+/** Highest numbered remote attempt already present in a run. */
+function existingRemoteSequence(store: ArtifactStore): number {
+  try {
+    const dir = path.join(store.root, "artifacts", "experiments");
+    let max = 0;
+    for (const name of fs.readdirSync(dir)) {
+      const match = /^remote-(\d+)\./.exec(name);
+      if (match) max = Math.max(max, Number(match[1]));
+    }
+    return max;
+  } catch {
+    return 0;
+  }
+}
+
 export class RemoteRunner implements Runner {
   private readonly store: ArtifactStore;
   private readonly remote: RemoteConfig;
@@ -510,6 +525,7 @@ export class RemoteRunner implements Runner {
     this.timeoutS = opts.timeoutS ?? opts.remote.timeout_s ?? 7200;
     this.signal = opts.signal;
     this.transport = opts.transport ?? sh;
+    this.sequence = existingRemoteSequence(this.store);
   }
 
   private sh(binary: string, args: readonly string[], opts: { timeoutS?: number } = {}): Promise<RemoteTransportResult> {
@@ -601,6 +617,15 @@ export class RemoteRunner implements Runner {
     let stdout = "";
     let stderr = "";
 
+    // A live marker is the honest source of "which remote attempt is running".
+    // It is removed in finally below; the TUI only trusts an existing marker.
+    const running = this.store.writeJson(`experiments/remote-${String(seq).padStart(4, "0")}.running.json`, {
+      attempt: seq,
+      started_at: new Date().toISOString(),
+      host: this.remote.host,
+      gpu_ids: this.remote.gpu_ids,
+    });
+    try {
     const mkdir = await this.sh("ssh", [
       ...this.sshBase(),
       "--",
@@ -701,6 +726,9 @@ export class RemoteRunner implements Runner {
       result,
     });
     return result;
+    } finally {
+      fs.rmSync(running, { force: true });
+    }
   }
 
   private fail(logPath: string, stdout: string, stderr: string, started: number): ExperimentResult {

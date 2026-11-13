@@ -536,7 +536,13 @@ function resolveParents(experiments: LedgerExperiment[]): void {
   const byCommitAndScope = new Map<string, LedgerExperiment>();
   const baselines = new Map<string, LedgerExperiment>();
   for (const item of experiments) {
-    if (item.commit) byCommitAndScope.set(`${item.run_id}:${item.commit}:${item.scope}`, item);
+    // The first experiment of a code version is the version's representative.
+    // Later seed replicas share the commit but must not become the parent of
+    // the next generation by accident.
+    if (item.commit) {
+      const key = `${item.run_id}:${item.commit}:${item.scope}`;
+      if (!byCommitAndScope.has(key)) byCommitAndScope.set(key, item);
+    }
     if (item.kind === "baseline") baselines.set(`${item.run_id}:${item.family_id}:${item.scope}`, item);
   }
   for (const item of experiments) {
@@ -757,9 +763,10 @@ interface LineageNode {
   edge: "solid" | "dashed";
   core: string;
   family: string;
+  selected: boolean;
 }
 
-/** Org-chart input: project → model-definition family → grouped experiments. */
+/** Org-chart input: project → seed groups, with one node per parent/version. */
 function lineageNodes(project: string, experiments: LedgerExperiment[]): LineageNode[] {
   const nodes: LineageNode[] = [{
     id: "project",
@@ -770,14 +777,16 @@ function lineageNodes(project: string, experiments: LedgerExperiment[]): Lineage
     edge: "solid",
     core: "",
     family: "",
+    selected: false,
   }];
 
-  // Several remote seeds share one code commit. Keep every measurement in
-  // ledger.json, but draw one compact family-tree node per code version with
-  // all seed values in its detail.
+  // Seeds are repeated measurements of one code version. Group them only when
+  // they have the same parent, kind, scope, commit and idea. Different code
+  // versions or hypotheses keep distinct nodes, even if their parent is shared.
   const groups = new Map<string, LedgerExperiment[]>();
   for (const item of experiments) {
-    const key = `${item.kind}|${item.scope}|${item.commit ?? item.label}|${item.idea_id}`;
+    const parent = item.kind === "baseline" ? "project" : item.parent_id ?? "project";
+    const key = [parent, item.kind, item.scope, item.commit ?? item.label, item.idea_id].join("|");
     const list = groups.get(key) ?? [];
     list.push(item);
     groups.set(key, list);
@@ -791,48 +800,65 @@ function lineageNodes(project: string, experiments: LedgerExperiment[]): Lineage
       groupByExperiment.set(item.id, id);
     }
   }
+
   for (const items of groups.values()) {
     const first = items[0];
     const id = groupId.get(first.id)!;
-    const parentExp = first.parent_id;
+    const parentExp = first.kind === "baseline" ? null : first.parent_id;
     const parent = parentExp ? (groupByExperiment.get(parentExp) ?? "project") : "project";
-    const versions = [...new Set(items.map((item) => /^v(\d+)/.exec(item.label)?.[1]).filter(Boolean))].sort((a, b) => Number(a) - Number(b));
-    const versionText = versions.length > 1 ? `v${versions[0]}-v${versions[versions.length - 1]}` : versions.length ? `v${versions[0]}` : "";
-    const metrics: Record<string, number[]> = {};
+    const versions = [...new Set(items.map((item) => /^v(\d+)/.exec(item.label)?.[1]).filter(Boolean))]
+      .sort((a, b) => Number(a) - Number(b));
+    const versionText = versions.length > 1
+      ? `v${versions[0]}-v${versions[versions.length - 1]}`
+      : versions.length ? `v${versions[0]}` : "";
+    const baseLabel = first.label
+      .replace(/^v\d+\s+/, "")
+      .replace(/\s+seed\s+\d+$/, "")
+      .trim();
+    const metrics = new Map<string, number[]>();
     for (const item of items) for (const [name, value] of Object.entries(item.metrics)) {
       if (!Number.isFinite(value)) continue;
-      (metrics[name] ??= []).push(value);
+      const list = metrics.get(name) ?? [];
+      if (!list.includes(value)) list.push(value);
+      metrics.set(name, list);
     }
-    const metricText = Object.keys(metrics).sort().map((name) => {
-      const values = [...new Set(metrics[name].map((value) => Number(value.toFixed(6))))];
-      return `${name}=${values.slice(0, 4).join("/")}${metrics[name].length > 4 ? "/…" : ""}`;
-    }).join(", ") || "no metrics";
-    const labels = [...new Set(items.map((item) => item.label))].sort();
-    const decision = [...new Set(items.map((item) => item.decision))].join("/");
-    const selected = items.some((item) => item.selected);
-    const core = items.find((item) => item.core)?.core ?? "";
-    const kind = first.kind;
-    const edge = items.some((item) => item.edge === "dashed") ? "dashed" : "solid";
-    const node: LineageNode = {
+    const metricText = [...metrics.entries()].sort(([a], [b]) => a.localeCompare(b))
+      .map(([name, values]) => `${name}=${values.map((value) => Number(value.toFixed(6))).join("/")}`)
+      .join(", ") || "no metrics";
+    const decisions = [...new Set(items.map((item) => item.decision))].join("/");
+    const parentItem = parentExp ? experiments.find((item) => item.id === parentExp) : null;
+    const parentLabel = parentItem?.label ?? "project";
+    const seeds = items.length > 1 ? `${items.length} seeds` : "1 seed";
+    const detail = [
+      versionText,
+      seeds,
+      `${first.scope} · ${metricText}`,
+      `${decisions}${items.some((item) => item.selected) ? " · SELECTED" : ""} · family ${first.family_id.replace(/^fam-/, "").slice(0, 8)}`,
+      `parent ${parentLabel}${first.commit ? ` · commit ${first.commit.slice(0, 8)}` : ""}`,
+    ].filter(Boolean).join(" · ");
+    nodes.push({
       id,
-      label: `${kind} ${first.idea_id}${versionText ? ` (${versionText})` : ""}`,
-      detail: [versionText, labels.length > 1 ? `${items.length} runs` : "", metricText, decision, `family ${first.family_id.replace(/^fam-/, "").slice(0, 8)}`, selected ? "SELECTED" : ""].filter(Boolean).join(" · "),
-      kind,
+      label: `${baseLabel}${versionText ? ` (${versionText})` : ""}`,
+      detail,
+      kind: first.kind,
       parent,
-      edge,
-      core,
+      edge: items.some((item) => item.edge === "dashed") ? "dashed" : "solid",
+      core: items.find((item) => item.core)?.core ?? "",
       family: first.family_id,
-    };
-    nodes.push(node);
+      selected: items.some((item) => item.selected),
+    });
   }
   return nodes;
 }
 
 function renderLineage(ledgerDir: string, lineage: unknown): void {
   const jsonFile = path.join(ledgerDir, "lineage.json");
-  const changed = writeIfChanged(jsonFile, `${JSON.stringify(lineage, null, 2)}
+  writeIfChanged(jsonFile, `${JSON.stringify(lineage, null, 2)}
 `);
-  if (!changed || process.env.RSI_LEDGER_RENDER === "0") return;
+  // Render on every refresh, not only when the JSON bytes change. The JSON is
+  // the source of truth, but the visual layout can change independently (for
+  // example when the renderer is upgraded or a new node is added).
+  if (process.env.RSI_LEDGER_RENDER === "0") return;
   // Optional: PNG/SVG are generated only when matplotlib is available. The
   // JSON/Markdown/DOT files above remain the portable source of truth.
   const script = path.join(import.meta.dirname ?? path.dirname(new URL(import.meta.url).pathname), "render_lineage.py");

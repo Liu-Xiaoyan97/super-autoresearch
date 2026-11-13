@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
-"""Render the RSI experiment lineage as an org-chart tree.
+"""Render the RSI experiment lineage as a width-aware card tree.
 
 Input is the generated lineage.json. Output is lineage.png and lineage.svg.
+Each same-parent seed group is one node.  The tree is laid out in points, so
+long labels wrap inside a card instead of colliding with a sibling, and the
+canvas grows with both the number of leaves and the depth of the tree.
+
 The renderer is best effort: without matplotlib it exits successfully so the
 durable JSON/Markdown/DOT ledger remains available.
 """
@@ -16,7 +20,8 @@ try:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.patches import Patch
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import FancyBboxPatch, Patch
 except Exception as exc:  # pragma: no cover - depends on host image
     print(f"lineage render skipped (matplotlib unavailable): {exc}", file=sys.stderr)
     raise SystemExit(0)
@@ -36,6 +41,26 @@ COLORS = {
     "pending": "#7c8794",
 }
 
+CHAR_PT = 4.25          # approximate width of one 6.8pt character
+TITLE_PT = 8.2          # title font size
+DETAIL_PT = 6.6         # detail font size
+TITLE_LINE = 10.5       # title line height in points
+DETAIL_LINE = 8.0       # detail line height in points
+WRAP_TITLE = 34
+WRAP_DETAIL = 56
+PAD_X = 10.0
+PAD_Y = 8.0
+ROW_GAP = 24.0
+SIBLING_GAP = 14.0
+MARGIN = 36.0
+HEADER = 88.0
+FOOTER = 82.0
+MIN_CARD_W = 228.0
+
+
+def wrap(text: str, width: int) -> list[str]:
+    return textwrap.wrap(text.strip(), width=width, break_long_words=False, break_on_hyphens=False) or [""]
+
 
 def main() -> int:
     if len(sys.argv) != 3:
@@ -46,23 +71,27 @@ def main() -> int:
     nodes = {node["id"]: dict(node) for node in data.get("nodes", [])}
     if not nodes:
         return 0
-    root = next((node for node in nodes.values() if node.get("parent") is None), None)
+
+    # One card per seed group.  A project node is only a synthetic root; every
+    # real node retains the grouped parent relation computed by ledger.ts.
+    root = next((node_id for node_id, node in nodes.items() if node.get("parent") is None), None)
     if root is None:
-        root = next(iter(nodes.values()))
-        root["parent"] = None
+        root = next(iter(nodes))
+        nodes[root]["parent"] = None
     children: dict[str, list[str]] = {node_id: [] for node_id in nodes}
-    for node in nodes.values():
+    for node_id, node in nodes.items():
         parent = node.get("parent")
-        if parent in children and parent != node["id"]:
-            children[parent].append(node["id"])
-    for node_id in children:
-        children[node_id].sort()
+        if parent in children and parent != node_id:
+            children[parent].append(node_id)
+    for kids in children.values():
+        kids.sort(key=lambda node_id: str(nodes[node_id].get("label", node_id)))
 
     depth: dict[str, int] = {}
+
     def compute_depth(node_id: str, seen: set[str] | None = None) -> int:
-        seen = set() if seen is None else seen
         if node_id in depth:
             return depth[node_id]
+        seen = set() if seen is None else seen
         if node_id in seen:
             depth[node_id] = 0
             return 0
@@ -71,86 +100,156 @@ def main() -> int:
         value = 0 if parent not in nodes else compute_depth(parent, seen) + 1
         depth[node_id] = value
         return value
+
     for node_id in nodes:
         compute_depth(node_id)
 
-    # Leaves get sequential columns; a parent is centred over its children.
-    x: dict[str, float] = {}
-    next_leaf = 0
-    visiting: set[str] = set()
-    def assign(node_id: str) -> float:
-        nonlocal next_leaf
-        if node_id in x:
-            return x[node_id]
-        if node_id in visiting:
-            x[node_id] = float(next_leaf)
-            next_leaf += 1
-            return x[node_id]
-        visiting.add(node_id)
+    # Text is wrapped before sizing.  Every card shares one width and one
+    # maximal height, which makes the row spacing independent of node count.
+    content: dict[str, dict[str, object]] = {}
+    all_lines: list[str] = []
+    for node_id, node in nodes.items():
+        label = str(node.get("label") or node_id)
+        core = str(node.get("core") or "").strip()
+        detail = str(node.get("detail") or "").strip()
+        title_lines = wrap(label, WRAP_TITLE)
+        detail_lines = wrap(core, WRAP_DETAIL) + wrap(detail, WRAP_DETAIL) if core else wrap(detail, WRAP_DETAIL)
+        all_lines.extend(title_lines)
+        all_lines.extend(detail_lines)
+        title_h = len(title_lines) * TITLE_LINE
+        detail_h = len(detail_lines) * DETAIL_LINE
+        content[node_id] = {
+            "title": title_lines,
+            "detail": detail_lines,
+            "title_h": title_h,
+            "detail_h": detail_h,
+            "height": PAD_Y * 2 + title_h + 4 + detail_h,
+        }
+
+    card_w = max(MIN_CARD_W, max((len(line) for line in all_lines), default=1) * CHAR_PT + PAD_X * 2 + 24)
+    card_h_max = max(float(item["height"]) for item in content.values())
+    row_h = card_h_max + ROW_GAP
+
+    # A parent card is centred over the horizontal span of its children.
+    # Sibling subtrees never share columns, so cards cannot overlap.
+    subtree_w: dict[str, float] = {}
+
+    def measure(node_id: str) -> float:
         kids = [kid for kid in children.get(node_id, []) if depth.get(kid, 0) > depth.get(node_id, 0)]
-        if not kids:
-            x[node_id] = float(next_leaf)
-            next_leaf += 1
+        if kids:
+            total = sum(measure(kid) for kid in kids) + SIBLING_GAP * (len(kids) - 1)
         else:
-            values = [assign(kid) for kid in kids]
-            x[node_id] = sum(values) / len(values)
-        visiting.discard(node_id)
-        return x[node_id]
-    assign(root["id"])
+            total = 0.0
+        subtree_w[node_id] = max(card_w, total)
+        return subtree_w[node_id]
+
+    x: dict[str, float] = {}
+
+    def place(node_id: str, left: float) -> None:
+        kids = [kid for kid in children.get(node_id, []) if depth.get(kid, 0) > depth.get(node_id, 0)]
+        width = subtree_w[node_id]
+        if not kids:
+            x[node_id] = left + width / 2
+            return
+        total = sum(subtree_w[kid] for kid in kids) + SIBLING_GAP * (len(kids) - 1)
+        child_left = left + (width - total) / 2
+        for kid in kids:
+            place(kid, child_left)
+            child_left += subtree_w[kid] + SIBLING_GAP
+        x[node_id] = (x[kids[0]] + x[kids[-1]]) / 2
+
+    measure(root)
+    place(root, 0.0)
+    # Defensive fallback for malformed/disconnected input: never silently drop
+    # a node from the picture.
+    next_left = subtree_w[root] + SIBLING_GAP
     for node_id in nodes:
         if node_id not in x:
-            x[node_id] = float(next_leaf)
-            next_leaf += 1
+            subtree_w[node_id] = card_w
+            place(node_id, next_left)
+            next_left += card_w + SIBLING_GAP
 
     max_depth = max(depth.values(), default=0)
-    max_x = max(x.values(), default=0)
-    spacing = 8.2
-    fig = plt.figure(figsize=(max(16, (max_x + 1) * spacing * .82), max(12, (max_depth + 1) * 5.0 + 3.2)), facecolor="#f7f9fc")
-    ax = fig.add_axes([0.035, 0.18, 0.93, 0.70])
-    ax.set_xlim(-1.2, max_x * spacing + 9.0)
-    ax.set_ylim(-max_depth * 4.6 - 3.4, 1.2)
+    tree_w = max(
+        max(x.get(node_id, 0.0) + subtree_w.get(node_id, card_w) / 2 for node_id in nodes),
+        card_w,
+    )
+    tree_w = max(tree_w, max(x.values(), default=0.0) + card_w / 2)
+    canvas_w = max(720.0, tree_w + MARGIN * 2)
+    canvas_h = HEADER + (max_depth + 1) * row_h + card_h_max + FOOTER
+
+    fig = plt.figure(figsize=(canvas_w / 72.0, canvas_h / 72.0), facecolor="#f7f9fc")
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, canvas_w)
+    ax.set_ylim(0, canvas_h)
     ax.axis("off")
 
-    for node in nodes.values():
+    def top_of(node_id: str) -> float:
+        return canvas_h - HEADER - depth[node_id] * row_h
+
+    def bottom_of(node_id: str) -> float:
+        return top_of(node_id) - float(content[node_id]["height"])
+
+    # Draw edges first; every edge runs only through the gap between two rows.
+    for node_id, node in nodes.items():
         parent = node.get("parent")
-        if parent not in nodes or parent == node["id"]:
+        if parent not in nodes or parent == node_id:
             continue
-        x1, y1 = x[parent] * spacing, -depth[parent] * 4.6
-        x2, y2 = x[node["id"]] * spacing, -depth[node["id"]] * 4.6
-        mid = y2 + 0.45
-        line_style = (0, (4, 3)) if node.get("edge") == "dashed" else "solid"
-        line_color = "#6f8fa8" if node.get("edge") == "dashed" else "#b9c6d4"
-        ax.plot([x1, x1], [y1, mid], color=line_color, lw=1.4, zorder=1, solid_capstyle="round", linestyle=line_style)
-        ax.plot([x1, x2], [mid, mid], color=line_color, lw=1.4, zorder=1, solid_capstyle="round", linestyle=line_style)
-        ax.plot([x2, x2], [mid, y2], color=line_color, lw=1.4, zorder=1, solid_capstyle="round", linestyle=line_style)
+        px, cx = x[parent], x[node_id]
+        pbottom = bottom_of(parent)
+        ctop = top_of(node_id)
+        mid = (pbottom + ctop) / 2
+        dashed = node.get("edge") == "dashed"
+        color = "#6f8fa8" if dashed else "#b2c2d1"
+        linestyle = (0, (4, 3)) if dashed else "solid"
+        ax.plot([px, px], [pbottom, mid], color=color, lw=1.2, linestyle=linestyle, zorder=1)
+        ax.plot([px, cx], [mid, mid], color=color, lw=1.2, linestyle=linestyle, zorder=1)
+        ax.plot([cx, cx], [mid, ctop], color=color, lw=1.2, linestyle=linestyle, zorder=1)
 
-    for node in nodes.values():
-        kind = node.get("kind", "subset")
+    for node_id, node in nodes.items():
+        kind = str(node.get("kind") or "subset")
         color = COLORS.get(kind, "#187c91")
-        size = 135 if kind in ("root", "family") else 92
-        xnode = x[node["id"]] * spacing
-        ynode = -depth[node["id"]] * 4.6
-        if kind == "family":
-            ax.scatter([xnode], [ynode], s=size, marker="s", facecolor=color, edgecolor=color, zorder=3)
-        else:
-            ax.scatter([xnode], [ynode], s=size,
-                       facecolor="white" if kind == "pending" else color,
-                       edgecolor="#d6a52a" if node.get("kind") == "selected" else color,
-                       linewidth=2.4 if node.get("kind") == "selected" else 1.6, zorder=3)
-        label = str(node.get("label", node["id"]))
-        detail = str(node.get("detail", ""))
-        core = str(node.get("core", ""))
-        label_lines = textwrap.wrap(label, width=30, break_long_words=False) or [label]
-        detail_lines = textwrap.wrap((core + ("\n" if core else "") + detail), width=52, break_long_words=False) or [detail]
-        ax.text(xnode + 0.28, ynode, "\n".join(label_lines[:2]),
-                fontsize=9.5, color="#22364b", va="center", ha="left", weight="bold", zorder=4)
-        ax.text(xnode + 0.28, ynode - 0.38, "\n".join(detail_lines[:4]),
-                fontsize=7.8, color="#5f7085", va="top", ha="left", zorder=4)
+        item = content[node_id]
+        top = top_of(node_id)
+        height = float(item["height"])
+        left = x[node_id] - card_w / 2
+        bottom = top - height
+        selected = bool(node.get("selected"))
+        ax.add_patch(FancyBboxPatch(
+            (left, bottom), card_w, height,
+            boxstyle="round,pad=0,rounding_size=4",
+            linewidth=2.2 if selected else 1.0,
+            edgecolor="#d6a52a" if selected else color,
+            facecolor="#ffffff",
+            zorder=2,
+        ))
+        title_top = top - PAD_Y
+        title_center = title_top - TITLE_LINE / 2
+        ax.scatter(
+            [left + 14], [title_center], s=44,
+            facecolor="white" if kind == "pending" else color,
+            edgecolor="#d6a52a" if selected else color,
+            linewidth=1.7 if selected else 1.2, zorder=3,
+        )
+        ax.text(
+            left + 25, title_top, "\n".join(item["title"]),
+            fontsize=TITLE_PT, color="#22364b", va="top", ha="left",
+            weight="bold", linespacing=1.05, zorder=4,
+        )
+        detail_top = title_top - float(item["title_h"]) - 4
+        ax.text(
+            left + PAD_X, detail_top, "\n".join(item["detail"]),
+            fontsize=DETAIL_PT, color="#5f7085", va="top", ha="left",
+            linespacing=1.2, zorder=4,
+        )
 
-    fig.text(0.035, 0.962, "RSI Experiment Lineage (stump tree)", fontsize=22, weight="bold", color="#25364b")
-    fig.text(0.035, 0.928,
-             "Top-down = inheritance. A family is one model-definition blob; hyperparameter-only changes stay in the same family. "
-             "Selected incumbent is ringed in gold.", fontsize=10, color="#526479")
+    fig.text(0.03, 1 - 24 / canvas_h, "RSI Experiment Lineage", fontsize=20, weight="bold", color="#25364b")
+    fig.text(
+        0.03, 1 - 47 / canvas_h,
+        "Top-down = inheritance. Each same-parent seed group is a node; a family is one model-definition blob, "
+        "not a commit. Selected incumbent is ringed in gold.",
+        fontsize=8.8, color="#526479",
+    )
     legend = [
         Patch(color=COLORS["root"], label="project root"),
         Patch(color=COLORS["baseline"], label="baseline"),
@@ -160,16 +259,20 @@ def main() -> int:
         Patch(color=COLORS["ablation"], label="ablation"),
         Patch(color=COLORS["rebuttal"], label="rebuttal"),
     ]
-    fig.legend(handles=legend, loc="lower left", bbox_to_anchor=(0.035, 0.018), ncol=7, frameon=False, fontsize=9)
-    from matplotlib.lines import Line2D
-    fig.legend(handles=[Line2D([0], [0], color="#6f8fa8", lw=1.4, linestyle=(0, (4, 3)), label="subset → full (dashed)")],
-               loc="lower right", bbox_to_anchor=(0.97, 0.018), frameon=False, fontsize=9)
+    legend_handles = legend + [
+        Line2D([0], [0], color="#6f8fa8", lw=1.2, linestyle=(0, (4, 3)), label="subset → full (dashed)"),
+    ]
+    fig.legend(handles=legend_handles, loc="lower left", bbox_to_anchor=(0.03, 0.012), ncol=4, frameon=False, fontsize=8.5)
     notes = data.get("family_rule", "")
     if notes:
-        fig.text(0.035, 0.105, "Family rule: " + notes, fontsize=8.5, color="#627287")
+        fig.text(0.03, 58 / canvas_h, "Family rule: " + notes, fontsize=7.8, color="#627287")
+    warnings = data.get("parent_warnings") or []
+    if warnings:
+        fig.text(0.03, 19 / canvas_h, "Parent warnings: " + "; ".join(str(item) for item in warnings[:3]), fontsize=7.5, color="#a33b3b")
+
     out_dir.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_dir / "lineage.png", dpi=180, facecolor=fig.get_facecolor())
-    fig.savefig(out_dir / "lineage.svg", facecolor=fig.get_facecolor())
+    fig.savefig(out_dir / "lineage.png", dpi=160, facecolor=fig.get_facecolor(), bbox_inches="tight", pad_inches=0.2)
+    fig.savefig(out_dir / "lineage.svg", facecolor=fig.get_facecolor(), bbox_inches="tight", pad_inches=0.2)
     plt.close(fig)
     print(f"rendered {out_dir / 'lineage.png'}")
     return 0

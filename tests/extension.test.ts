@@ -1,8 +1,9 @@
 import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import rsiExtension, { currentOpenRuns, workingTuiAgents } from "../extensions/rsi.ts";
+import rsiExtension, { activeRemoteAttempt, currentOpenRuns, tuiStatusLines, workingTuiAgents } from "../extensions/rsi.ts";
 import { fixture, repoRoot, tempDir } from "./helpers.ts";
 
 function fakeApi(messages: Array<{ message: any; options: any }> = []) {
@@ -68,6 +69,27 @@ test("the TUI lists and counts every working Super Agent", () => {
     ],
   } as any;
   assert.deepEqual(workingTuiAgents(status), ["review.peer ×3", "code.subset"]);
+});
+
+test("the TUI shows the active remote attempt beside the Super Agent", () => {
+  const root = tempDir("rsi-tui-remote-");
+  const dir = path.join(root, "artifacts", "experiments");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "remote-0003.running.json"), "{}");
+  const status = {
+    run_id: "run-remote",
+    root,
+    tickets: [{ state: "working", task: "code.subset" }],
+    stages: [{ stage: "search", section: "§3.2", title: "Experiment", state: "working", tasks: 1, done: 0 }],
+    progress: undefined,
+    attention: undefined,
+    policy: { version: "", mode: "auto", paused: false },
+  } as any;
+  assert.equal(activeRemoteAttempt(root), 3);
+  const lines = tuiStatusLines(status);
+  assert.match(lines[1], /Super Agent: code\.subset · Remoting at 3/);
+  fs.rmSync(path.join(dir, "remote-0003.running.json"));
+  assert.equal(activeRemoteAttempt(root), null);
 });
 
 test("reload reattaches only open runs from the current process", () => {
