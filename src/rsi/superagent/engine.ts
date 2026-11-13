@@ -859,22 +859,26 @@ export class Engine {
 
   /** A person's stop. It ends the Ticket and withdraws its Mandate; nothing resumes it. */
   stop(ticketId: string, reason = "stopped by a person"): Ticket {
-    const ticket = this.requireTicket(ticketId);
-    if (!liveTicket(ticket)) return ticket;
-    const assignment = runningAssignment(ticket);
-    if (assignment) this.endAssignment(ticket, assignment, reason, true);
-    this.endTicket(ticket, "person", "stopped", reason);
-    this.emit({ type: "ticket.stopped", at: this.nowDate(), data: { ticketId, reason } });
-    return this.requireTicket(ticketId);
+    return this.store.atomic(() => {
+      const ticket = this.requireTicket(ticketId);
+      if (!liveTicket(ticket)) return ticket;
+      const assignment = runningAssignment(ticket);
+      if (assignment) this.endAssignment(ticket, assignment, reason, true);
+      this.endTicket(ticket, "person", "stopped", reason);
+      this.emit({ type: "ticket.stopped", at: this.nowDate(), data: { ticketId, reason } });
+      return this.requireTicket(ticketId);
+    });
   }
 
   /** Close a Ticket from the host, such as a run whose artifacts were exported. */
   finish(ticketId: string, outcome: TicketOutcome, reason: string): Ticket {
-    const ticket = this.requireTicket(ticketId);
-    const assignment = runningAssignment(ticket);
-    if (assignment) this.endAssignment(ticket, assignment, reason);
-    this.endTicket(ticket, "host", outcome, reason);
-    return this.requireTicket(ticketId);
+    return this.store.atomic(() => {
+      const ticket = this.requireTicket(ticketId);
+      const assignment = runningAssignment(ticket);
+      if (assignment) this.endAssignment(ticket, assignment, reason);
+      this.endTicket(ticket, "host", outcome, reason);
+      return this.requireTicket(ticketId);
+    });
   }
 
   // ------------------------------------------------------------------ inputs

@@ -243,6 +243,14 @@ export class Orchestrator {
         this.state.aborted = true;
         this.state.abortReason = "style_violation";
         this.transition("stage.abort", "style.violation", { message: error.message });
+      } else if ((error as Error)?.name === "AbortError" || this.ctx.signal?.aborted) {
+        // An interrupted run still needs a durable state/final pair. Do not
+        // call integrity agents with an aborted signal; export what exists.
+        this.state.aborted = true;
+        const reason = this.ctx.signal?.reason;
+        this.state.abortReason = reason === undefined ? "interrupted" : String(reason);
+        this.transition("stage.abort", "run.interrupted", { reason: this.state.abortReason });
+        return this.exportArtifacts(true);
       } else {
         throw error;
       }
@@ -957,21 +965,22 @@ export class Orchestrator {
     return combine(...reports);
   }
 
-  private async exportArtifacts(): Promise<FinalArtifacts> {
+  private async exportArtifacts(interrupted = false): Promise<FinalArtifacts> {
     let accepted =
       !this.state.aborted &&
       this.state.review !== null &&
       this.state.review.score >= this.ctx.config.reviewThreshold &&
       this.state.metaReview !== null &&
       this.state.metaReview.decision === "accept";
-    const integrity = await this.exportIntegrity();
+    // Interruption must be exportable even when the signal is already aborted.
+    const integrity = interrupted ? combine() : await this.exportIntegrity();
     const clean =
       !integrity.spec_violations.length &&
       !integrity.ref_violations.length &&
       integrity.score_verified &&
       integrity.method_code_alignment >= 0.5;
     accepted = accepted && clean;
-    const extra: Record<string, unknown> = { accepted };
+    const extra: Record<string, unknown> = { accepted, ...(interrupted ? { interrupted: true } : {}) };
     if (!accepted && !this.state.aborted) {
       if (!this.state.exportReason) {
         this.state.exportReason = !clean ? "integrity_not_clean" : "acceptance_gates_not_met";

@@ -10,9 +10,9 @@
  *   session(runId)         the live engine of a run, when this process has it
  *   list() / status(...)   read every run on disk, live or not
  *
- * A run that ended in a previous process stays readable; it is not resumed,
- * because the SOP holds no mid-loop checkpoint and pretending otherwise would
- * manufacture a result. Restarting it creates a new run, at a new directory.
+ * An open run whose process is gone can resume from its durable state into a
+ * new attempt. A run that already ended (completed, failed, or stopped) stays
+ * readable; resuming an ended run is limited to the failed and aborted cases.
  */
 
 import fs from "node:fs";
@@ -183,12 +183,85 @@ export class RunSession {
     return this.engine.requireTicket(this.ticketId);
   }
 
-  /** Idle a session: the run stops and its worker is released. */
+  /**
+   * Interrupt a live run: let the aborted SOP export state/final, then end any
+   * tickets that are still open and release the engine. This is the cleanup
+   * path for reload, session shutdown, and a person's stop.
+   */
+  async interrupt(reason = "session closed"): Promise<void> {
+    this.driver.cancel(reason);
+    try {
+      await this.worker.close?.();
+    } catch {
+      /* the worker is already gone */
+    }
+    this.controller.abort(reason);
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        this.done.catch(() => undefined),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, 3000);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    const runTicket = this.engine.ticket(this.ticketId);
+    if (runTicket?.ended?.outcome === "completed") {
+      this.engine.close();
+      return;
+    }
+    this.markInterrupted(reason);
+    for (const ticket of this.engine.tickets({ runId: this.runId, open: true })) {
+      try {
+        this.engine.finish(ticket.id, "aborted", reason);
+      } catch {
+        /* the store may already be closed */
+      }
+    }
+    try {
+      this.engine.close();
+    } catch {
+      /* already closed */
+    }
+  }
+
+  /** Ensure the durable artifact pair says interrupted even if the loop hangs. */
+  private markInterrupted(reason: string): void {
+    try {
+      const stateFile = path.join(this.root, "state.json");
+      let state: Record<string, unknown> = {};
+      try {
+        state = JSON.parse(fs.readFileSync(stateFile, "utf8")) as Record<string, unknown>;
+      } catch {
+        /* no state was written yet */
+      }
+      state.aborted = true;
+      state.abort_reason = reason;
+      fs.mkdirSync(this.root, { recursive: true });
+      fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
+
+      const finalFile = path.join(this.root, "final.json");
+      let final: Record<string, unknown> = {};
+      try {
+        final = JSON.parse(fs.readFileSync(finalFile, "utf8")) as Record<string, unknown>;
+      } catch {
+        /* no final was written yet */
+      }
+      final.aborted = true;
+      final.abort_reason = reason;
+      if (!Array.isArray(final.decision_path)) final.decision_path = state.decision_path ?? [];
+      final.extra = { ...(typeof final.extra === "object" && final.extra ? final.extra : {}), interrupted: true };
+      fs.writeFileSync(finalFile, JSON.stringify(final, null, 2), "utf8");
+    } catch {
+      /* the run directory may already be gone */
+    }
+  }
+
+  /** Idle a session: interrupt and release the worker without blocking the caller. */
   close(): void {
-    this.driver.cancel("session closed");
-    this.worker.close?.();
-    this.controller.abort();
-    this.engine.close();
+    void this.interrupt("session closed");
   }
 
   status(): RunStatus {
@@ -286,11 +359,18 @@ class SopDriver implements RunDriver {
         signal,
         onProgress: (message) => this.progress(ticket.id, message),
       });
-      engine.report(ticket.id, {
-        state: "ready",
-        summary: runSummary(result),
-        output: { final: result.final, summary: result.summary, root: result.root, run_id: result.runId },
-      });
+      if (result.final.aborted) {
+        engine.report(ticket.id, {
+          state: "dropped",
+          summary: result.final.abort_reason || "the run was interrupted",
+        });
+      } else {
+        engine.report(ticket.id, {
+          state: "ready",
+          summary: runSummary(result),
+          output: { final: result.final, summary: result.summary, root: result.root, run_id: result.runId },
+        });
+      }
       return result;
     } catch (error) {
       if (error instanceof PolicyHoldError) {
@@ -568,7 +648,20 @@ export class SuperagentRuntime {
     // failed-run state has no `ended` entry. Accept the failed report itself;
     // `ended` is set only by a stop or a host finish, and a stop stays final.
     const failedOpen = !ended && (oldStatus?.progress?.state === "failed" || oldStatus?.state === "person/failed");
-    const resumable = aborted || ended?.outcome === "failed" || ended?.outcome === "dropped" || failedOpen;
+    // No live session in this runtime means the previous owner process is gone.
+    // Its open state is a valid checkpoint; resume it as a new attempt.
+    const orphanedOpen = !live && !ended;
+    // A person's stop is final even though interruption cleanup writes an
+    // aborted final while releasing the run.
+    const stopped = ended?.outcome === "stopped";
+    const resumable =
+      !stopped &&
+      (aborted ||
+        ended?.outcome === "failed" ||
+        ended?.outcome === "dropped" ||
+        ended?.outcome === "aborted" ||
+        failedOpen ||
+        orphanedOpen);
     if (!resumable) {
       if (live && !ended) throw new Error(`run ${runId} is still live; wait for it to end`);
       throw new Error(`run ${runId} ended ${ended?.outcome ?? "without a final state"}; only aborted/failed runs can resume`);
@@ -625,6 +718,83 @@ export class SuperagentRuntime {
       changed.push(session.runId);
     }
     return changed;
+  }
+
+  /**
+   * Recover open runs left by a previous Pi process. A process restart cannot
+   * resume an in-memory loop, so end its open tickets as aborted and mark the
+   * research state interrupted; `resume()` can then create a new attempt.
+   */
+  recoverStaleRuns(processStarted: string): string[] {
+    const recovered: string[] = [];
+    for (const run of this.list()) {
+      if (run.updated_at >= processStarted) continue;
+      const status = this.status(run.run_id);
+      if (!status || status.ended || status.state === "ended") continue;
+      const root = path.join(this.out, run.run_id);
+      const dir = path.join(root, "superagent");
+      if (!fs.existsSync(path.join(dir, "state.json"))) continue;
+      try {
+        const store = new FileRepositories(dir, this.policy);
+        const engine = new Engine({
+          store,
+          policy: makePolicy(this.policy),
+          executor: { start() {}, deliver() {}, stop() {} },
+        });
+        try {
+          engine.recover();
+          for (const ticket of engine.tickets({ open: true })) {
+            engine.finish(ticket.id, "aborted", "interrupted by host restart");
+          }
+          // `recover()` reports a blocked run; finish it explicitly as aborted.
+          for (const ticket of engine.runTickets(true)) {
+            engine.finish(ticket.id, "aborted", "interrupted by host restart");
+          }
+        } finally {
+          engine.close();
+        }
+        const stateFile = path.join(root, "state.json");
+        let state: Record<string, unknown> = {};
+        try {
+          state = JSON.parse(fs.readFileSync(stateFile, "utf8")) as Record<string, unknown>;
+        } catch {
+          /* no research state was written before the restart */
+        }
+        state.aborted = true;
+        state.abort_reason = "interrupted by host restart";
+        fs.mkdirSync(root, { recursive: true });
+        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
+        const finalFile = path.join(root, "final.json");
+        let final: Record<string, unknown> = {};
+        try {
+          final = JSON.parse(fs.readFileSync(finalFile, "utf8")) as Record<string, unknown>;
+        } catch {
+          /* no final was exported before the restart */
+        }
+        final.aborted = true;
+        final.abort_reason = "interrupted by host restart";
+        if (!Array.isArray(final.decision_path)) final.decision_path = state.decision_path ?? [];
+        final.extra = { ...(typeof final.extra === "object" && final.extra ? final.extra : {}), interrupted: true };
+        fs.writeFileSync(finalFile, JSON.stringify(final, null, 2), "utf8");
+        recovered.push(run.run_id);
+      } catch {
+        /* a corrupt or disappearing run stays visible to /rsi status */
+      }
+    }
+    return recovered;
+  }
+
+  /** Interrupt every live run and wait for its state/final cleanup. */
+  async interruptAll(reason: string): Promise<void> {
+    const sessions = [...this.sessions.values()];
+    this.sessions.clear();
+    for (const session of sessions) {
+      try {
+        await session.interrupt(reason);
+      } catch {
+        /* keep cleaning the remaining sessions */
+      }
+    }
   }
 
   closeAll(): void {

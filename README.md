@@ -248,7 +248,22 @@ rm -rf /workspace/RSI/.rsi-baseline/coral-wikitext-ppl-*
 /rsi resume <run_id>
 ```
 
-`stop` 是最终的；失败的 open ticket 可以 resume。
+`stop` 是最终的；failed、aborted、dropped 或进程中断留下的 open run 可以 resume：
+
+```text
+/rsi resume <run_id>
+```
+
+`/reload`、切换 session、退出 Pi 或人工中断 live run 时，RSI 会：
+
+- 写出 `state.json` 和 `final.json`，标记 `aborted=true`、`abort_reason`；
+- 结束 superagent 的 run ticket 和所有 open task ticket；
+- 关闭 worker 和运行中的任务；
+- 清除 TUI widget。
+
+之后用 `/rsi resume <run_id>` 从状态创建新的 attempt。Pi 进程重启时，
+`session_start` 会把上一个进程留下的 open run 恢复成 aborted 状态并写出 state/final，
+同样可以 resume。
 
 ### TUI 运行状态
 
@@ -266,8 +281,7 @@ coral-wikitext-ppl-s7-r1-r1-r2-r1 · run-1olswx6
 - 多个 run 各占两行，中间空一行；
 - 需要人回答时显示 `NEEDS PERSON`；
 - run 完成、失败或停止后自动清除，不残留旧状态；
-- `/reload` 或切换 session 后，会从 run 的 superagent state 重新挂载本 Pi 进程启动
-  后仍在运行的 open run；
+- `/reload` 或切换 session 会中断 live run，widget 清除；resume 后重新显示；
 - 底部 footer status 只保留其他扩展的信息。
 
 baseline 进度会区分来源：

@@ -465,6 +465,130 @@ test("a failed run that never ended can still resume", async () => {
   runtime.closeAll();
 });
 
+test("an open run whose previous process is gone can resume", async () => {
+  const cwd = tempDir("rsi-superagent-orphan-");
+  const worker: TaskWorker = {
+    run: (_ticket, signal) =>
+      new Promise((_, reject) => {
+        const abort = () => reject(new DOMException("aborted", "AbortError"));
+        if (signal.aborted) return abort();
+        signal.addEventListener("abort", abort, { once: true });
+      }),
+  };
+  const first = new SuperagentRuntime({ cwd, workerFactory: () => worker });
+  const { session } = first.dispatch({
+    problem: fixture("ood_frozen_encoder"),
+    mode: "mock",
+    agents: "inline",
+    seed: 7,
+    title: "orphan open run",
+    sessionId: "orphan-open",
+  });
+  await until(() => fs.existsSync(path.join(session.root, "superagent", "state.json")));
+  assert.equal(first.status(session.runId)?.ended, undefined);
+  void session.done.catch(() => {});
+
+  const second = new SuperagentRuntime({ cwd, workerFactory: () => worker });
+  const resumed = second.resume(session.runId);
+  assert.equal(resumed.runId, `${session.runId}-r1`);
+  assert.equal(resumed.spec.options.resumed_from, session.runId);
+  void resumed.done.catch(() => {});
+  second.closeAll();
+  first.closeAll();
+});
+
+test("a restart recovers an open run into a durable aborted state", async () => {
+  const cwd = tempDir("rsi-superagent-recover-");
+  const worker: TaskWorker = {
+    run: (_ticket, signal) =>
+      new Promise((_, reject) => {
+        const abort = () => reject(new DOMException("aborted", "AbortError"));
+        if (signal.aborted) return abort();
+        signal.addEventListener("abort", abort, { once: true });
+      }),
+  };
+  const first = new SuperagentRuntime({ cwd, workerFactory: () => worker });
+  const { session } = first.dispatch({
+    problem: fixture("ood_frozen_encoder"),
+    mode: "mock",
+    agents: "inline",
+    seed: 7,
+    title: "recover open run",
+    sessionId: "recover-open",
+  });
+  await until(() => fs.existsSync(path.join(session.root, "superagent", "state.json")));
+  void session.done.catch(() => {});
+  // Simulate the next process by copying the durable run directory, then
+  // stopping the original runtime so it cannot overwrite the recovered state.
+  const nextCwd = tempDir("rsi-superagent-recover-next-");
+  const copiedRoot = path.join(nextCwd, "runs", session.runId);
+  fs.cpSync(session.root, copiedRoot, { recursive: true });
+  fs.writeFileSync(path.join(copiedRoot, "state.json"), JSON.stringify({ aborted: false }));
+  first.closeAll();
+
+  const second = new SuperagentRuntime({ cwd: nextCwd, workerFactory: () => worker });
+  const recovered = second.recoverStaleRuns(new Date(Date.now() + 1000).toISOString());
+  assert.deepEqual(recovered, [session.runId]);
+  const status = second.status(session.runId);
+  assert.equal(status?.ended?.outcome, "aborted");
+  const state = JSON.parse(fs.readFileSync(path.join(copiedRoot, "state.json"), "utf8")) as { aborted?: boolean; abort_reason?: string };
+  assert.equal(state.aborted, true);
+  assert.match(state.abort_reason ?? "", /host restart/);
+
+  const resumed = second.resume(session.runId);
+  assert.equal(resumed.runId, `${session.runId}-r1`);
+  void resumed.done.catch(() => {});
+  second.closeAll();
+});
+
+test("interrupting a live run writes aborted state and ends its tickets", async () => {
+  const cwd = tempDir("rsi-superagent-interrupt-");
+  const runtime = new SuperagentRuntime({
+    cwd,
+    workerFactory: () => {
+      const inline = new InlineWorker(new MockLLMProvider(null, 7));
+      return {
+        run: (ticket, signal) =>
+          ["limitations.extract", "limitations.verify"].includes(ticket.task ?? "")
+            ? inline.run(ticket, signal)
+            : new Promise((_, reject) => {
+                const abort = () => reject(new DOMException("aborted", "AbortError"));
+                if (signal.aborted) return abort();
+                signal.addEventListener("abort", abort, { once: true });
+              }),
+        close: () => inline.close?.(),
+      };
+    },
+  });
+  const { session } = runtime.dispatch({
+    problem: fixture("ood_frozen_encoder"),
+    mode: "mock",
+    agents: "inline",
+    seed: 7,
+    title: "interrupt run",
+    sessionId: "interrupt-run",
+  });
+  const stateFile = path.join(session.root, "state.json");
+  await until(() => {
+    try {
+      const current = JSON.parse(fs.readFileSync(stateFile, "utf8")) as { decision_path?: string[] };
+      return (current.decision_path ?? []).some((token) => String(token).startsWith("limits.ok"));
+    } catch {
+      return false;
+    }
+  });
+  await runtime.interruptAll("session reload");
+  const state = JSON.parse(fs.readFileSync(path.join(session.root, "state.json"), "utf8")) as { aborted?: boolean; abort_reason?: string };
+  assert.equal(state.aborted, true);
+  assert.match(state.abort_reason ?? "", /session reload/);
+  const final = JSON.parse(fs.readFileSync(path.join(session.root, "final.json"), "utf8")) as { aborted?: boolean };
+  assert.equal(final.aborted, true);
+  const status = runtime.status(session.runId);
+  assert.equal(status?.ended?.outcome, "aborted");
+  assert.equal(status?.tickets.every((ticket) => ticket.ended !== null), true);
+  runtime.closeAll();
+});
+
 test("a stopped run is not resumable", async () => {
   const out = tempDir("rsi-superagent-stopped-");
   const worker: TaskWorker = {

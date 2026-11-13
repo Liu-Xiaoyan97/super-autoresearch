@@ -985,11 +985,29 @@ export default function rsiExtension(pi: ExtensionAPI): void {
 
   (pi as any).on?.("session_start", async (_event: unknown, ctx: any) => {
     TUI_CTX = ctx as ToolContext;
+    try {
+      const processStarted = new Date(Date.now() - process.uptime() * 1000).toISOString();
+      runtimeFor(TUI_CTX).recoverStaleRuns(processStarted);
+    } catch {
+      /* status remains readable even if recovery is unavailable */
+    }
     discoverTuiRuns(TUI_CTX);
   });
 
-  (pi as any).on?.("session_shutdown", async () => {
+  (pi as any).on?.("session_shutdown", async (event: any) => {
     const ctx = TUI_CTX;
+    const reason = `session ${String(event?.reason ?? "shutdown")}`;
+    // Reload/new/resume/quit all tear down this extension instance. Interrupt
+    // live runs first so their state/final and protocol tickets are durable.
+    const runtimes = [...HOST.runtimes.values()];
+    HOST.runtimes.clear();
+    for (const runtime of runtimes) {
+      try {
+        await runtime.interruptAll(reason);
+      } catch {
+        /* the runtime may already be gone */
+      }
+    }
     TUI_RUNS.clear();
     stopTuiTimer();
     if (ctx) {
