@@ -255,6 +255,9 @@ function initialPolicy(): PolicySettings {
 }
 
 const HOST: RuntimeHost = { policy: { settings: initialPolicy() }, runtimes: new Map() };
+/** The freshest tool context per runtimes key: a reload replaces it, and a
+ * runtime built before the reload must not keep using the stale one. */
+const LIVE_CTX = new Map<string, ToolContext>();
 
 function runtimeKey(ctx: ToolContext): string {
   return `${ctx.cwd}::${ctx.sessionManager?.getSessionId?.() ?? "no-session"}`;
@@ -262,14 +265,19 @@ function runtimeKey(ctx: ToolContext): string {
 
 function runtimeFor(ctx: ToolContext): SuperagentRuntime {
   const key = runtimeKey(ctx);
+  LIVE_CTX.set(key, ctx);
+  // Always read through the holder: Pi hands every tool call a fresh ctx, and a
+  // cached runtime that captured the previous one fails every later call with
+  // "This extension ctx is stale after session replacement or reload".
+  const current = (): ToolContext => LIVE_CTX.get(key) ?? ctx;
   const existing = HOST.runtimes.get(key);
   if (existing) return existing;
   const runtime = new SuperagentRuntime({
     cwd: ctx.cwd,
     policy: HOST.policy.settings,
-    workerFactory: (context) => workerFor(ctx, context.spec, context.signal),
+    workerFactory: (context) => workerFor(current(), context.spec, context.signal),
     onNotice: (notice) => {
-      notify(ctx, notice);
+      notify(current(), notice);
       refreshTui();
     },
     notifyTaskReports: true,
