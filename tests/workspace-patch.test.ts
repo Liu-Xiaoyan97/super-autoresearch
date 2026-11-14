@@ -164,3 +164,18 @@ test("a diff with a malformed hunk header still applies when git can verify plac
   const log = fs.readFileSync(path.join(base.path, "..", "patches", "malformed-count.apply.log"), "utf8");
   assert.match(log, /status=0/);
 });
+
+test("a diff that applies but changes nothing is refused, not measured", async () => {
+  const repo = fixtureRepo();
+  const problem = makeProblem({ id: "p", repo });
+  const workspace = new GitWorkspace(problem, defaultConfig(), tempDir("rsi-ws-noop-"));
+  const base = await workspace.baselineRepo();
+  // Same content on both sides of the hunk: git apply succeeds, the tree is
+  // identical, and the parent commit would otherwise become the candidate.
+  const noop = ["--- a/a.txt", "+++ b/a.txt", "@@ -1 +1 @@", "-hello", "+hello"].join("\n");
+  await assert.rejects(() => workspace.writePatch(base, noop, "noop"), /produced no change/);
+  assert.match(
+    fs.readFileSync(path.join(base.path, "..", "patches", "noop.apply.log"), "utf8"),
+    /status=0[\s\S]*no change after apply/,
+  );
+});

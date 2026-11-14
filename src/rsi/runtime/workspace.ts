@@ -1118,6 +1118,14 @@ export class GitWorkspace implements Workspace {
     git(this.worktree, ["checkout", "-B", branch]);
     git(this.worktree, ["add", "-A"]);
     const status = git(this.worktree, ["status", "--porcelain"]).stdout.trim();
+    // A supplied diff that leaves the tree identical is not a code change; the
+    // measurement would silently reuse the parent commit's cached numbers.
+    if (diff && !status) {
+      const safe = safeName(label);
+      fs.writeFileSync(this.store.path("patches", `${safe}.diff`), diff, "utf8");
+      fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\nno change after apply\n`, "utf8");
+      throw new Error("patch applied but produced no change: the diff does not modify the tree");
+    }
     let commit = parent;
     if (status) {
       git(this.worktree, [
