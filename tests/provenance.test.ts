@@ -154,3 +154,66 @@ test("a resumed run sanitizes old parent-commit proxies before trusting them", (
   assert.equal(state.bestEvidence, null);
   assert.equal(state.bestCode, null);
 });
+
+test("invalid incumbent downstream artifacts are cleared on restore", () => {
+  const ctx = makeContext();
+  const idea = makeIdea({ id: "h6" });
+  const proxy: Evidence = {
+    ...makeEvidence({ idea_id: "h6", scope: "subset", metrics: { auroc: 0.9 } }),
+    code: { ...code },
+    result: ok({ auroc: 0.9 }),
+  };
+  const raw = {
+    traces: [{ idea, evidence: [proxy], decision: "good", feedback: "", round: 0, lessons: [] }],
+    evaluated_ids: ["h6"],
+    best_idea: idea,
+    best_evidence: proxy,
+    best_code: proxy.code,
+    ablations: [{ plan_id: "A1", component: "c", metrics: { auroc: 0.9 }, evidence: proxy, ok: true }],
+    manuscript: { id: "paper", title: "stale" },
+    review: { manuscript_id: "paper", score: 9 },
+    reviews: [{ manuscript_id: "paper", score: 9 }],
+    meta_review: { decision: "accept" },
+    rebuttals: [proxy],
+    peer_round: 3,
+    review_refinements: 2,
+    meta_round: 1,
+  };
+  const state = ResearchState.fromDict(ctx.problem, ctx.config, raw);
+  assert.equal(state.bestEvidence, null);
+  assert.deepEqual(state.ablations, []);
+  assert.equal(state.manuscript, null);
+  assert.equal(state.review, null);
+  assert.deepEqual(state.reviews, []);
+  assert.equal(state.metaReview, null);
+  assert.deepEqual(state.rebuttals, []);
+  assert.equal(state.peerRound, 0);
+  assert.equal(state.reviewRefinements, 0);
+  assert.equal(state.metaRound, 0);
+});
+
+test("a repaired final measurement is not invalidated by an earlier proxy", () => {
+  const ctx = makeContext();
+  const idea = makeIdea({ id: "h6" });
+  const proxy: Evidence = {
+    ...makeEvidence({ idea_id: "h6", scope: "subset", metrics: { auroc: 0.9 } }),
+    code: { ...code },
+    result: ok({ auroc: 0.9 }),
+  };
+  const repaired = makeEvidence({
+    idea_id: "h6",
+    scope: "subset",
+    metrics: { auroc: 0.8 },
+    code: { ...code, commit: "candidate-1", parent: "base-commit" },
+    result: ok({ auroc: 0.8 }),
+  });
+  const raw = {
+    traces: [{ idea, evidence: [proxy, repaired], decision: "good", feedback: "", round: 0, lessons: [] }],
+    evaluated_ids: ["h6"],
+    checkpoints: {},
+  };
+  const state = ResearchState.fromDict(ctx.problem, ctx.config, raw);
+  assert.equal(state.traces[0].invalid, undefined);
+  assert.equal(state.traces[0].decision, "good");
+  assert.equal(state.evaluatedIds.has("h6"), true);
+});
