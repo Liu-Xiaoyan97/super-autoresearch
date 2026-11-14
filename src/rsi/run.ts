@@ -453,7 +453,7 @@ export function summarize(
   const rounds = traces.map((trace) => ({
     round: trace?.round ?? 0,
     idea: trace?.idea?.id ?? "?",
-    decision: trace?.decision ?? "?",
+    decision: trace?.invalid ? "invalid" : trace?.decision ?? "?",
   }));
   const scores: number[] = [];
   let ablationVerdict: string | null = null;

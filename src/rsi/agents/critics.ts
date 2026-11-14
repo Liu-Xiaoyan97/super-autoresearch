@@ -5,6 +5,7 @@ import {
   type Trace,
   type Verdict,
   evidenceOk,
+  evidenceProvenanceError,
   finalEvidence,
   isStrictlyBetter,
   makeVerdict,
@@ -13,11 +14,14 @@ import {
 import { BaseAgent } from "./base.ts";
 
 function valid(evidence: Evidence, baseline: Evidence, names: string[]): boolean {
+  const provenance = evidence.result?.status === "ok" ? evidenceProvenanceError(evidence) : null;
   return (
     evidenceOk(evidence) &&
     evidenceOk(baseline) &&
     samplesOk(evidence) &&
     samplesOk(baseline) &&
+    !provenance &&
+    measured(evidence) &&
     names.length > 0 &&
     names.every(
       (name) =>
@@ -34,6 +38,13 @@ function samplesOk(evidence: Evidence): boolean {
   return !evidence.samples?.length || evidence.samples.every((sample) => sample.result === null || sample.result?.status === "ok");
 }
 
+/** A candidate must point at an actual measured execution, not a bare metrics stub. */
+function measured(evidence: Evidence): boolean {
+  if (evidence.idea_id === "baseline") return true;
+  if (evidence.result?.status === "ok") return true;
+  return !!evidence.samples?.length && evidence.samples.every((sample) => sample.result?.status === "ok");
+}
+
 export class SubsetCritic extends BaseAgent {
   readonly NAME = "subset_critic";
   readonly task = "critic.subset";
@@ -43,6 +54,17 @@ export class SubsetCritic extends BaseAgent {
     const deltas = metricDeltas(evidence.metrics, opts.baseline.metrics, specs);
     const primary = specs[0];
     const samples = evidence.samples ?? [];
+    const provenance = evidence.result?.status === "ok" ? evidenceProvenanceError(evidence) : null;
+    if (provenance) {
+      return makeVerdict({
+        decision: "engineer",
+        invalid: true,
+        feedback:
+          `Invalid candidate provenance: ${provenance}. Repair the implementation and re-run; ` +
+          "the baseline was not measured as the candidate and this is not a scientific refutation.",
+        metrics: deltas,
+      });
+    }
     // Multi-seed rule: a candidate is bad only when every seed is worse than
     // the subset baseline on the primary metric. One bad seed is a reason to
     // engineer, not to prune the idea.
@@ -92,6 +114,17 @@ export class FullSetCritic extends BaseAgent {
   ): Promise<Verdict> {
     const specs = this.ctx.problem.metrics;
     const deltas = metricDeltas(evidence.metrics, opts.baseline.metrics, specs);
+    const provenance = evidence.result?.status === "ok" ? evidenceProvenanceError(evidence) : null;
+    if (provenance) {
+      return makeVerdict({
+        decision: "engineer",
+        invalid: true,
+        feedback:
+          `Invalid candidate provenance: ${provenance}. Repair the implementation and re-run; ` +
+          "the baseline was not measured as the candidate and this is not a scientific refutation.",
+        metrics: deltas,
+      });
+    }
     let decision: Verdict["decision"];
     let feedback: string;
     if (!valid(evidence, opts.baseline, specs.map((spec) => spec.name))) {

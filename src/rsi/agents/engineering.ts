@@ -6,7 +6,7 @@ import { FullSetEngineeringPatch, SubsetEngineeringPatch } from "../schemas.ts";
 import { type Evidence, type Idea, makeEvidence } from "../types.ts";
 import { BaseAgent } from "./base.ts";
 import { askUnifiedDiff } from "./patch.ts";
-import { codeOf, runSeeded, subsetSeeds, unappliedEvidence } from "./coding.ts";
+import { codeOf, rejectedEvidence, runSeeded, subsetSeeds } from "./coding.ts";
 
 export class SubsetEngineer extends BaseAgent {
   readonly NAME = "subset_engineer";
@@ -29,7 +29,7 @@ export class SubsetEngineer extends BaseAgent {
         `${idea.id}-subset-engineered`,
       );
     } catch (error) {
-      return unappliedEvidence(idea, "subset", opts.evidence, (error as Error)?.message ?? String(error));
+      return rejectedEvidence(idea, "subset", opts.evidence, error);
     }
     const measured = await runSeeded(
       this.ctx.workspace,
@@ -83,11 +83,15 @@ export class FullSetEngineer extends BaseAgent {
       parent_ids: [idea.id],
       notes: opts.feedback,
     };
-    const repo = await this.ctx.workspace.writePatch(
-      codeOf(opts.evidence),
-      `${out.patch}\nCritique: ${opts.feedback}\nMechanism: ${refined.mechanism}\n`,
-      `${refined.id}-full`,
-    );
+    const patch = out.patch.trim()
+      ? `${out.patch}\nCritique: ${opts.feedback}\nMechanism: ${refined.mechanism}\n`
+      : "";
+    let repo;
+    try {
+      repo = await this.ctx.workspace.writePatch(codeOf(opts.evidence), patch, `${refined.id}-full`, { allowEmpty: true });
+    } catch (error) {
+      return { idea: refined, evidence: rejectedEvidence(refined, "full", opts.evidence, error) };
+    }
     this.ctx.budget.chargeExperiment();
     const result = await this.ctx.workspace.run(repo, "full", refined);
     const measured = makeEvidence({

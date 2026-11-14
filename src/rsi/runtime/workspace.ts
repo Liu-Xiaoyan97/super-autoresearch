@@ -107,7 +107,7 @@ export interface Workspace {
   readonly config: Config;
   readonly root: string;
   baselineRepo(): Promise<RepoRef>;
-  writePatch(repo: RepoRef, patch: string, label: string): Promise<RepoRef>;
+  writePatch(repo: RepoRef, patch: string, label: string, opts?: { allowEmpty?: boolean }): Promise<RepoRef>;
   diff(a: RepoRef, b: RepoRef): Promise<string>;
   run(repo: RepoRef, scope: Scope, idea?: Idea | null, seed?: number): Promise<ExperimentResult>;
   /** Called after each actual benchmark result, including failures. */
@@ -354,6 +354,7 @@ export class SubprocessRunner implements Runner {
     this.timeoutS = opts.timeoutS ?? 300;
     this.signal = opts.signal;
     this.command = opts.command?.length ? opts.command : DEFAULT_EXPERIMENT_COMMAND;
+    this.sequence = existingProcessSequence(this.store);
   }
 
   private expand(req: ExperimentRequest, out: string): string[] {
@@ -364,6 +365,8 @@ export class SubprocessRunner implements Runner {
     const started = Date.now();
     const sequence = ++this.sequence;
     const out = this.store.artifact(`experiments/process-${String(sequence).padStart(4, "0")}.json`);
+    // A resumed process must never read a report left by an earlier exit 0.
+    fs.rmSync(out, { force: true });
     const repo = path.resolve(req.repo.path);
     const argv = this.expand(req, out);
 
@@ -421,6 +424,9 @@ export class SubprocessRunner implements Runner {
         try {
           if (exitCode !== 0) throw new Error(`benchmark exited with status ${exitCode ?? exitSignal}`);
           const data = JSON.parse(fs.readFileSync(out, "utf8")) as Record<string, unknown>;
+          if (typeof data.status === "string" && /fail|error/i.test(data.status)) {
+            throw new Error(`benchmark report status is ${data.status}`);
+          }
           const raw = (data.metrics ?? data) as Record<string, unknown>;
           if (!raw || typeof raw !== "object" || !Object.keys(raw).length) {
             throw new Error("benchmark output must contain nonempty metrics");
@@ -602,6 +608,21 @@ export interface RemoteOptions {
   transport?: RemoteTransport;
 }
 
+/** Highest numbered local attempt already present in a run. */
+function existingProcessSequence(store: ArtifactStore): number {
+  try {
+    const dir = path.join(store.root, "artifacts", "experiments");
+    let max = 0;
+    for (const name of fs.readdirSync(dir)) {
+      const match = /^process-(\d+)\.json$/.exec(name);
+      if (match) max = Math.max(max, Number(match[1]));
+    }
+    return max;
+  } catch {
+    return 0;
+  }
+}
+
 /** Highest numbered remote attempt already present in a run. */
 function existingRemoteSequence(store: ArtifactStore): number {
   try {
@@ -739,7 +760,7 @@ export class RemoteRunner implements Runner {
     const mkdir = await this.sh("ssh", [
       ...this.sshBase(),
       "--",
-      `mkdir -p ${shellQuote(remoteWorktree)} ${shellQuote(remoteOutDir)}`,
+      `mkdir -p ${shellQuote(remoteWorktree)} ${shellQuote(remoteOutDir)} && rm -f ${shellQuote(remoteOut)}`,
     ], { timeoutS: 120 });
     if (mkdir.code !== 0) {
       return this.fail(logPath, stdout + mkdir.stdout, stderr + mkdir.stderr, started);
@@ -797,6 +818,9 @@ export class RemoteRunner implements Runner {
     if (run.code === 0 && fetched.code === 0) {
       try {
         const data = JSON.parse(fetched.stdout) as Record<string, unknown>;
+        if (typeof data.status === "string" && /fail|error/i.test(data.status)) {
+          throw new Error(`remote report status is ${data.status}`);
+        }
         const raw = (data.metrics ?? data) as Record<string, unknown>;
         if (raw && typeof raw === "object" && Object.keys(raw).length) {
           for (const [name, value] of Object.entries(raw)) {
@@ -928,6 +952,14 @@ function tokensOf(text: string): Set<string> {
   return out;
 }
 
+/** A model patch that cannot be turned into a real candidate commit. */
+export class PatchRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PatchRejectedError";
+  }
+}
+
 // --------------------------------------------------------------------------- //
 // git workspace
 // --------------------------------------------------------------------------- //
@@ -940,12 +972,14 @@ export class GitWorkspace implements Workspace {
   readonly store: ArtifactStore;
   readonly runner: Runner;
   private readonly sourceOverride: string | undefined;
+  private readonly simulatedRunner: boolean;
 
   private source = "";
   private baseCommit = "";
   private worktree = "";
   private branchSeq = 0;
   private branchPrefix = "";
+  private simulatedSeq = 0;
   private initialized = false;
 
   constructor(problem: Problem, config: Config, root: string, runner?: Runner, sourceOverride?: string, signal?: AbortSignal) {
@@ -971,6 +1005,7 @@ export class GitWorkspace implements Workspace {
               command: problem.experiment_command,
               signal,
             }));
+    this.simulatedRunner = this.runner instanceof SimulatedRunner;
   }
 
   private async init(): Promise<void> {
@@ -1078,12 +1113,46 @@ export class GitWorkspace implements Workspace {
     };
   }
 
-  async writePatch(repo: RepoRef, patch: string, label: string): Promise<RepoRef> {
+  async writePatch(repo: RepoRef, patch: string, label: string, opts: { allowEmpty?: boolean } = {}): Promise<RepoRef> {
     await this.init();
     const parent = repo.commit || this.baseCommit;
     this.checkout(parent, true);
     const diff = extractUnifiedDiff(patch);
-    let applyLog = "no unified diff; prose patch recorded only";
+    const safe = safeName(label);
+    const hasPatch = patch.trim().length > 0;
+    // Empty patches are the one legitimate no-diff operation: the baseline
+    // snapshot is already the authorized code. A non-empty prose blob is not a
+    // code change and must never become a candidate at the parent commit.
+    // The offline simulator has no real code to patch, so it gets an explicit
+    // marker commit; real subprocess/remote runs never take this branch.
+    if (!diff && hasPatch && !this.simulatedRunner) {
+      fs.writeFileSync(this.store.path("patches", `${safe}.diff`), patch, "utf8");
+      fs.writeFileSync(
+        this.store.path("patches", `${safe}.apply.log`),
+        "no unified diff; refusing to measure the parent commit\n",
+        "utf8",
+      );
+      throw new PatchRejectedError("patch contains no unified diff; refusing to measure the parent commit");
+    }
+    if (!diff && !hasPatch && !label.startsWith("baseline") && !opts.allowEmpty) {
+      fs.writeFileSync(
+        this.store.path("patches", `${safe}.apply.log`),
+        "empty patch is only allowed for the baseline snapshot\n",
+        "utf8",
+      );
+      throw new PatchRejectedError("empty patch is only allowed for the baseline snapshot");
+    }
+    if (!diff && hasPatch) {
+      // Every simulated engineering pass needs its own synthetic commit; a
+      // label-only marker would make the second pass a no-op and hit the cache.
+      this.simulatedSeq += 1;
+      fs.writeFileSync(
+        path.join(this.worktree, ".rsi-simulated"),
+        `${label}\n${this.simulatedSeq}\n${patch}\n`,
+        "utf8",
+      );
+    }
+    let applyLog = diff ? "" : hasPatch ? "simulated prose patch; synthetic code version" : "explicit empty baseline patch";
     if (diff) {
       const patchFile = path.join(this.worktree, ".rsi.patch");
       fs.writeFileSync(patchFile, diff, "utf8");
@@ -1110,10 +1179,9 @@ export class GitWorkspace implements Workspace {
         fs.writeFileSync(this.store.path("patches", `${safe}.diff`), diff, "utf8");
         fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\n`, "utf8");
         const detail = (applied.stderr || applied.stdout || "").trim().slice(0, 500);
-        throw new Error(`patch does not apply (${strategy}): ${detail}`);
+        throw new PatchRejectedError(`patch does not apply (${strategy}): ${detail}`);
       }
     }
-    const safe = safeName(label);
     const branch = `${this.branchPrefix}/${safe}-${++this.branchSeq}`;
     git(this.worktree, ["checkout", "-B", branch]);
     git(this.worktree, ["add", "-A"]);
@@ -1124,7 +1192,7 @@ export class GitWorkspace implements Workspace {
       const safe = safeName(label);
       fs.writeFileSync(this.store.path("patches", `${safe}.diff`), diff, "utf8");
       fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\nno change after apply\n`, "utf8");
-      throw new Error("patch applied but produced no change: the diff does not modify the tree");
+      throw new PatchRejectedError("patch applied but produced no change: the diff does not modify the tree");
     }
     let commit = parent;
     if (status) {
@@ -1139,6 +1207,19 @@ export class GitWorkspace implements Workspace {
         `rsi: ${label}`,
       ]);
       commit = git(this.worktree, ["rev-parse", "HEAD"]).stdout.trim();
+    }
+    if (hasPatch && commit === parent) {
+      fs.writeFileSync(this.store.path("patches", `${safe}.diff`), diff ?? patch, "utf8");
+      fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\ncommit equals parent\n`, "utf8");
+      throw new PatchRejectedError("candidate commit equals its parent; refusing to measure the baseline as a candidate");
+    }
+    if (hasPatch && commit !== parent) {
+      const effective = git(this.worktree, ["diff", "--ignore-all-space", "--ignore-blank-lines", parent, commit], true).stdout.trim();
+      if (!effective) {
+        fs.writeFileSync(this.store.path("patches", `${safe}.diff`), diff ?? patch, "utf8");
+        fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\nwhitespace-only or reverted change\n`, "utf8");
+        throw new PatchRejectedError("candidate diff has no effective code change (whitespace-only/reverted)");
+      }
     }
     fs.writeFileSync(this.store.path("patches", `${safe}.diff`), diff ?? patch, "utf8");
     fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\n`, "utf8");
@@ -1156,15 +1237,38 @@ export class GitWorkspace implements Workspace {
   async diff(a: RepoRef, b: RepoRef): Promise<string> {
     await this.init();
     if (!a.commit || !b.commit) return "";
+    // Simulated runs use prose descriptions as their synthetic code: there is
+    // no real source diff to show, and the synthetic marker commit is not the
+    // implementation. Real runs always return the actual git diff.
+    if (this.simulatedRunner && b.patch) return b.patch;
     const out = git(this.worktree, ["diff", "--no-color", a.commit, b.commit], true).stdout;
-    // In simulated mode no code is executed; the recorded patch is the only
-    // code-level evidence a mock run can offer. Real runs never get this fallback.
-    if (!out && this.config.runner === "simulated" && b.patch) return b.patch;
     return out;
   }
 
   async run(repo: RepoRef, scope: Scope, idea: Idea | null = null, seed?: number): Promise<ExperimentResult> {
     await this.init();
+    // Defense in depth: a caller must not measure the parent commit while
+    // presenting a nonempty candidate patch as the implementation. This is the
+    // exact h6 failure mode; writePatch normally prevents it upstream.
+    if (scope !== "full" && scope !== "rebuttal" &&
+      repo.patch.trim() && repo.commit && repo.parent && repo.commit === repo.parent) {
+      const key = crc32(`${repo.label}:${repo.commit}:${scope}:${seed ?? ""}`);
+      const logPath = this.store.writeJson(`experiments/rejected-provenance-${key.toString(16).padStart(8, "0")}.json`, {
+        status: "failed",
+        reason: "candidate commit equals parent",
+        repo,
+        scope,
+        seed: seed ?? null,
+      });
+      return {
+        metrics: {},
+        status: "failed",
+        log_path: logPath,
+        stdout: "",
+        stderr: "invalid provenance: candidate commit equals its parent; refused to measure the parent commit as the candidate",
+        wall_time_s: 0,
+      };
+    }
     if (repo.commit) {
       const head = git(this.worktree, ["rev-parse", "HEAD"], true);
       if (head.stdout.trim() !== repo.commit) this.checkout(repo.commit);

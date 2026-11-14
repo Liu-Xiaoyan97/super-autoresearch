@@ -2,6 +2,7 @@
 
 import type { Config } from "../config.ts";
 import { asArray, asRecord, canonical } from "../json.ts";
+import { evidenceProvenanceError } from "../types.ts";
 import type {
   AblationPlan,
   AblationResult,
@@ -124,6 +125,56 @@ export class ResearchState {
     state.aborted = item.aborted === true;
     state.abortReason = String(item.abort_reason ?? "");
     state.exportReason = String(item.export_reason ?? "");
+
+    // A state written before the provenance guard may contain an old parent-
+    // commit proxy as a "good" candidate. Never resume it as measured science.
+    const invalid = (evidence: Evidence | null | undefined): boolean =>
+      !!evidence && evidence.result?.status === "ok" && evidenceProvenanceError(evidence) !== null;
+    for (const trace of state.traces) {
+      // Only the final usable measurement matters; an earlier failed repair
+      // must not invalidate a later repaired candidate.
+      const final = (trace.evidence ?? [])[(trace.evidence ?? []).length - 1];
+      if (invalid(final)) {
+        trace.invalid = true;
+        trace.decision = "bad";
+        state.evaluatedIds.delete(trace.idea.id);
+      }
+    }
+    for (const [ideaId, checkpoint] of Object.entries(state.checkpoints)) {
+      const final = (checkpoint.trace?.evidence ?? [])[(checkpoint.trace?.evidence ?? []).length - 1];
+      if (invalid(final)) {
+        delete state.checkpoints[ideaId];
+        state.evaluatedIds.delete(ideaId);
+      }
+    }
+    if (invalid(state.bestEvidence)) {
+      state.bestIdea = null;
+      state.bestEvidence = null;
+      state.bestSubset = null;
+      state.bestCode = null;
+      // Downstream artifacts were derived from the now-invalid incumbent.
+      state.ablations = [];
+      state.ablationPlans = [];
+      state.ablationRound = 0;
+      state.ablationVerdict = null;
+      state.manuscript = null;
+      state.review = null;
+      state.reviews = [];
+      state.metaReview = null;
+      state.peerRound = 0;
+      state.reviewRefinements = 0;
+      state.metaRound = 0;
+      state.rebuttals = [];
+    }
+    // A proxy ablation/rebuttal must not contribute attribution or paper claims.
+    for (const ablation of state.ablations) {
+      if (invalid(ablation.evidence) && ablation.evidence?.result?.status === "ok") {
+        ablation.ok = false;
+        ablation.metrics = {};
+      }
+    }
+    state.rebuttals = state.rebuttals.filter((evidence) => !(evidence.result?.status === "ok" && invalid(evidence)));
+    if (invalid(state.bestSubset)) state.bestSubset = null;
     return state;
   }
 
@@ -140,9 +191,10 @@ export class ResearchState {
       const br = -rankKey(b, this.config.guidanceWeight);
       return ar === br ? a.id.localeCompare(b.id) : ar - br;
     });
+    const invalid = new Set(this.traces.filter((trace) => trace.invalid).map((trace) => trace.idea.id));
     const out: Idea[] = [];
     for (const idea of ordered) {
-      if (this.evaluatedIds.has(idea.id)) continue;
+      if (this.evaluatedIds.has(idea.id) || invalid.has(idea.id)) continue;
       out.push(idea);
       if (out.length === n) break;
     }
@@ -151,7 +203,10 @@ export class ResearchState {
 
   record(trace: Trace): void {
     this.traces.push(trace);
-    this.evaluatedIds.add(trace.idea.id);
+    // An implementation that never produced a candidate commit is UNKNOWN, not
+    // a refutation. Keep the trace for audit, but never let it exclude the idea
+    // from a later reseed or from the scientific refutation list.
+    if (!trace.invalid) this.evaluatedIds.add(trace.idea.id);
     delete this.checkpoints[trace.idea.id];
   }
 

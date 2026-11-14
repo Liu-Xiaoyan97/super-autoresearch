@@ -220,7 +220,9 @@ export class IdeaEvolver extends BaseAgent {
       .slice()
       .sort((a, b) => (a.round === b.round ? a.idea.id.localeCompare(b.idea.id) : a.round - b.round));
     const successful = ordered.filter((trace) => trace.decision === "good");
-    const failed = ordered.filter((trace) => trace.decision !== "good");
+    // Implementation failures are UNKNOWN, not measured refutations; do not
+    // teach the evolver that an unmeasured mechanism was falsified.
+    const failed = ordered.filter((trace) => trace.decision !== "good" && !trace.invalid);
     let prompt =
       `Evolve ${n} new hypotheses in round ${round} from ALL historical traces. ` +
       "Amalgamate successful mechanisms and diagnose failures using measured " +

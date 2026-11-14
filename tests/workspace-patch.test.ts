@@ -76,12 +76,24 @@ test("unified diffs become commits on candidate branches", async () => {
 test("prose creates no commit; a failing diff is refused and logged", async () => {
   const repo = fixtureRepo();
   const problem = makeProblem({ id: "p", repo });
-  const workspace = new GitWorkspace(problem, defaultConfig(), tempDir("rsi-ws-"));
+  const workspace = new GitWorkspace(problem, defaultConfig({ runner: "subprocess" }), tempDir("rsi-ws-"));
   const base = await workspace.baselineRepo();
 
-  const prose = await workspace.writePatch(base, "Inspect and tune the implementation.", "prose");
-  assert.equal(prose.commit, base.commit);
-  assert.match(fs.readFileSync(path.join(base.path, "..", "patches", "prose.apply.log"), "utf8"), /prose patch/);
+  // A non-empty prose response has no code change. It must be refused, not
+  // turned into a baseline measurement under the candidate label.
+  await assert.rejects(
+    () => workspace.writePatch(base, "Inspect and tune the implementation.", "prose"),
+    /no unified diff/,
+  );
+  assert.match(fs.readFileSync(path.join(base.path, "..", "patches", "prose.apply.log"), "utf8"), /refusing/);
+  // The baseline snapshot itself is the only permitted empty patch.
+  const empty = await workspace.writePatch(base, "", "baseline-empty");
+  assert.equal(empty.commit, base.commit);
+  await assert.rejects(() => workspace.writePatch(base, "", "h1-subset"), /only allowed for the baseline/);
+  // Full/rebuttal may explicitly re-use the existing snapshot for protocol-only work.
+  const protocol = await workspace.writePatch(base, "", "h1-full", { allowEmpty: true });
+  assert.equal(protocol.commit, base.commit);
+
 
   const bad = ["--- a/a.txt", "+++ b/a.txt", "@@ -1 +1 @@", "-does-not-exist", "+nope"].join("\n");
   // A diff that does not apply must never become a candidate at the parent

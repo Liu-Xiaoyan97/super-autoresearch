@@ -185,6 +185,11 @@ export function unappliedEvidence(idea: Idea, scope: Scope, base: Evidence, mess
   });
 }
 
+/** Convert a rejected patch into failed evidence for every coder scope. */
+export function rejectedEvidence(idea: Idea, scope: Scope, base: Evidence, error: unknown): Evidence {
+  return unappliedEvidence(idea, scope, base, (error as Error)?.message ?? String(error));
+}
+
 export class SubsetCoder extends BaseAgent {
   readonly NAME = "subset_coder";
   readonly task = "code.subset";
@@ -204,7 +209,7 @@ export class SubsetCoder extends BaseAgent {
     try {
       repo = await this.ctx.workspace.writePatch(codeOf(opts.base), patch, `${idea.id}-${scope}`);
     } catch (error) {
-      return unappliedEvidence(idea, scope, opts.base, (error as Error)?.message ?? String(error));
+      return rejectedEvidence(idea, scope, opts.base, error);
     }
     const seeds = scope === "subset" ? (opts.seeds ?? [this.ctx.config.seed]) : [this.ctx.config.seed];
     const measured = await runSeeded(
@@ -241,8 +246,18 @@ export class FullSetCoder extends BaseAgent {
         `to the full benchmark without changing the method. Do not modify run_experiment.py or tests.\n\n${brief}`,
       meta: { idea_id: idea.id },
     });
-    const patch = `${out.patch}\nHypothesis: ${idea.hypothesis}\nMechanism: ${idea.mechanism}\n`;
-    const repo = await this.ctx.workspace.writePatch(codeOf(opts.subset), patch, `${idea.id}-full`);
+    // A full-set measurement may legitimately re-use the subset commit when
+    // only the protocol/budget changes. An explicit empty patch is allowed;
+    // non-empty prose or a malformed diff is still rejected.
+    const patch = out.patch.trim()
+      ? `${out.patch}\nHypothesis: ${idea.hypothesis}\nMechanism: ${idea.mechanism}\n`
+      : "";
+    let repo;
+    try {
+      repo = await this.ctx.workspace.writePatch(codeOf(opts.subset), patch, `${idea.id}-full`, { allowEmpty: true });
+    } catch (error) {
+      return rejectedEvidence(idea, "full", opts.subset, error);
+    }
     this.ctx.budget.chargeExperiment();
     const result = await this.ctx.workspace.run(repo, "full", idea);
     return makeEvidence({
@@ -271,7 +286,18 @@ export class AblationCoder extends BaseAgent {
       meta: { idea_id: idea.id, plan_id: plan.id },
     });
     const patch = `${out.patch}\nMechanism: ${idea.mechanism}\n${stableString(plan)}\n`;
-    const repo = await this.ctx.workspace.writePatch(codeOf(opts.best), patch, `${idea.id}-ablation-${plan.id}`);
+    let repo;
+    try {
+      repo = await this.ctx.workspace.writePatch(codeOf(opts.best), patch, `${idea.id}-ablation-${plan.id}`);
+    } catch (error) {
+      return {
+        plan_id: plan.id,
+        component: plan.component,
+        metrics: {},
+        evidence: rejectedEvidence(idea, "ablation", opts.best, error),
+        ok: false,
+      };
+    }
     // Same subset data, 95-step budget, hyperparameters and seeds as the
     // candidate subset control; never a full 954-step run.
     const measured = await runSeeded(
@@ -336,11 +362,18 @@ export class RebuttalCoder extends BaseAgent {
         `supplementary experiment without changing the core method. Do not modify run_experiment.py or tests.\n\n${brief}`,
       meta: { idea_id: idea.id, task_id: task.id },
     });
-    const repo = await this.ctx.workspace.writePatch(
-      codeOf(opts.best),
-      `${out.patch}\n${stableString(task)}\n`,
-      `${idea.id}-rebuttal-${task.id}`,
-    );
+    let repo;
+    try {
+      const patch = out.patch.trim() ? `${out.patch}\n${stableString(task)}\n` : "";
+      repo = await this.ctx.workspace.writePatch(
+        codeOf(opts.best),
+        patch,
+        `${idea.id}-rebuttal-${task.id}`,
+        { allowEmpty: true },
+      );
+    } catch (error) {
+      return rejectedEvidence(idea, "rebuttal", opts.best, error);
+    }
     this.ctx.budget.chargeExperiment();
     const result = await this.ctx.workspace.run(repo, "rebuttal", idea);
     return makeEvidence({
@@ -437,6 +470,8 @@ export class IdeaImplementer extends BaseAgent {
     if (baselineFailed) {
       trace.feedback = "Baseline reproduction failed; candidate cannot be compared.";
       trace.lessons.push(trace.feedback);
+      // A failed reference is an infrastructure failure, not a refuted idea.
+      trace.invalid = true;
       return trace;
     }
 
@@ -483,6 +518,7 @@ export class IdeaImplementer extends BaseAgent {
       if (!verdict || verdict.decision !== "good") {
         trace.feedback = verdict?.feedback ?? "subset evidence missing";
         trace.decision = "bad";
+        trace.invalid = verdict?.invalid === true;
         state.stage = "done";
         checkpoint();
         return trace;
@@ -544,6 +580,7 @@ export class IdeaImplementer extends BaseAgent {
     }
     trace.decision = verdictFull.decision === "good" ? "good" : "bad";
     trace.feedback = verdictFull.feedback;
+    trace.invalid = verdictFull.invalid === true && verdictFull.decision !== "good";
     state.stage = "done";
     checkpoint();
     return trace;

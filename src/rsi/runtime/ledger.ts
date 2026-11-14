@@ -465,6 +465,10 @@ function collectRun(state: RunState): PendingExperiment[] {
   }
 
   for (const rawTrace of traces) {
+    // An implementation failure is an execution event, not a scientific
+    // experiment. Keep it out of the measured lineage (the raw artifact and
+    // candidates journal still preserve the audit trail).
+    if (rawTrace.invalid === true) continue;
     const idea = record(rawTrace.idea);
     const ideaId = string(idea.id) || "idea";
     const evidenceList = array(rawTrace.evidence) as Evidence[];

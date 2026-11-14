@@ -10,6 +10,7 @@ import {
   type MetricSpec,
   type Verdict,
   evidenceOk,
+  evidenceProvenanceError,
   makeVerdict,
 } from "../types.ts";
 import { BaseAgent, guidance } from "./base.ts";
@@ -135,7 +136,12 @@ export class AblationCritic extends BaseAgent {
     if (!results.length || !evidenceOk(opts.best)) concerns.push(idea.mechanism || idea.id);
     for (const result of results) {
       const metrics = result.evidence ? result.evidence.metrics : result.metrics;
-      let valid = result.ok && (!result.evidence || evidenceOk(result.evidence));
+      const provenance = result.evidence?.result?.status === "ok"
+        ? evidenceProvenanceError(result.evidence)
+        : null;
+      let valid = result.ok &&
+        (!result.evidence || (evidenceOk(result.evidence) && !provenance &&
+          (result.evidence.result?.status === "ok" || !!result.evidence.samples?.length)));
       let worse = false;
       let counterproductive = false;
       const specs: MetricSpec[] = this.ctx.problem.metrics;
@@ -161,6 +167,12 @@ export class AblationCritic extends BaseAgent {
     }
 
     const decision = verdict.decision === "good" && !concerns.length ? "good" : "refine";
+    const invalid = results.some((result) => {
+      const evidence = result.evidence;
+      return !result.ok ||
+        !!evidence && evidence.result?.status !== "ok" ||
+        !!evidence && !!evidenceProvenanceError(evidence);
+    });
     const component =
       concerns[0] ||
       results[0]?.component ||
@@ -179,6 +191,7 @@ export class AblationCritic extends BaseAgent {
     return makeVerdict({
       ...verdict,
       decision,
+      invalid: invalid || undefined,
       feedback: `${verdict.feedback.trim()}\n${instruction}`.trim(),
     });
   }

@@ -58,6 +58,7 @@ import {
   type TraceCheckpoint,
   type Verdict,
   evidenceOk,
+  evidenceProvenanceError,
   finalEvidence,
   isStrictlyBetter,
   makeEvidence,
@@ -495,7 +496,7 @@ export class Orchestrator {
   /** Measured refutations: the evidence a new seed round must not repeat. */
   private refutations(): Refutation[] {
     return this.state.traces
-      .filter((trace) => trace.decision !== "good")
+      .filter((trace) => trace.decision !== "good" && !trace.invalid)
       .map((trace) => ({
         id: trace.idea.id,
         hypothesis: trace.idea.hypothesis,
@@ -719,12 +720,15 @@ export class Orchestrator {
       });
       await this.auditTrace(trace);
       this.state.record(trace);
-      this.transition("stage.round", `round${round}.${idea.id}:${trace.decision}`, {
+      // An invalid implementation is UNKNOWN, not a scientific "bad" result.
+      const outcome = trace.invalid ? "invalid" : trace.decision;
+      this.transition("stage.round", `round${round}.${idea.id}:${outcome}`, {
         round,
         idea_id: idea.id,
+        invalid: trace.invalid === true,
         trace,
       });
-      progress(this.ctx, `§3.2 round ${round}: ${idea.id} → ${trace.decision}`);
+      progress(this.ctx, `§3.2 round ${round}: ${idea.id} → ${outcome}`);
     }
   }
 
@@ -735,11 +739,23 @@ export class Orchestrator {
    */
   private journalCandidates(checkpoint: TraceCheckpoint): void {
     for (const evidence of checkpoint.trace.evidence) {
+      // A failed execution or a parent-commit proxy is implementation evidence,
+      // not a candidate measurement. Never pollute the scientific ledger with it.
+      if (evidence.result?.status !== "ok") continue;
       const commit = evidence.code?.commit ?? "";
+      if (!commit) continue;
+      if (evidence.code?.parent && commit === evidence.code.parent &&
+        (evidence.scope === "subset" || evidence.scope === "ablation")) continue;
       const samples: Array<{ seed: number | null; metrics: Record<string, number> }> = evidence.samples?.length
         ? evidence.samples
         : [{ seed: null, metrics: evidence.metrics }];
-      for (const sample of samples) {
+      for (const [index, sample] of samples.entries()) {
+        if (!sample.metrics || !Object.keys(sample.metrics).length) continue;
+        // A mixed multi-seed aggregate must not journal a failed seed as a
+        // candidate measurement. The run-level result may be `ok` because one
+        // seed succeeded; every row still needs its own successful execution.
+        const sampleResult = evidence.samples?.length ? evidence.samples[index]?.result : evidence.result;
+        if (!sampleResult || sampleResult.status !== "ok") continue;
         const key = `${checkpoint.idea_id}|${commit}|${evidence.scope}|${sample.seed}|${evidence.label}`;
         if (this.journaled.has(key)) continue;
         this.journaled.add(key);
@@ -1014,7 +1030,13 @@ export class Orchestrator {
         this.state.rebuttals.push(evidence);
         // A rebuttal is a real measurement: keep it even if the host dies now.
         this.persist();
-        if (evidenceOk(evidence) && Object.keys(evidence.metrics).length) rebuttal.push(evidence);
+        if (
+          evidenceOk(evidence) &&
+          Object.keys(evidence.metrics).length &&
+          !evidenceProvenanceError(evidence)
+        ) {
+          rebuttal.push(evidence);
+        }
       }
       if (!rebuttal.length) {
         this.transition("stage.review", "peer.no_evidence");

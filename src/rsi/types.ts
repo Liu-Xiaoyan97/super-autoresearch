@@ -216,6 +216,8 @@ export interface Trace {
   feedback: string;
   round: number;
   lessons: string[];
+  /** The implementation was never validly measured; never use it as a refutation. */
+  invalid?: boolean;
 }
 
 /**
@@ -391,8 +393,26 @@ export function makeLimitation(over: Partial<Limitation> = {}): Limitation {
   };
 }
 
+export function evidenceProvenanceError(evidence: Evidence): string | null {
+  const code = evidence.code;
+  if (!code) return "missing code snapshot";
+  if (!code.commit) return "successful evidence has no committed code";
+  if (!code.parent && evidence.idea_id !== "baseline") {
+    return "candidate has no parent commit";
+  }
+  if (code.parent && code.commit === code.parent) {
+    // Full-set and rebuttal experiments may legally re-use the incumbent commit
+    // when only the protocol/budget changes. Subset candidates and ablations
+    // must be a new implementation, so the same commit there is a proxy.
+    if (evidence.scope === "subset" || evidence.scope === "ablation") {
+      return "candidate commit equals its parent; the measured code is not the candidate";
+    }
+  }
+  return null;
+}
+
 export function makeEvidence(over: Partial<Evidence> = {}): Evidence {
-  return {
+  const evidence: Evidence = {
     idea_id: "baseline",
     scope: "subset",
     metrics: {},
@@ -403,6 +423,13 @@ export function makeEvidence(over: Partial<Evidence> = {}): Evidence {
     samples: [],
     ...over,
   };
+  // A successful measurement of the parent commit is a provenance contradiction:
+  // it would turn an implementation failure into a scientific measurement.
+  if (evidence.result?.status === "ok" && evidence.code) {
+    const problem = evidenceProvenanceError(evidence);
+    if (problem) throw new Error(`invalid evidence provenance: ${problem}`);
+  }
+  return evidence;
 }
 
 export function makeVerdict(over: Partial<Verdict> = {}): Verdict {
@@ -432,6 +459,7 @@ export function makeTrace(over: Partial<Trace> = {}): Trace {
     feedback: "",
     round: 0,
     lessons: [],
+    invalid: false,
     ...over,
   };
 }
