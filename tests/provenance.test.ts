@@ -217,3 +217,35 @@ test("a repaired final measurement is not invalidated by an earlier proxy", () =
   assert.equal(state.traces[0].decision, "good");
   assert.equal(state.evaluatedIds.has("h6"), true);
 });
+
+test("a null-result candidate is not a successful scientific gate", async () => {
+  const ctx = makeContext();
+  const baseline = makeEvidence({
+    idea_id: "baseline", scope: "subset", metrics: { auroc: 0.5 },
+    code: { ...code, label: "baseline", parent: null, patch: "", commit: "base-commit" },
+    result: ok({ auroc: 0.5 }),
+  });
+  const bare = makeEvidence({
+    idea_id: "h1", scope: "subset", metrics: { auroc: 0.9 },
+    code: { ...code, label: "h1", parent: "base-commit", commit: "candidate-1" },
+    result: null,
+  });
+  const verdict = await new SubsetCritic(ctx).judge(bare, { baseline });
+  assert.equal(verdict.invalid, true);
+});
+
+test("a candidate without parent metadata is rejected even with metrics", async () => {
+  const ctx = makeContext();
+  const baseline = makeEvidence({
+    idea_id: "baseline", scope: "subset", metrics: { auroc: 0.5 },
+    code: { ...code, label: "baseline", parent: null, patch: "", commit: "base-commit" },
+    result: ok({ auroc: 0.5 }),
+  });
+  const parentless: Evidence = {
+    ...makeEvidence({ idea_id: "h1", scope: "subset", metrics: { auroc: 0.9 } }),
+    code: { ...code, label: "h1", parent: null, commit: "base-commit", patch: "candidate" },
+    result: ok({ auroc: 0.9 }),
+  };
+  const verdict = await new SubsetCritic(ctx).judge(parentless, { baseline });
+  assert.equal(verdict.invalid, true);
+});

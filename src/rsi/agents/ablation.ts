@@ -140,8 +140,10 @@ export class AblationCritic extends BaseAgent {
         ? evidenceProvenanceError(result.evidence)
         : null;
       let valid = result.ok &&
-        (!result.evidence || (evidenceOk(result.evidence) && !provenance &&
-          (result.evidence.result?.status === "ok" || !!result.evidence.samples?.length)));
+        !!result.evidence &&
+        evidenceOk(result.evidence) &&
+        !provenance &&
+        (result.evidence.result?.status === "ok" || !!result.evidence.samples?.length);
       let worse = false;
       let counterproductive = false;
       const specs: MetricSpec[] = this.ctx.problem.metrics;

@@ -1148,7 +1148,7 @@ export class GitWorkspace implements Workspace {
       this.simulatedSeq += 1;
       fs.writeFileSync(
         path.join(this.worktree, ".rsi-simulated"),
-        `${label}\n${this.simulatedSeq}\n${patch}\n`,
+        `${label}\n${this.simulatedSeq}\n${String(process.hrtime.bigint())}\n${patch}\n`,
         "utf8",
       );
     }

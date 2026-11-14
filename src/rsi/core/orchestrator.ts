@@ -1035,6 +1035,7 @@ export class Orchestrator {
         // A rebuttal is a real measurement: keep it even if the host dies now.
         this.persist();
         if (
+          evidence.result?.status === "ok" &&
           evidenceOk(evidence) &&
           Object.keys(evidence.metrics).length &&
           !evidenceProvenanceError(evidence)

@@ -173,7 +173,9 @@ export class ResearchState {
         ablation.metrics = {};
       }
     }
-    state.rebuttals = state.rebuttals.filter((evidence) => !(evidence.result?.status === "ok" && invalid(evidence)));
+    state.rebuttals = state.rebuttals.filter((evidence) =>
+      evidence.result?.status === "ok" && !invalid(evidence),
+    );
     if (invalid(state.bestSubset)) state.bestSubset = null;
     return state;
   }
