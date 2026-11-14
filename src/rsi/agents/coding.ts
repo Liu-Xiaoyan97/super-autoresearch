@@ -426,6 +426,13 @@ export class IdeaImplementer extends BaseAgent {
         checkpoint();
       }
       while (verdict.decision === "engineer") {
+        // Evidence is the durable record: one completed pass per item. If a
+        // checkpoint lost a counter update, that pass still counts against the
+        // budget, so one idea can never keep refining on a stale counter.
+        state.subset_rounds = Math.max(
+          state.subset_rounds,
+          Math.max(0, trace.evidence.length - 1 - state.subset_repairs),
+        );
         // Invalid execution (patch, command or output contract) is a repair, not
         // a scientific engineering round. It is separately bounded so a broken
         // implementation cannot consume maxEngRounds.
@@ -477,6 +484,10 @@ export class IdeaImplementer extends BaseAgent {
     }
     let verdictFull = state.verdict;
     while (verdictFull.decision === "engineer") {
+      state.full_rounds = Math.max(
+        state.full_rounds,
+        Math.max(0, trace.evidence.length - 1 - state.full_repairs - state.subset_rounds - 1),
+      );
       if (verdictFull.invalid) {
         if (state.full_repairs >= maxRepairs) break;
         state.full_repairs += 1;
