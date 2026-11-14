@@ -6,7 +6,7 @@ import { FullSetEngineeringPatch, SubsetEngineeringPatch } from "../schemas.ts";
 import { type Evidence, type Idea, makeEvidence } from "../types.ts";
 import { BaseAgent } from "./base.ts";
 import { askUnifiedDiff } from "./patch.ts";
-import { codeOf, runSeeded, subsetSeeds } from "./coding.ts";
+import { codeOf, runSeeded, subsetSeeds, unappliedEvidence } from "./coding.ts";
 
 export class SubsetEngineer extends BaseAgent {
   readonly NAME = "subset_engineer";
@@ -21,11 +21,16 @@ export class SubsetEngineer extends BaseAgent {
         `Return a unified diff that fixes/tunes the implementation. Do not modify run_experiment.py or tests.\n\n${brief}`,
       meta: { idea_id: idea.id },
     });
-    const repo = await this.ctx.workspace.writePatch(
-      codeOf(opts.evidence),
-      `${out.patch}\nCritique: ${opts.feedback}\n`,
-      `${idea.id}-subset-engineered`,
-    );
+    let repo;
+    try {
+      repo = await this.ctx.workspace.writePatch(
+        codeOf(opts.evidence),
+        `${out.patch}\nCritique: ${opts.feedback}\n`,
+        `${idea.id}-subset-engineered`,
+      );
+    } catch (error) {
+      return unappliedEvidence(idea, "subset", opts.evidence, (error as Error)?.message ?? String(error));
+    }
     const measured = await runSeeded(
       this.ctx.workspace,
       repo,

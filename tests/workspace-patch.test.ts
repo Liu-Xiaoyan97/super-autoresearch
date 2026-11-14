@@ -73,7 +73,7 @@ test("unified diffs become commits on candidate branches", async () => {
   assert.equal(fs.readFileSync(path.join(repo, "a.txt"), "utf8"), "hello\n");
 });
 
-test("prose and failing diffs create no code commit and are logged", async () => {
+test("prose creates no commit; a failing diff is refused and logged", async () => {
   const repo = fixtureRepo();
   const problem = makeProblem({ id: "p", repo });
   const workspace = new GitWorkspace(problem, defaultConfig(), tempDir("rsi-ws-"));
@@ -84,8 +84,9 @@ test("prose and failing diffs create no code commit and are logged", async () =>
   assert.match(fs.readFileSync(path.join(base.path, "..", "patches", "prose.apply.log"), "utf8"), /prose patch/);
 
   const bad = ["--- a/a.txt", "+++ b/a.txt", "@@ -1 +1 @@", "-does-not-exist", "+nope"].join("\n");
-  const failed = await workspace.writePatch(base, bad, "bad");
-  assert.equal(failed.commit, base.commit);
+  // A diff that does not apply must never become a candidate at the parent
+  // commit: that would measure the baseline as if it were the idea.
+  await assert.rejects(() => workspace.writePatch(base, bad, "bad"), /patch does not apply/);
   assert.match(fs.readFileSync(path.join(base.path, "..", "patches", "bad.apply.log"), "utf8"), /status=[1-9]/);
   assert.equal(git(repo, ["show", `${base.commit}:a.txt`]), "hello");
 });

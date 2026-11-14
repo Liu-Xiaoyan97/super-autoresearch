@@ -1102,6 +1102,16 @@ export class GitWorkspace implements Workspace {
       }
       applyLog = `strategy=${strategy} status=${applied.status}\n${applied.stdout}${applied.stderr}`.trim();
       fs.rmSync(patchFile, { force: true });
+      // A patch that does not apply is a broken implementation, not a code
+      // change. Measuring the parent commit instead would report the baseline
+      // as a candidate and could promote noise.
+      if (applied.status !== 0) {
+        const safe = safeName(label);
+        fs.writeFileSync(this.store.path("patches", `${safe}.diff`), diff, "utf8");
+        fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\n`, "utf8");
+        const detail = (applied.stderr || applied.stdout || "").trim().slice(0, 500);
+        throw new Error(`patch does not apply (${strategy}): ${detail}`);
+      }
     }
     const safe = safeName(label);
     const branch = `${this.branchPrefix}/${safe}-${++this.branchSeq}`;

@@ -160,6 +160,31 @@ export class BaselineCoder extends BaseAgent {
   }
 }
 
+/**
+ * A diff the workspace refused to apply is a broken implementation, not a code
+ * change. Recording it as failed evidence keeps the parent commit out of the
+ * candidate slot and sends the idea into the repair loop instead.
+ */
+export function unappliedEvidence(idea: Idea, scope: Scope, base: Evidence, message: string): Evidence {
+  return makeEvidence({
+    idea_id: idea.id,
+    scope,
+    metrics: {},
+    baseline_metrics: { ...base.metrics },
+    code: codeOf(base),
+    result: {
+      status: "failed",
+      metrics: {},
+      log_path: "",
+      stdout: "",
+      stderr: `patch does not apply: ${message}`,
+      wall_time_s: 0,
+    },
+    label: `${idea.id}-${scope}-unapplied`,
+    samples: [],
+  });
+}
+
 export class SubsetCoder extends BaseAgent {
   readonly NAME = "subset_coder";
   readonly task = "code.subset";
@@ -175,7 +200,12 @@ export class SubsetCoder extends BaseAgent {
       meta: { idea_id: idea.id },
     });
     const patch = `${out.patch}\nHypothesis: ${idea.hypothesis}\nMechanism: ${idea.mechanism}\n`;
-    const repo = await this.ctx.workspace.writePatch(codeOf(opts.base), patch, `${idea.id}-${scope}`);
+    let repo;
+    try {
+      repo = await this.ctx.workspace.writePatch(codeOf(opts.base), patch, `${idea.id}-${scope}`);
+    } catch (error) {
+      return unappliedEvidence(idea, scope, opts.base, (error as Error)?.message ?? String(error));
+    }
     const seeds = scope === "subset" ? (opts.seeds ?? [this.ctx.config.seed]) : [this.ctx.config.seed];
     const measured = await runSeeded(
       this.ctx.workspace,
