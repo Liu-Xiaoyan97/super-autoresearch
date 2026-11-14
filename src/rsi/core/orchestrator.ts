@@ -738,10 +738,14 @@ export class Orchestrator {
    * ledger survives schema changes and is cheap to read after a restart.
    */
   private journalCandidates(checkpoint: TraceCheckpoint): void {
+    // The critic may have rejected the aggregate even though one seed produced
+    // finite numbers. An invalid verdict means this is not a candidate result.
+    if (checkpoint.verdict?.invalid === true || checkpoint.trace.invalid === true) return;
     for (const evidence of checkpoint.trace.evidence) {
       // A failed execution or a parent-commit proxy is implementation evidence,
       // not a candidate measurement. Never pollute the scientific ledger with it.
       if (evidence.result?.status !== "ok") continue;
+      if (evidenceProvenanceError(evidence)) continue;
       const commit = evidence.code?.commit ?? "";
       if (!commit) continue;
       if (evidence.code?.parent && commit === evidence.code.parent &&
