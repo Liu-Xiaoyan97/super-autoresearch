@@ -394,6 +394,10 @@ export async function checkRejection(
         return !executed.some((test) => test === expected || test.startsWith(`${expected}[`));
       });
       if (missing.length) return checkFailedEvidence(idea, scope, repo, base, `Reviewed assertions did not execute: ${missing.join(", ")}`, report.report_path);
+      if (!report.environment_fingerprint && ctx.workspace.preflight) {
+        return checkFailedEvidence(idea, scope, repo, base, "Actual check environment fingerprint is unavailable", report.report_path);
+      }
+      repo.check_environment = report.environment_fingerprint;
       return null;
     }
     const failed = report.checks.filter((check) => check.severity === "required" && check.status !== "ok");

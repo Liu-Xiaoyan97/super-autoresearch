@@ -219,6 +219,26 @@ export class Orchestrator {
           this.transition("stage.abort", "startup.checks", { report_path: startup.report_path });
           return this.exportArtifacts(true);
         }
+        if (resume) {
+          if (!startup.environment_fingerprint) {
+            this.state.aborted = true;
+            this.state.abortReason = "check_environment_unavailable";
+            return this.exportArtifacts(true);
+          }
+          const evidence = [this.state.bestEvidence, this.state.bestSubset,
+            ...this.state.traces.filter((trace) => !trace.invalid).flatMap((trace) => trace.evidence),
+            ...Object.values(this.state.checkpoints).flatMap((checkpoint) => checkpoint.trace.evidence),
+            ...this.state.ablations.map((result) => result.evidence), ...this.state.rebuttals];
+          const environments = new Map<string, string>();
+          for (const item of evidence) {
+            const code = item?.code;
+            if (!code?.check_environment || !code.commit || environments.has(code.commit)) continue;
+            const report = await this.ctx.workspace.check?.(code, `resume-environment-${code.commit}`);
+            environments.set(code.commit, report?.status === "ok" ? report.environment_fingerprint ?? "" : "");
+          }
+          const retired = this.state.invalidateCandidateEnvironment(environments);
+          this.ctx.traces.append("resume_environment", { retired, environment_fingerprint: startup.environment_fingerprint });
+        }
       }
       // A declared diagnosis needs a reproduced baseline first: defects are
       // measured on the baseline commit, never on an assumed number.
@@ -231,7 +251,7 @@ export class Orchestrator {
       if (!resume || !this.state.seeds.length) await this.seedIdeas();
       if (!this.ctx.problem.diagnose_command) await this.baseline();
       if (resume && this.ctx.config.runner !== "simulated" && this.state.bestIdea && this.state.bestCode && this.state.bestEvidence) {
-        this.ctx.scratch.expected_check_environment = this.state.environmentFingerprint;
+        this.ctx.scratch.expected_check_environment = this.state.bestCode.check_environment;
         const failure = await checkRejection(this.ctx, this.state.bestIdea, "full", this.state.bestEvidence, this.state.bestCode, "resume");
         if (failure) {
           this.state.exportReason = failure.result?.stderr ?? "resume candidate checks failed";

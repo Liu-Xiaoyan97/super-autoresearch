@@ -73,7 +73,7 @@
 | U7 | unknown | 人工停止跟进。 | 本轮用户指令。 |
 | U8 | unknown | 人工停止跟进。 | 本轮用户指令。 |
 | U9 | good | 消融只接收已有组件的 `path:symbol` 证据。删除结构探针补足逻辑。 | `AblationPlanner.plan` 的 `supported`，`AblationPlan.code_refs`。 |
-| U10 | engineer | 状态版本和 worktree 绑定已实现。远端协议、旧环境证据和损坏状态保护仍有缺口。 | `ResearchState.fromDict`、`rebindWorktree`，本轮 B1 至 B3。 |
+| U10 | good | 恢复协议包含远端设置。旧候选缺少环境证据时退出可复用集合。损坏状态保留原文。 | `ResearchState.fromDict`、`invalidateCandidateEnvironment`、`readStateObject`，B1 至 B3 的修复回归。 |
 | U11 | good | 镜像构建通过。独立隔离 worker 启动并执行检查任务。 | `/tmp/rsi-container-build.log`，`/tmp/rsi-container-worker-validation.log`。 |
 | U12 | good | 解析 manifest 时移除旧服务命令。保留目标动态测试配置。 | `languageSpecs` 的命令过滤，`tests/checks.test.ts` 的迁移断言。 |
 | U13 | good | 默认要求 worker。`auto` 在 worker 缺失时阻断。显式 `off` 选择本地执行。 | `checkWorkerMode`，`GitWorkspace.check` 的 `mode`。 |
@@ -350,13 +350,13 @@ worker 日志包含 `ready`。
 
 | 编号 | 状态 | 缺陷 | 证据 |
 |---|---|---|---|
-| B1 | engineer | 恢复协议未包含 `remote` 和 `diagnose_command`。远端上下文长度变化后，旧状态仍被接受。 | `src/rsi/core/state.ts` 的 `protocol.fields`。容器内将保存状态的 `remote.env.RSI_CORAL_MAX_LENGTH` 从 `1024` 改为 `2048`，`ResearchState.fromDict` 返回成功。复现只修改内存副本。 |
-| B2 | engineer | 旧候选缺少环境指纹时仍可恢复。空指纹跳过环境一致性比对。恢复核查只覆盖当前 incumbent。 | `ResearchState.fromDict` 默认 `environmentFingerprint=""`。`checkRejection` 仅在 `expectedEnvironment` 非空时比较。内存 fixture 返回 `legacy_candidate_accepted=true`、`environment_required=false`。 |
-| B3 | engineer | 中断处理将损坏的状态文件当作空状态，再覆盖原文件。结束写入也直接覆盖状态文件。 | `RunSession.markInterrupted` 的读取 catch 和 `fs.writeFileSync`。临时目录内的 39 字节损坏状态被替换，剩余字段仅为 `aborted` 和 `abort_reason`。`runResearch` 最终写入和 host restart 恢复同样使用直接写入。 |
+| B1 | good | 恢复协议增加 `remote`、`diagnose_command` 和 `job_worker`。改变远端上下文长度会拒绝恢复。 | `protocol.fields`，`tests/delivery-flow.test.ts` 的协议变更回归，`/tmp/rsi-bfix-restore.log`。 |
+| B2 | good | 候选逐项保存检查环境指纹。恢复重新核对 trace、checkpoint、incumbent 和归因证据。缺少或改变的环境证据退出复用集合。测量缓存绑定候选环境。 | `RepoRef.check_environment`、`invalidateCandidateEnvironment`、`Orchestrator.run`、`measurementCache`，两组恢复回归。 |
+| B3 | good | 中断前先读取状态和 final。解析失败时保留原文件。结束写入和中断写入使用原子替换。 | `readStateObject`、`atomicWriteJson`，`tests/restart-safety.test.ts` 的损坏状态、中断和 host restart 回归。 |
 
 旧 U10 状态原文为 `good`。
-当前记录更正为 `engineer`。
-本轮缺少覆盖 B1 至 B3 的修复证据。
+复查阶段将该状态更正为 `engineer`。
+后续修复和回归完成后，当前状态为 `good`。
 
 当前主容器和 worker 均为 `running`，重启计数为 0。
 主容器验证返回 `protocol=3` 和 `ready=true`。
@@ -387,6 +387,64 @@ worker 日志包含 `ready`。
 日志为 `/tmp/rsi-reaudit-fast.log`。
 类型检查退出码为 0。
 日志为 `/tmp/rsi-reaudit-typecheck.log`。
+
+## B1 至 B3 修复验证
+
+本轮在内存中恢复旧 run，保留磁盘状态原文。
+baseline 提交保持相同。
+3 条历史 trace 带有 `invalid=true`，其中包含原有 invalid trace。
+缺少环境证据的候选不再作为有效研究结果复用。
+远端上下文长度变更被恢复协议拒绝。
+证据为 `/tmp/rsi-bfix-restore.log`。
+
+旧 run 恢复会增加候选检查和重新测量。
+该迁移由 `invalidateCandidateEnvironment` 执行。
+baseline 按用户已授权的可信协议保留。
+本轮没有自动启动长期科研任务。
+
+本轮首次快速回归有 1 项 fixture 失败。
+该 fixture 原本缺少环境指纹。
+当前 fixture 显式提供 `environment_fingerprint=test-env`。
+修复位置为 `tests/delivery-flow.test.ts` 的身份比对用例。
+
+最终快速回归执行 171 项，171 项通过，0 项失败。
+耗时为 23.663921791 秒。
+日志为 `/tmp/rsi-bfix-fast-final.log`。
+最终类型检查退出码为 0。
+日志为 `/tmp/rsi-bfix-typecheck.log`。
+独立复查回归的结果见 `/tmp/rsi-bfix-reaudit.log`。
+该定向复查执行 6 项，6 项通过，0 项失败。
+耗时为 0.543448625 秒。
+完整回归执行 184 项，184 项通过，0 项失败。
+耗时为 441.601632458 秒。
+日志为 `/tmp/rsi-bfix-full.log`。
+完整回归启动后增加 host restart 和正常恢复路径回归。
+随后修改候选缓存的环境绑定。
+最终快速回归覆盖这些修改。
+
+本轮再次检查恢复主入口、候选环境绑定和损坏文件保护。
+正常恢复路径回归确认环境变更会移除有效候选证据。
+该测试位于 `tests/delivery-flow.test.ts`。
+类型检查和 `git diff --check` 退出码均为 0。
+本轮测试未复现 B1 至 B3 的旧行为。
+完整真实科研恢复仍为 `unknown`。
+缺少长期训练、消融和论文交付的恢复报告。
+
+两个容器于 2026 年 11 月 16 日 01 时 17 分 27 秒重新启动。
+时区为 Asia/Shanghai。
+`docker inspect` 显示两个容器为 running，重启计数为 0。
+旧 run 的内存恢复返回 `worker_ready=true` 和 `state_unchanged=true`。
+证据为 `/tmp/rsi-bfix-container.log`。
+重新启动后的独立启动探测返回 `status=ok`。
+该报告包含实际环境指纹。
+报告为 `runs/bfix-startup-1794763280566/artifacts/checks/startup/report.json`。
+
+系统架构与研究流程图采用内置图像生成工具。
+图示包括主容器、隔离检查容器、目标 worktree 和远端 GPU 环境。
+图示还包括独立测试、bug 修复、证据 gate 和状态恢复。
+生成提示词位于 `docs/figures/rsi-system-overview.prompt.txt`。
+最终图像位于 `docs/figures/rsi-system-overview.png`。
+图像经三轮生成与连接关系核对后保存。
 
 远端只读 SSH 查询退出码为 0。
 查询命令为 `nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader`。

@@ -86,11 +86,27 @@ Go 默认执行 `go test -v ./...`。
 本轮实现修复 A1 至 A5。
 问题证据、实现入口和回归结果见 `NOTES.md`。
 再次复查发现 B1 至 B3。
-恢复协议缺少远端配置和诊断命令。
-旧候选缺少环境指纹时跳过环境一致性比对。
-中断处理会覆盖损坏状态文件。
-U10 的当前状态更正为 `engineer`。
-复现证据见 `NOTES.md` 的再次复查记录。
+本轮修复 B1 至 B3。
+恢复协议包含远端配置、诊断命令和 job worker。
+恢复会逐项验证候选环境。
+缺少环境证据的历史候选保留为 invalid 记录，并退出证据复用。
+测量缓存绑定候选检查环境。
+中断处理保留损坏文件，正常写入使用原子替换。
+U10 的当前状态为 `good`。
+修复证据见 `NOTES.md` 的 B1 至 B3 修复验证。
+本轮最终快速回归执行 171 项，171 项通过，0 项失败。
+耗时为 23.663921791 秒。
+日志为 `/tmp/rsi-bfix-fast-final.log`。
+完整回归执行 184 项，184 项通过，0 项失败。
+耗时为 441.601632458 秒。
+完整回归后的缓存绑定和恢复路径修改由最终快速回归覆盖。
+日志为 `/tmp/rsi-bfix-full.log`。
+最终类型检查退出码为 0。
+实际环境启动探测返回 `status=ok`。
+证据为 `runs/bfix-startup-1794763280566/artifacts/checks/startup/report.json`。
+两个容器于 2026 年 11 月 16 日 01 时 17 分 27 秒重新启动。
+时区为 Asia/Shanghai。
+worker 验证返回 `ready=true`。
 
 当前两个容器运行中，worker 协议为 3，ready 为 true。
 本次核查无需重建容器。
@@ -111,3 +127,6 @@ U10 的当前状态更正为 `engineer`。
 U2、U6、U7、U8、U19 按用户指令人工停止跟进。
 
 全部优化项和风险项见 `NOTES.md`。
+
+系统架构与流程概览见 `docs/figures/rsi-system-overview.png`。
+提示词见 `docs/figures/rsi-system-overview.prompt.txt`。

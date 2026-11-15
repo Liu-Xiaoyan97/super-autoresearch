@@ -170,6 +170,8 @@ export interface RepoRef {
   branch?: string;
   /** Independently authored tests, committed through the test-only channel. */
   validation?: { requirement: string; commit: string; files: string[] };
+  /** Actual check environment that authorizes measurements for this candidate. */
+  check_environment?: string;
 }
 
 export interface ExperimentResult {

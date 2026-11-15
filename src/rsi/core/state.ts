@@ -24,7 +24,8 @@ import type {
 import { rankKey } from "../agents/ideas.ts";
 
 function protocol(problem: Record<string, unknown>, config: Record<string, unknown>): string {
-  const fields = ["id", "repo", "datasets", "subset_datasets", "metrics", "constraints", "forbidden", "experiment_command", "budget"];
+  const fields = ["id", "repo", "datasets", "subset_datasets", "metrics", "constraints", "forbidden", "experiment_command", "budget",
+    "remote", "diagnose_command", "job_worker"];
   const settings = ["runner", "seed", "subsetFraction", "subsetMaxSteps", "subsetSeeds", "subsetMargin"];
   return JSON.stringify(canonical({
     problem: Object.fromEntries(fields.map((key) => [key, problem[key]])),
@@ -226,7 +227,63 @@ export class ResearchState {
       if (key !== seedId) delete state.checkpoints[key];
       state.checkpoints[seedId] = checkpoint;
     }
+    if (config.runner !== "simulated") state.invalidateCandidateEnvironment();
     return state;
+  }
+
+  /** Keep historical records while retiring evidence with missing or changed execution identity. */
+  invalidateCandidateEnvironment(environments?: Map<string, string>): number {
+    const stale = (evidence: Evidence | null | undefined): boolean => !!evidence && evidence.idea_id !== "baseline" &&
+      evidenceSucceeded(evidence) && (!evidence.code?.check_environment ||
+        environments !== undefined && evidence.code.check_environment !== environments.get(evidence.code.commit ?? ""));
+    let retired = 0;
+    for (const trace of this.traces) {
+      if (trace.invalid || !trace.evidence.some(stale)) continue;
+      trace.invalid = true;
+      this.evaluatedIds.delete(trace.seed_id ?? trace.idea.id);
+      this.evaluatedIds.delete(trace.idea.id);
+      retired++;
+    }
+    for (const [id, checkpoint] of Object.entries(this.checkpoints)) {
+      if (!checkpoint.trace.evidence.some(stale)) continue;
+      delete this.checkpoints[id];
+      this.evaluatedIds.delete(id);
+      retired++;
+    }
+    const incumbentStale = stale(this.bestEvidence) || stale(this.bestSubset);
+    const attributionStale = this.ablations.some((result) => stale(result.evidence)) || this.rebuttals.some(stale);
+    if (incumbentStale) {
+      this.bestIdea = null;
+      this.bestCode = null;
+      this.bestEvidence = null;
+      this.bestSubset = null;
+      retired++;
+    }
+    if (incumbentStale || attributionStale) {
+      this.ablations = [];
+      this.ablationPlans = [];
+      this.ablationVerdict = null;
+      this.ablationCommit = "";
+      this.ablationRound = 0;
+      this.manuscript = null;
+      this.manuscriptCommit = "";
+      this.review = null;
+      this.reviews = [];
+      this.metaReview = null;
+      this.rebuttals = [];
+      this.peerRound = 0;
+      this.reviewRefinements = 0;
+      this.metaRound = 0;
+      retired++;
+    }
+    if (retired) {
+      this.searchDone = false;
+      this.specReports = {};
+      this.ablations = this.ablations.filter((result) => !stale(result.evidence));
+      this.rebuttals = this.rebuttals.filter((evidence) => !stale(evidence));
+      this.environmentFingerprint = "";
+    }
+    return retired;
   }
 
   goodTraces(): Trace[] {

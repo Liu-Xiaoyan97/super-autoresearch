@@ -37,6 +37,7 @@ import {
 } from "./model.ts";
 import { defaultPolicySettings, makePolicy } from "./policy.ts";
 import { stageSpec, stageOfTask } from "./sop.ts";
+import { atomicWriteJson, readStateObject } from "../runtime/store.ts";
 import { FileRepositories, MemoryRepositories, type Repositories, type Snapshot } from "./store.ts";
 import { SuperagentLLMProvider } from "../providers/superagent.ts";
 import { refreshLedger } from "../runtime/ledger.ts";
@@ -266,12 +267,9 @@ export class RunSession {
   private markInterrupted(reason: string): void {
     try {
       const stateFile = path.join(this.root, "state.json");
-      let state: Record<string, unknown> = {};
-      try {
-        state = JSON.parse(fs.readFileSync(stateFile, "utf8")) as Record<string, unknown>;
-      } catch {
-        /* no state was written yet */
-      }
+      const state = readStateObject(stateFile);
+      const finalFile = path.join(this.root, "final.json");
+      const final = readStateObject(finalFile);
       // A scientific conclusion already on disk stays the reason; the
       // interruption only adds a marker.
       const concluded =
@@ -284,15 +282,8 @@ export class RunSession {
         state.abort_reason = reason;
       }
       fs.mkdirSync(this.root, { recursive: true });
-      fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
+      atomicWriteJson(stateFile, state);
 
-      const finalFile = path.join(this.root, "final.json");
-      let final: Record<string, unknown> = {};
-      try {
-        final = JSON.parse(fs.readFileSync(finalFile, "utf8")) as Record<string, unknown>;
-      } catch {
-        /* no final was written yet */
-      }
       const finalConcluded =
         final.aborted === true && typeof final.abort_reason === "string" && final.abort_reason !== "" && !isCleanupReason(final.abort_reason);
       if (!finalConcluded) {
@@ -301,7 +292,7 @@ export class RunSession {
       }
       if (!Array.isArray(final.decision_path)) final.decision_path = state.decision_path ?? [];
       final.extra = { ...(typeof final.extra === "object" && final.extra ? final.extra : {}), interrupted: true };
-      fs.writeFileSync(finalFile, JSON.stringify(final, null, 2), "utf8");
+      atomicWriteJson(finalFile, final);
       try {
         refreshLedger({ projectRoot: this.cwd, runsRoots: [path.dirname(this.root)] });
       } catch {
@@ -830,6 +821,10 @@ export class SuperagentRuntime {
       const dir = path.join(root, "superagent");
       if (!fs.existsSync(path.join(dir, "state.json"))) continue;
       try {
+        const stateFile = path.join(root, "state.json");
+        const finalFile = path.join(root, "final.json");
+        const state = readStateObject(stateFile);
+        const final = readStateObject(finalFile);
         const store = new FileRepositories(dir, this.policy);
         const engine = new Engine({
           store,
@@ -848,29 +843,15 @@ export class SuperagentRuntime {
         } finally {
           engine.close();
         }
-        const stateFile = path.join(root, "state.json");
-        let state: Record<string, unknown> = {};
-        try {
-          state = JSON.parse(fs.readFileSync(stateFile, "utf8")) as Record<string, unknown>;
-        } catch {
-          /* no research state was written before the restart */
-        }
         state.aborted = true;
         state.abort_reason = "interrupted by host restart";
         fs.mkdirSync(root, { recursive: true });
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), "utf8");
-        const finalFile = path.join(root, "final.json");
-        let final: Record<string, unknown> = {};
-        try {
-          final = JSON.parse(fs.readFileSync(finalFile, "utf8")) as Record<string, unknown>;
-        } catch {
-          /* no final was exported before the restart */
-        }
+        atomicWriteJson(stateFile, state);
         final.aborted = true;
         final.abort_reason = "interrupted by host restart";
         if (!Array.isArray(final.decision_path)) final.decision_path = state.decision_path ?? [];
         final.extra = { ...(typeof final.extra === "object" && final.extra ? final.extra : {}), interrupted: true };
-        fs.writeFileSync(finalFile, JSON.stringify(final, null, 2), "utf8");
+        atomicWriteJson(finalFile, final);
         recovered.push(run.run_id);
       } catch {
         /* a corrupt or disappearing run stays visible to /rsi status */

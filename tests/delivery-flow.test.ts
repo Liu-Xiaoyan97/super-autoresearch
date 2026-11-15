@@ -262,6 +262,71 @@ test("resume validates scientific protocol while allowing runtime budget changes
   assert.throws(() => ResearchState.fromDict(ctx.problem, { ...ctx.config, subsetSeeds: 99 }, snapshot), /protocol differs/);
   assert.doesNotThrow(() => ResearchState.fromDict(ctx.problem, { ...ctx.config, maxLlmCalls: 9999 }, snapshot));
   assert.throws(() => ResearchState.fromDict(ctx.problem, ctx.config, { ...snapshot, state_version: 99 }), /unsupported/);
+  assert.throws(() => ResearchState.fromDict({ ...ctx.problem, diagnose_command: ["python", "other.py"] }, ctx.config, snapshot), /protocol differs/);
+  assert.throws(() => ResearchState.fromDict({ ...ctx.problem, remote: { env: { CONTEXT: "2048" } } as any }, ctx.config, snapshot), /protocol differs/);
+});
+
+test("legacy candidate evidence is retired while baseline and history survive", () => {
+  const ctx = makeContext({ config: { runner: "subprocess" } });
+  const state = new ResearchState(ctx.problem, ctx.config);
+  const candidate = evidence();
+  const idea = makeIdea({ id: "idea" });
+  state.baseline = makeEvidence({ idea_id: "baseline", code: { ...candidate.code!, parent: null }, metrics: { auroc: 0.5 } });
+  state.adopt(idea, candidate);
+  state.record(makeTrace({ idea, decision: "good", evidence: [candidate] }));
+  state.searchDone = true;
+  const restored = ResearchState.fromDict(ctx.problem, ctx.config, state.toDict());
+  assert.equal(restored.bestEvidence, null);
+  assert.equal(restored.traces.length, 1);
+  assert.equal(restored.traces[0].invalid, true);
+  assert.equal(restored.evaluatedIds.has("idea"), false);
+  assert.ok(restored.baseline);
+  assert.equal(restored.searchDone, false);
+});
+
+test("each persisted candidate checks its own environment before evidence reuse", () => {
+  const ctx = makeContext({ config: { runner: "subprocess" } });
+  const state = new ResearchState(ctx.problem, ctx.config);
+  const one = evidence("one"), two = evidence("two");
+  one.code!.check_environment = "python-env";
+  two.code!.check_environment = "native-env";
+  state.record(makeTrace({ idea: makeIdea({ id: "one" }), decision: "good", evidence: [one] }));
+  state.record(makeTrace({ idea: makeIdea({ id: "two" }), decision: "good", evidence: [two] }));
+  const restored = ResearchState.fromDict(ctx.problem, ctx.config, state.toDict());
+  assert.equal(restored.invalidateCandidateEnvironment(new Map([["one", "python-env"], ["two", "native-env"]])), 0);
+  assert.equal(restored.invalidateCandidateEnvironment(new Map([["one", "python-env"], ["two", "changed-env"]])), 1);
+  assert.equal(restored.goodTraces().length, 1);
+  assert.equal(restored.goodTraces()[0].idea.id, "one");
+  restored.record(makeTrace({ idea: makeIdea({ id: "two" }), decision: "good", evidence: [{ ...two, code: { ...two.code!, check_environment: "changed-env" } }] }));
+  restored.invalidateCandidateEnvironment(new Map([["one", "python-env"], ["two", "changed-env"]]));
+  assert.equal(restored.evaluatedIds.has("two"), true);
+});
+
+test("normal resume retires changed-environment evidence before continuing research", async () => {
+  const o = orchestrator();
+  o.ctx.config.runner = "subprocess";
+  o.state.bestCode!.check_environment = "old-env";
+  o.state.bestSubset!.code!.check_environment = "old-env";
+  o.state.record(makeTrace({ idea: o.state.bestIdea!, decision: "good", evidence: [o.state.bestEvidence!] }));
+  o.ctx.workspace.preflight = async () => ({ commit: "base", parent: null, languages: ["python"], changed_files: [],
+    status: "ok", checks: [], environment_fingerprint: "startup-env" });
+  let checks = 0;
+  o.ctx.workspace.check = async () => {
+    checks++;
+    return { commit: "candidate", parent: "base", languages: ["python"], changed_files: [], status: "ok", checks: [], environment_fingerprint: "new-env" };
+  };
+  (o as any).baseline = async () => {};
+  (o as any).limitations = async () => {};
+  (o as any).seedIdeas = async () => {};
+  (o as any).ideaSearchWithReseeding = async () => {
+    assert.equal(o.state.bestEvidence, null);
+    assert.equal(o.state.goodTraces().length, 0);
+    throw new DOMException("audit complete", "AbortError");
+  };
+  (o as any).exportArtifacts = async () => ({});
+  await o.run({ resume: true });
+  assert.equal(checks, 1);
+  assert.equal(o.state.traces[0].invalid, true);
 });
 
 test("ablation plans require committed component evidence and never synthesize fillers", async () => {
@@ -297,7 +362,7 @@ test("delivery matches file and class identities without accepting name prefixes
   (ctx.llm as any).script = { "code.verify": { decision: "good", modules: ["model.py:forward"],
     tests: ["tests/test_model.py::TestModel::test_step checks the update"], findings: [] } };
   let executed = ["tests/test_model.py::TestModel::test_step_disabled", "tests/test_other.py::TestModel::test_step"];
-  ctx.workspace.check = async () => ({ commit: "candidate", parent: "base", languages: ["python"], changed_files: ["model.py"], status: "ok", checks: [
+  ctx.workspace.check = async () => ({ commit: "candidate", parent: "base", environment_fingerprint: "test-env", languages: ["python"], changed_files: ["model.py"], status: "ok", checks: [
     { id: "tests", command: [], status: "ok", severity: "required", kind: "test", exit_code: 0, stdout: "", stderr: "", duration_s: 0,
       executed_tests: executed },
   ] });

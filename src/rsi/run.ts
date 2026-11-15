@@ -11,7 +11,7 @@ import { asRecord, num, numRecord, str, strArray, stringRecord } from "./json.ts
 import { LLMProvider } from "./providers/base.ts";
 import { MockLLMProvider, type MockScript, loadMockScript } from "./providers/mock.ts";
 import { Budget } from "./runtime/budget.ts";
-import { ArtifactStore, TraceStore, type TraceRecord } from "./runtime/store.ts";
+import { ArtifactStore, TraceStore, atomicWriteJson, type TraceRecord } from "./runtime/store.ts";
 import { GitWorkspace } from "./runtime/workspace.ts";
 import { loadRunBaselines, type RunBaselineSeeds } from "./runtime/incumbent.ts";
 import { refreshLedgerFromContext } from "./runtime/ledger.ts";
@@ -425,7 +425,7 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
     }
     const final = await orchestrator.run({ resume: Boolean(resumedState) });
     const state = orchestrator.stateDict();
-    fs.writeFileSync(path.join(root, "state.json"), JSON.stringify(state, null, 2), "utf8");
+    atomicWriteJson(path.join(root, "state.json"), state);
     // Keep every finished attempt readable: a resume must not erase the record
     // of what the previous attempt concluded.
     const finalFile = path.join(root, "final.json");
@@ -434,7 +434,7 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
       while (fs.existsSync(path.join(root, `final.attempt-${attempt}.json`))) attempt += 1;
       fs.copyFileSync(finalFile, path.join(root, `final.attempt-${attempt}.json`));
     }
-    fs.writeFileSync(finalFile, JSON.stringify(final, null, 2), "utf8");
+    atomicWriteJson(finalFile, final);
     refreshLedgerFromContext(ctx);
     const records = traces.readAll();
     const summary = summarize(runId, state, final, records);

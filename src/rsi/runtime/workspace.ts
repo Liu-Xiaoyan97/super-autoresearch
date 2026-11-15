@@ -1566,6 +1566,7 @@ export class GitWorkspace implements Workspace {
       env: req.env ?? {},
     });
     if (req.preflight?.length) parts.preflight = req.preflight;
+    parts.check_environment = req.repo.check_environment ?? null;
     const key = measurementKey(parts);
     const root = path.resolve(this.config.outDir || "runs", ".rsi-cache", "measurements");
     // Smoke and adapter checks demand fresh raw evidence, never a replayed number.

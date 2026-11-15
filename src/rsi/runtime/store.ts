@@ -2,6 +2,31 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+
+export function atomicWriteJson(file: string, value: unknown): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    fs.writeFileSync(temporary, jsonText(value), "utf8");
+    fs.renameSync(temporary, file);
+  } finally {
+    fs.rmSync(temporary, { force: true });
+  }
+}
+
+/** An absent file may start empty. Existing corrupt evidence must survive untouched. */
+export function readStateObject(file: string): Record<string, unknown> {
+  let text: string;
+  try { text = fs.readFileSync(file, "utf8"); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
+    throw error;
+  }
+  const parsed = JSON.parse(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error(`invalid state object: ${file}`);
+  return parsed;
+}
 
 export function asJsonable(value: unknown): unknown {
   if (value instanceof Error) return { error: value.name, message: value.message };

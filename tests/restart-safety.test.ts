@@ -12,7 +12,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
-import { ArtifactStore } from "../src/rsi/runtime/store.ts";
+import { ArtifactStore, atomicWriteJson, readStateObject } from "../src/rsi/runtime/store.ts";
+import { RunSession, SuperagentRuntime } from "../src/rsi/superagent/runtime.ts";
 import { GitWorkspace, MeasurementCache, measurementKey, subsetBudgetEnv } from "../src/rsi/runtime/workspace.ts";
 import { ResearchState } from "../src/rsi/core/state.ts";
 import { defaultConfig } from "../src/rsi/config.ts";
@@ -28,6 +29,49 @@ const okResult = (word_ppl: number): ExperimentResult => ({
   stdout: "",
   stderr: "",
   wall_time_s: 42,
+});
+
+test("interrupt preserves corrupt state and final evidence byte for byte", () => {
+  for (const name of ["state.json", "final.json"]) {
+    const root = tempDir("rsi-corrupt-evidence-");
+    const corrupt = '{"traces":[';
+    atomicWriteJson(path.join(root, "state.json"), { traces: ["preserved"] });
+    atomicWriteJson(path.join(root, "final.json"), { metrics: { score: 1 } });
+    fs.writeFileSync(path.join(root, name), corrupt);
+    const before = ["state.json", "final.json"].map((file) => fs.readFileSync(path.join(root, file), "utf8"));
+    (RunSession.prototype as any).markInterrupted.call({ root, cwd: root }, "test interruption");
+    assert.deepEqual(["state.json", "final.json"].map((file) => fs.readFileSync(path.join(root, file), "utf8")), before);
+    assert.throws(() => readStateObject(path.join(root, name)));
+  }
+});
+
+test("atomic state writer replaces valid objects and cleans temporary files", () => {
+  const root = tempDir("rsi-atomic-final-");
+  const file = path.join(root, "state.json");
+  assert.deepEqual(readStateObject(file), {});
+  atomicWriteJson(file, { traces: [1] });
+  atomicWriteJson(file, { traces: [1, 2] });
+  assert.deepEqual(readStateObject(file), { traces: [1, 2] });
+  assert.deepEqual(fs.readdirSync(root), ["state.json"]);
+});
+
+test("host restart recovery leaves corrupt research evidence and tickets untouched", () => {
+  for (const name of ["state.json", "final.json"]) {
+    const out = tempDir("rsi-corrupt-host-recovery-");
+    const root = path.join(out, "run");
+    fs.mkdirSync(path.join(root, "superagent"), { recursive: true });
+    atomicWriteJson(path.join(root, "state.json"), { traces: ["historical"] });
+    atomicWriteJson(path.join(root, "final.json"), { aborted: false });
+    const tickets = path.join(root, "superagent", "state.json");
+    fs.writeFileSync(tickets, "ticket evidence");
+    fs.writeFileSync(path.join(root, name), '{"incomplete":');
+    const before = ["state.json", "final.json", "superagent/state.json"].map((file) => fs.readFileSync(path.join(root, file), "utf8"));
+    const recovered = SuperagentRuntime.prototype.recoverStaleRuns.call({
+      out, cwd: out, list: () => [{ run_id: "run", updated_at: "2020-01-01" }], status: () => ({ state: "running" }),
+    } as any, "2026-01-01");
+    assert.deepEqual(recovered, []);
+    assert.deepEqual(["state.json", "final.json", "superagent/state.json"].map((file) => fs.readFileSync(path.join(root, file), "utf8")), before);
+  }
 });
 
 function git(cwd: string, ...args: string[]): string {
@@ -196,6 +240,9 @@ test("git workspace runs the experiment once per commit+protocol", async () => {
   assert.equal(entry.result.metrics.score, 0.75);
   assert.equal(entry.result.status, "ok");
   assert.deepEqual(subsetBudgetEnv(problem, config, "subset"), {});
+  const changedEnvironment = await workspace.run({ ...base, check_environment: "new-executor" }, "subset", null, 7);
+  assert.equal(changedEnvironment.cached, undefined);
+  assert.equal(calls(), 3, "an environment change must not reuse old measurements");
 });
 
 // ------------------------------------------------------------------ implementer
