@@ -140,6 +140,7 @@ export interface LanguageSpec {
     root?: string;
     env?: Record<string, string>;
     severity?: "required" | "advisory";
+    referenceSeverity?: "required" | "advisory";
     initializationOptions?: Record<string, unknown>;
   };
 }
@@ -467,10 +468,11 @@ advisory failed
 key：
 
 ```text
-commit + parent
+check semantics version
++ commit + parent
 + changed files
 + LanguageSpec/checks（命令、env、timeout、severity、paths）
-+ LSP spec
++ LSP spec（diagnostics/references severity）
 + RSI_PYTHON
 ```
 
@@ -507,6 +509,21 @@ runs/<run_id>/artifacts/checks/
 | Go | `gopls` |
 
 ### 9.2 当前实现形态
+
+检查顺序是：
+
+```text
+1. LSP references（干净候选 commit）
+2. CheckRunner（编译/类型/测试/smoke）
+3. LSP diagnostics（CheckRunner 之后）
+```
+
+LSP references 先运行，使用 `textDocument/documentSymbol` 找到与 diff 新增行相交的符号，
+再用 `textDocument/references` 检查引用。`referenceSeverity` 默认 advisory；设为
+required 时，未引用符号会在 CheckRunner 之前阻断候选。
+
+CheckRunner 可能生成 build 文件、venv、module cache 或测试产物；LSP diagnostics
+因此放在 CheckRunner 之后，避免把“生成文件尚未存在”误报为诊断失败。
 
 `GitWorkspace.check` 在 adapter 声明 `languages.<lang>.lsp` 时启动语言服务器，
 打开 changed files，收集 diagnostics，然后停止 server。LSP 默认 advisory。
@@ -764,8 +781,8 @@ target-specific smoke
 
 - check fail 不丢 patch；保留 `.diff`、`.apply.log`、check logs；
 - check fail 不消耗 experiment budget；
-- check report 按 commit + changed files + specs + LSP + `RSI_PYTHON` 的哈希
-  持久化到 `artifacts/checks/cache/`；resume 可命中并复制到当前 label；
+- check report 按 check semantics version + commit + changed files + specs + LSP +
+  `RSI_PYTHON` 的哈希持久化到 `artifacts/checks/cache/`；resume 可命中并复制到当前 label；
 - `unavailable`/`timeout` 不写入 cache，避免把基础设施故障当成候选属性；
 - timeout 记录为 `timeout`，不当作科学失败；
 - adapter 或工具缺失记录 `unavailable`；

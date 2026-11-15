@@ -21,6 +21,8 @@
 - bounded iteration 转发 check，并消费 coder 返回的 failed evidence；
 - `src/rsi/runtime/lsp.ts`：只读 LSP diagnostics 与 definition/references/
   hover/documentSymbols/workspaceSymbols 客户端；
+- `src/rsi/runtime/lsp-audit.ts`：LSP references 先行；用 diff 新增行定位
+  changed symbols，再查 references；默认 advisory，可设 required；
 - `src/rsi/runtime/lsp-tools.ts`：六个模型-facing 只读 LSP 工具；只对
   `code.*`/`engineer.*`/`ablation.*`/`rebuttal.*` 暴露；路径逃逸拒绝；
 - `src/rsi/runtime/check-worker.ts` 与 `check-client.ts`：secret-free check
@@ -353,6 +355,7 @@ export interface LanguageSpec {
     root?: string;
     env?: Record<string, string>;
     severity?: CheckSeverity;
+    referenceSeverity?: CheckSeverity;
     initializationOptions?: Record<string, unknown>;
   };
 }
@@ -487,12 +490,17 @@ src/rsi/agents/engineering.ts
 
 ```text
 src/rsi/runtime/lsp.ts
+src/rsi/runtime/lsp-audit.ts
 src/rsi/runtime/lsp-tools.ts
 tests/lsp.test.ts
+tests/lsp-audit.test.ts
 ```
 
 要求：
 
+- 顺序：LSP references（干净候选）→ CheckRunner → LSP diagnostics；
+- references 用 documentSymbol + diff 新增行定位 changed symbols；
+- references 默认 advisory；`referenceSeverity` 可设 required；
 - stdio JSON-RPC 客户端；
 - initialize/shutdown/diagnostics/definition/references/hover/symbols；
 - 每个 worktree + 语言一个服务器；
@@ -631,7 +639,8 @@ node --test tests/*.test.ts
 12. samples-only parent proxy 也受同一 provenance 规则约束。
 13. dirty tracked worktree 不测量。
 14. bounded iteration 消费 coder failed evidence。
-15. LSP 默认 advisory；required 由每个语言的 `lsp.severity` 决定。
+15. LSP 顺序：references 先、CheckRunner 后、diagnostics 最后；默认 advisory，
+    required 由每个语言的 `lsp.referenceSeverity` / `lsp.severity` 决定。
 16. 模型-facing LSP 工具只读，绑定 worker 目标目录，路径逃逸拒绝。
 17. 确定性检查交给 secret-free `check-worker`；compose 主容器默认 `auto`，
     代码缺省 `off`，`required` fail closed。

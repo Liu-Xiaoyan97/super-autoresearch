@@ -1139,6 +1139,9 @@ export class GitWorkspace implements Workspace {
     // The key covers every input that can change a check result. A toolchain
     // upgrade or adapter edit must not replay an old pass.
     const material = JSON.stringify({
+      // Bump when check semantics or ordering change; an old report must not
+      // bypass the reference-first gate.
+      check_version: 2,
       commit: repo.commit ?? "",
       parent: repo.parent,
       changedFiles: changedFiles.slice().sort(),

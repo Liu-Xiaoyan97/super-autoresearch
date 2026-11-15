@@ -84,7 +84,12 @@ function handle(message) {
   }
   if (message.method === "textDocument/references") {
     const uri = message.params?.textDocument?.uri ?? "";
-    send({ id, result: [{ uri, range: range(0, 0) }, { uri, range: range(2, 0) }] });
+    send({
+      id,
+      result: uri.endsWith("/unref.py")
+        ? []
+        : [{ uri, range: range(0, 0) }, { uri, range: range(2, 0) }],
+    });
     return;
   }
   if (message.method === "textDocument/hover") {

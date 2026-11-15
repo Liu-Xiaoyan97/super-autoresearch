@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { Problem, RepoRef } from "../types.ts";
+import { changedLineRanges, lspReferenceAudit, LSP_AUDIT_MAX_SYMBOLS } from "./lsp-audit.ts";
 import { lspDiagnostics, type LspSpec } from "./lsp.ts";
 import { ArtifactStore } from "./store.ts";
 
@@ -308,17 +309,40 @@ export function checkTimeoutMs(
     for (const check of spec.checks) {
       if (applies(check, changedFiles)) total += Math.max(1, check.timeoutS) * 1000;
     }
-    if (lspSpecs[language]) total += Math.max(1, changedFiles.length) * 8000 + 15_000;
+    if (lspSpecs[language]) {
+      // Reference audit starts a clean server and queries changed symbols
+      // before checks can generate build files; diagnostics run later.
+      total += (Math.max(1, changedFiles.length) + LSP_AUDIT_MAX_SYMBOLS) * 8000 + 15_000;
+      total += Math.max(1, changedFiles.length) * 8000 + 15_000;
+    }
   }
   return Math.min(total + 60_000, 3_600_000);
 }
 
+function finalStatus(checks: CheckResult[]): CheckReport["status"] {
+  const failed = checks.some((check) => check.severity === "required" && check.status !== "ok");
+  return failed ? "failed" : checks.length ? "ok" : "unavailable";
+}
+
+function writeCheckLogs(store: ArtifactStore, safe: string, checks: CheckResult[]): void {
+  const root = store.path("checks", safe);
+  fs.mkdirSync(root, { recursive: true });
+  for (const check of checks) {
+    const file = path.join(root, `${safeCheckLabel(check.id)}.log`);
+    fs.writeFileSync(file, `command: ${check.command.join(" ")}\nstatus: ${check.status}\nexit: ${check.exit_code}\n\n${check.stdout}\n${check.stderr}\n`, "utf8");
+  }
+}
+
 /**
- * Run deterministic checks and optional LSP diagnostics as one job.
+ * Run the static LSP reference gate, target checks and optional diagnostics.
  *
- * The local executor and the secret-free worker share this function, so their
- * reports and artifacts are identical. LSP stays advisory unless the target
- * adapter marks that language's server as required.
+ * Order is deliberate:
+ *   1. LSP references on the clean candidate commit (fail fast);
+ *   2. CheckRunner, which may build/generate dependencies;
+ *   3. LSP diagnostics on the post-check tree.
+ *
+ * A required reference failure stops before CheckRunner. LSP still stays
+ * advisory unless the adapter marks that phase required.
  */
 export async function runCheckJob(
   store: ArtifactStore,
@@ -329,10 +353,39 @@ export async function runCheckJob(
   changedFiles: string[],
   lspSpecs: Record<string, LspSpec> = {},
 ): Promise<CheckReport> {
-  const report = runChecks(store, repo, label, specs, languages, changedFiles);
   const safe = safeCheckLabel(label);
   const checkHome = store.path("checks", safe, "home");
   fs.mkdirSync(path.join(checkHome, "tmp"), { recursive: true });
+  const ranges = changedLineRanges(repo.path, repo.parent ?? null, repo.commit ?? null);
+  const references: CheckResult[] = [];
+  for (const language of languages) {
+    const lsp = lspSpecs[language];
+    const languageSpec = specs[language];
+    if (!lsp || !languageSpec) continue;
+    const files = changedFiles.filter((file) => languageSpec.extensions.some((extension) => file.endsWith(extension)));
+    const result = await lspReferenceAudit(repo.path, {
+      ...lsp,
+      env: { ...(lsp.env ?? {}), HOME: checkHome, TMPDIR: path.join(checkHome, "tmp") },
+    }, language, files, ranges);
+    if (result) references.push(result);
+  }
+  if (references.some((check) => check.severity === "required" && check.status !== "ok")) {
+    const early: CheckReport = {
+      commit: repo.commit ?? "",
+      parent: repo.parent,
+      languages,
+      changed_files: changedFiles,
+      status: finalStatus(references),
+      checks: references,
+      report_path: store.artifact(`checks/${safe}/report.json`),
+    };
+    writeCheckLogs(store, safe, references);
+    store.writeJson(`checks/${safe}/report.json`, early);
+    return early;
+  }
+
+  const report = runChecks(store, repo, label, specs, languages, changedFiles);
+  report.checks = [...references, ...report.checks];
   for (const language of languages) {
     const lsp = lspSpecs[language];
     if (!lsp) continue;
@@ -352,9 +405,10 @@ export async function runCheckJob(
       stderr: result.stderr,
       duration_s: (Date.now() - started) / 1000,
     });
-    if (severity === "required" && result.status !== "ok") report.status = "failed";
     store.writeText(`checks/${safe}/lsp-${language}.log`, JSON.stringify(result, null, 2));
   }
+  report.status = finalStatus(report.checks);
+  writeCheckLogs(store, safe, report.checks);
   report.report_path = store.artifact(`checks/${safe}/report.json`);
   store.writeJson(`checks/${safe}/report.json`, report);
   return report;

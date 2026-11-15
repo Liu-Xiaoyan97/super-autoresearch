@@ -18,7 +18,10 @@ export interface LspSpec {
   command: string[];
   root?: string;
   env?: Record<string, string>;
+  /** Diagnostics severity; default advisory. */
   severity?: CheckSeverity;
+  /** Static changed-symbol reference severity; default advisory. */
+  referenceSeverity?: CheckSeverity;
   initializationOptions?: Record<string, unknown>;
 }
 
