@@ -11,6 +11,7 @@ import {
   type Verdict,
   evidenceOk,
   evidenceProvenanceError,
+  evidenceSucceeded,
   makeVerdict,
 } from "../types.ts";
 import { BaseAgent, guidance } from "./base.ts";
@@ -136,7 +137,7 @@ export class AblationCritic extends BaseAgent {
     if (!results.length || !evidenceOk(opts.best)) concerns.push(idea.mechanism || idea.id);
     for (const result of results) {
       const metrics = result.evidence ? result.evidence.metrics : result.metrics;
-      const provenance = result.evidence?.result?.status === "ok"
+      const provenance = result.evidence && evidenceSucceeded(result.evidence)
         ? evidenceProvenanceError(result.evidence)
         : null;
       let valid = result.ok &&

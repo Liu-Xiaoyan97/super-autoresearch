@@ -748,6 +748,10 @@ export class Orchestrator {
       // not a candidate measurement. Never pollute the scientific ledger with it.
       if (evidence.result?.status !== "ok") continue;
       if (evidenceProvenanceError(evidence)) continue;
+      if (evidence.samples?.length) {
+        const expected = this.ctx.problem.metrics.map((metric) => metric.name);
+        if (evidence.samples.some((sample) => expected.some((name) => !Number.isFinite(sample.metrics?.[name])))) continue;
+      }
       const commit = evidence.code?.commit ?? "";
       if (!commit) continue;
       if (evidence.code?.parent && commit === evidence.code.parent &&

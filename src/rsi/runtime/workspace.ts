@@ -1323,6 +1323,20 @@ export class GitWorkspace implements Workspace {
 
   async run(repo: RepoRef, scope: Scope, idea: Idea | null = null, seed?: number): Promise<ExperimentResult> {
     await this.init();
+    // Only tracked source changes affect the candidate identity. Untracked
+    // target outputs are allowed after a previous experiment, but a dirty
+    // tracked tree must never be measured under a clean commit label.
+    const dirty = git(this.worktree, ["status", "--porcelain", "--untracked-files=no"], true);
+    if (dirty.status === 0 && dirty.stdout.trim()) {
+      return {
+        metrics: {},
+        status: "failed",
+        log_path: "",
+        stdout: "",
+        stderr: "candidate worktree has tracked changes; refusing to measure a dirty snapshot",
+        wall_time_s: 0,
+      };
+    }
     // Defense in depth: a caller must not measure the parent commit while
     // presenting a nonempty candidate patch as the implementation. This is the
     // exact h6 failure mode; writePatch normally prevents it upstream.

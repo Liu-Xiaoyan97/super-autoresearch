@@ -249,3 +249,36 @@ test("a candidate without parent metadata is rejected even with metrics", async 
   const verdict = await new SubsetCritic(ctx).judge(parentless, { baseline });
   assert.equal(verdict.invalid, true);
 });
+
+test("a samples-only parent proxy is invalid, not a good candidate", async () => {
+  const ctx = makeContext();
+  const baseline = makeEvidence({
+    idea_id: "baseline", scope: "subset", metrics: { auroc: 0.5 },
+    code: { ...code, label: "baseline", parent: null, patch: "", commit: "base-commit" },
+    result: ok({ auroc: 0.5 }),
+  });
+  const proxy: Evidence = {
+    ...makeEvidence({ idea_id: "h1", scope: "subset", metrics: { auroc: 0.9 }, result: null }),
+    code: { ...code, label: "h1", commit: "base-commit", parent: "base-commit" },
+    samples: [{ seed: 7, metrics: { auroc: 0.9 }, result: ok({ auroc: 0.9 }) }],
+  };
+  const verdict = await new SubsetCritic(ctx).judge(proxy, { baseline });
+  assert.equal(verdict.invalid, true);
+});
+
+test("a missing per-seed metric is invalid even when the aggregate is finite", async () => {
+  const ctx = makeContext();
+  const baseline = makeEvidence({
+    idea_id: "baseline", scope: "subset", metrics: { auroc: 0.5 },
+    code: { ...code, label: "baseline", parent: null, patch: "", commit: "base-commit" },
+    result: ok({ auroc: 0.5 }),
+  });
+  const incomplete = makeEvidence({
+    idea_id: "h1", scope: "subset", metrics: { auroc: 0.9 },
+    code: { ...code, label: "h1", commit: "candidate-1", parent: "base-commit" },
+    result: ok({ auroc: 0.9 }),
+    samples: [{ seed: 7, metrics: {}, result: ok({ auroc: 0.9 }) }],
+  });
+  const verdict = await new SubsetCritic(ctx).judge(incomplete, { baseline });
+  assert.equal(verdict.invalid, true);
+});

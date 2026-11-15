@@ -6,6 +6,7 @@ import {
   type Verdict,
   evidenceOk,
   evidenceProvenanceError,
+  evidenceSucceeded,
   finalEvidence,
   isStrictlyBetter,
   makeVerdict,
@@ -14,7 +15,7 @@ import {
 import { BaseAgent } from "./base.ts";
 
 function valid(evidence: Evidence, baseline: Evidence, names: string[]): boolean {
-  const provenance = evidence.result?.status === "ok" ? evidenceProvenanceError(evidence) : null;
+  const provenance = evidenceSucceeded(evidence) ? evidenceProvenanceError(evidence) : null;
   return (
     evidenceOk(evidence) &&
     evidenceOk(baseline) &&
@@ -62,7 +63,7 @@ export class SubsetCritic extends BaseAgent {
     const deltas = metricDeltas(evidence.metrics, opts.baseline.metrics, specs);
     const primary = specs[0];
     const samples = evidence.samples ?? [];
-    const provenance = evidence.result?.status === "ok" ? evidenceProvenanceError(evidence) : null;
+    const provenance = evidenceSucceeded(evidence) ? evidenceProvenanceError(evidence) : null;
     if (provenance) {
       return makeVerdict({
         decision: "engineer",
@@ -122,7 +123,7 @@ export class FullSetCritic extends BaseAgent {
   ): Promise<Verdict> {
     const specs = this.ctx.problem.metrics;
     const deltas = metricDeltas(evidence.metrics, opts.baseline.metrics, specs);
-    const provenance = evidence.result?.status === "ok" ? evidenceProvenanceError(evidence) : null;
+    const provenance = evidenceSucceeded(evidence) ? evidenceProvenanceError(evidence) : null;
     if (provenance) {
       return makeVerdict({
         decision: "engineer",

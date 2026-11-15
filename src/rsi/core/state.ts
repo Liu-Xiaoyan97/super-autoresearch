@@ -2,7 +2,7 @@
 
 import type { Config } from "../config.ts";
 import { asArray, asRecord, canonical } from "../json.ts";
-import { evidenceProvenanceError } from "../types.ts";
+import { evidenceProvenanceError, evidenceSucceeded } from "../types.ts";
 import type {
   AblationPlan,
   AblationResult,
@@ -129,7 +129,7 @@ export class ResearchState {
     // A state written before the provenance guard may contain an old parent-
     // commit proxy as a "good" candidate. Never resume it as measured science.
     const invalid = (evidence: Evidence | null | undefined): boolean =>
-      !!evidence && evidence.result?.status === "ok" && evidenceProvenanceError(evidence) !== null;
+      !!evidence && evidenceSucceeded(evidence) && evidenceProvenanceError(evidence) !== null;
     for (const trace of state.traces) {
       // Only the final usable measurement matters; an earlier failed repair
       // must not invalidate a later repaired candidate.
@@ -174,7 +174,7 @@ export class ResearchState {
       }
     }
     state.rebuttals = state.rebuttals.filter((evidence) =>
-      evidence.result?.status === "ok" && !invalid(evidence),
+      evidenceSucceeded(evidence) && !invalid(evidence),
     );
     if (invalid(state.bestSubset)) state.bestSubset = null;
     return state;

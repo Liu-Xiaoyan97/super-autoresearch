@@ -5,6 +5,50 @@
 coder 检查门，以及内嵌的 Python/Rust/Go 容器工具链。
 本文档记录设计理由和独立评审决策。
 
+## Progress snapshot — 2026-11-15 15:21 CST
+
+已完成：
+
+- `src/rsi/runtime/checks.ts`：adapter/builtin Python/Rust/Go CheckSpec；
+- `GitWorkspace.check`：changed-file 检测、required/advisory、check report、
+  cache、protected paths、RSI root 拒绝、check 后恢复干净候选树；
+- 六个 coder/engineer 路径的 pre-experiment gate；
+- `checkFailedEvidence` 保留失败候选 `RepoRef`、诊断和 `check_report`；
+- required `unavailable` fail closed；advisory 可记录后继续；
+- samples-only parent proxy、parentless evidence、缺失 per-seed metrics 拦截；
+- dirty tracked worktree 不参与测量；
+- bounded iteration 转发 check，并消费 coder 返回的 failed evidence；
+- `src/rsi/runtime/lsp.ts`：可选只读 LSP diagnostics；
+- `container/Dockerfile` 内嵌 pyright/ruff/pytest/Rust/Go/gopls，镜像已重建；
+- `handoff.md`、`docs/Deterministic_code.md`、README 入口。
+
+最新验证：
+
+```text
+122 tests pass
+npx tsc --noEmit 通过
+```
+
+镜像验证：
+
+```text
+pyright 1.1.414
+ruff 0.17.3
+pytest 9.2.0
+rustc 1.99.0
+rust-analyzer 1.99.0
+go 1.27.2
+gopls v0.24.0
+```
+
+尚未完成 / 风险：
+
+- 当前 check/LSP 仍在带凭据的主容器中运行；`HOME`/`TMPDIR` 已隔离，
+  但没有完整 filesystem/network sandbox；secret-free worker 未实现。
+- LSP 是可选 diagnostics 路径；模型-facing definition/references 工具尚未暴露。
+- 运行中的 `pi-agent-rsi` 容器仍是旧镜像；新镜像 `pi-agent:local` 已构建但未自动切换。
+- 最新代码改动尚未提交（本快照写入时会与下文提交一起提交）。
+
 仓库：RSI（`git rev-parse --show-toplevel`）。
 目标仓库身份：`Problem.repo`。不得使用固定绝对路径。
 当前范围：**Python、Rust、Go**。TypeScript/JavaScript、C/C++、Java/Kotlin、
@@ -516,6 +560,14 @@ node --test tests/*.test.ts
 5. 不删除 subset/full 测量或科学 critic。
 6. 保留六条 coder 路径，但集中 patch/gate/failed-evidence 管道。
 7. 容器内嵌 Python/Rust/Go 语言服务器。
+8. Required check 的 `unavailable` fail closed；advisory 记录后继续。
+9. check 失败保留失败候选和报告路径，不复用“patch 未应用”的构造函数。
+10. 移除语言无关的 whitespace-only 判定；精确树无变化仍然拒绝。
+11. 增加 protected paths、RSI root 拒绝、per-seed metrics 完整性。
+12. samples-only parent proxy 也受同一 provenance 规则约束。
+13. dirty tracked worktree 不测量。
+14. bounded iteration 消费 coder failed evidence。
+15. LSP 默认 advisory；完整隔离 worker 仍是后续工作。
 
 ### 评审者的待定问题
 

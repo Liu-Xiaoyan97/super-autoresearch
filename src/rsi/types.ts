@@ -395,6 +395,12 @@ export function makeLimitation(over: Partial<Limitation> = {}): Limitation {
   };
 }
 
+/** True when the aggregate result or all per-seed results are successful. */
+export function evidenceSucceeded(evidence: Evidence): boolean {
+  if (evidence.result?.status === "ok") return true;
+  return !!evidence.samples?.length && evidence.samples.every((sample) => sample.result?.status === "ok");
+}
+
 export function evidenceProvenanceError(evidence: Evidence): string | null {
   const code = evidence.code;
   if (!code) return "missing code snapshot";
@@ -427,7 +433,7 @@ export function makeEvidence(over: Partial<Evidence> = {}): Evidence {
   };
   // A successful measurement of the parent commit is a provenance contradiction:
   // it would turn an implementation failure into a scientific measurement.
-  if (evidence.result?.status === "ok" && evidence.code) {
+  if (evidenceSucceeded(evidence) && evidence.code) {
     const problem = evidenceProvenanceError(evidence);
     if (problem) throw new Error(`invalid evidence provenance: ${problem}`);
   }
