@@ -105,6 +105,10 @@ worker probe command[0]: /repos/coral-rsi/.rsi/venv/bin/python
   `pip install` 的内容变化；
 - Venv 必须在 Linux 主容器中创建；宿主 macOS 的 venv 不能在 worker 中执行。
 
+验证限制：完整套件在 600s 外层 timeout 被杀，未得到最终 summary；240s
+复跑日志中已完成的测试无 fail。`npx tsc --noEmit` 和 17 个 checks/adapter/LSP
+定向测试通过。
+
 
 尚未完成 / 风险：
 
