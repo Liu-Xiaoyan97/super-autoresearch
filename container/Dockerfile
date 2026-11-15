@@ -12,12 +12,10 @@ FROM ${BASE_IMAGE}
 
 ARG PI_VERSION=1.5.2
 ARG NPM_REGISTRY=https://registry.npmmirror.com
-ARG PYRIGHT_VERSION=1.1.414
 ARG RUFF_VERSION=0.17.3
 ARG PYTEST_VERSION=9.2.0
 ARG RUST_VERSION=1.99.0
 ARG GO_VERSION=1.27.2
-ARG GOPLS_VERSION=v0.24.0
 # Optional build-time apt/npm proxy, e.g. http://host.docker.internal:7890
 ARG APT_PROXY
 ARG NPM_PROXY
@@ -57,19 +55,15 @@ RUN python3 -m venv /opt/rsi-tools \
     /opt/rsi-tools/bin/python -m pip install --no-cache-dir ${proxy_arg} \
       "ruff==${RUFF_VERSION}" "pytest==${PYTEST_VERSION}"
 
-# Pyright supplies both `pyright` (typecheck CLI) and `pyright-langserver` (LSP).
-RUN NPM_CONFIG_PROXY=${NPM_PROXY} NPM_CONFIG_HTTPS_PROXY=${NPM_PROXY} \
-    npm install -g --ignore-scripts "pyright@${PYRIGHT_VERSION}"
-
-# Rust compiler, clippy, rustfmt and rust-analyzer. Keep the actual installed
+# Rust compiler, clippy and rustfmt. Keep the actual installed
 # toolchain; runtime rustup proxies could try to download another toolchain.
 RUN export HTTPS_PROXY="${NPM_PROXY}" HTTP_PROXY="${NPM_PROXY}"; \
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
       | sh -s -- -y --no-modify-path --profile minimal --default-toolchain "${RUST_VERSION}" \
-          --component rust-analyzer --component clippy --component rustfmt \
- && rustc --version && cargo --version && rust-analyzer --version
+          --component clippy --component rustfmt \
+ && rustc --version && cargo --version
 
-# Go SDK and the Go language server. GOTOOLCHAIN=local prevents a target
+# Go SDK. GOTOOLCHAIN=local prevents a target
 # go.mod from silently downloading a different toolchain; GOPROXY may be
 # overridden by the target adapter only after dependencies are prepared.
 RUN arch="$(uname -m)"; \
@@ -81,8 +75,7 @@ RUN arch="$(uname -m)"; \
     export HTTPS_PROXY="${NPM_PROXY}" HTTP_PROXY="${NPM_PROXY}"; \
     curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${goarch}.tar.gz" \
       | tar -C /usr/local -xz; \
-    GOTOOLCHAIN=local CGO_ENABLED=0 go install "golang.org/x/tools/gopls@${GOPLS_VERSION}"; \
-    go version && gopls version
+    go version
 
 # Pi ships platform binaries through npm; --ignore-scripts matches the official
 # container recipe and avoids running arbitrary package lifecycle scripts.

@@ -212,6 +212,8 @@ export interface Verdict {
 }
 
 export interface Trace {
+  /** Stable search identity across engineering revisions. */
+  seed_id?: string;
   idea: Idea;
   evidence: Evidence[];
   decision: Decision;
@@ -239,6 +241,7 @@ export interface TraceCheckpoint {
 }
 
 export interface AblationPlan {
+  code_refs?: string[];
   id: string;
   component: string;
   description: string;

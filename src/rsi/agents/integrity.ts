@@ -5,6 +5,7 @@
  * can never clear a deterministic one.
  */
 
+import { createHash } from "node:crypto";
 import { stableString } from "../json.ts";
 import { MethodCodeAuditResult, ReferenceAuditSpec, SpecAuditResult } from "../schemas.ts";
 import {
@@ -18,6 +19,7 @@ import {
   makeIntegrity,
 } from "../types.ts";
 import { BaseAgent } from "./base.ts";
+import { reviewChunks } from "./patch.ts";
 
 const TOKEN = /[a-z0-9_]{3,}/g;
 const STOP = new Set([
@@ -82,22 +84,32 @@ export class SpecAuditor extends BaseAgent {
   async audit(idea: Idea, opts: { evidence: Evidence; diff?: string }): Promise<IntegrityReport> {
     const diff = opts.diff ?? "";
     const violations = this.hardViolations(this.ctx.problem, diff, opts.evidence);
-    const result = await this.ask(SpecAuditResult, {
-      user: this.prompt(idea, opts.evidence, diff),
-      meta: { idea_id: idea.id, n: 1 },
-    });
-    for (const violation of result.violations) {
-      if (!violations.includes(violation)) violations.push(violation);
+    const notes: string[] = [];
+    for (const [index, chunk] of reviewChunks(diff).entries()) {
+      const key = createHash("sha256").update(stableString({ version: 1, chunk, mechanism: idea.mechanism,
+        hypothesis: idea.hypothesis, constraints: this.ctx.problem.constraints, forbidden: this.ctx.problem.forbidden })).digest("hex");
+      const file = `checks/spec-cache/${key}.json`;
+      let result;
+      try { result = SpecAuditResult.parse(this.ctx.store.readJson(file)); }
+      catch {
+        result = await this.ask(SpecAuditResult, {
+          user: this.prompt(idea, chunk),
+          meta: { idea_id: idea.id, n: 1, chunk: index + 1 },
+        });
+        this.ctx.store.writeJson(file, result);
+      }
+      for (const violation of result.violations) if (!violations.includes(violation)) violations.push(violation);
+      if (result.notes) notes.push(result.notes);
     }
     return makeIntegrity({
       score_verified: verifyScores(Boolean(Object.keys(opts.evidence.metrics).length), opts.evidence),
       spec_violations: violations,
       method_code_alignment: 1,
-      notes: result.notes ? [result.notes] : [],
+      notes,
     });
   }
 
-  private prompt(idea: Idea, evidence: Evidence, diff: string): string {
+  private prompt(idea: Idea, diff: string): string {
     const constraints = this.ctx.problem.constraints.map((c) => `- ${c}`).join("\n") || "- (none)";
     return (
       "Audit whether this experimental solution violates the task specification " +
@@ -105,7 +117,7 @@ export class SpecAuditor extends BaseAgent {
       `HYPOTHESIS: ${idea.hypothesis}\nMECHANISM: ${idea.mechanism}\n` +
       `CONSTRAINTS:\n${constraints}\n` +
       `OUT OF SCOPE: ${this.ctx.problem.forbidden.join(", ") || "(none)"}\n` +
-      `METRICS: ${stableString(evidence.metrics)}\nDIFF (truncated):\n${diff.slice(0, 4000)}\n\n` +
+      `DIFF CHUNK (all chunks are reviewed):\n${diff}\n\n` +
       "Report only concrete violations (leaked test data, disabled checks, " +
       "unfair baselines, spec breaches). Empty list = compliant."
     );
@@ -161,9 +173,7 @@ export class MethodCodeAuditor extends BaseAgent {
   readonly task = "integrity.method_code";
 
   lexicalAlignment(manuscript: Manuscript, diff: string): [number, string[]] {
-    const claims = manuscript.claims.map((claim) => claim.text).length
-      ? manuscript.claims.map((claim) => claim.text)
-      : [manuscript.abstract];
+    const claims = (manuscript.sections.method || manuscript.abstract).split(/(?<=[.!?])\s+|\n+/).filter((text) => text.trim());
     if (!claims.length) return [0, ["manuscript has no claims to align"]];
     const diffTokens = tokens(diff);
     const missing: string[] = [];
@@ -184,23 +194,30 @@ export class MethodCodeAuditor extends BaseAgent {
     opts: { diff: string; evidence?: Evidence | null },
   ): Promise<IntegrityReport> {
     const [lower, missing] = this.lexicalAlignment(manuscript, opts.diff);
-    const result = await this.ask(MethodCodeAuditResult, {
-      user:
-        "Score how faithfully the code diff implements the manuscript's method. " +
-        "0 = unrelated, 1 = every claimed component is implemented.\n\n" +
-        `METHOD:\n${(manuscript.sections.method ?? manuscript.abstract).slice(0, 3000)}\n\n` +
-        `DIFF:\n${opts.diff.slice(0, 4000)}`,
-      meta: { n: 1 },
-    });
-    // A model may refine a partially supported score upward, but never manufacture
-    // alignment when the deterministic check found no textual support.
-    const alignment = lower > 0 ? Math.max(lower, Math.min(1, Math.max(0, result.alignment))) : 0;
-    const notes = result.notes ? [result.notes] : [];
+    const claims = (manuscript.sections.method || manuscript.abstract).split(/(?<=[.!?])\s+|\n+/).filter((text) => text.trim());
+    if (!claims.length) return makeIntegrity({ score_verified: false, method_code_alignment: 0, notes: ["Manuscript method is missing."] });
+    const notes: string[] = [];
+    let total = 0;
+    for (const claim of claims) {
+      let supported = 0;
+      for (const [index, chunk] of reviewChunks(opts.diff).entries()) {
+        const result = await this.ask(MethodCodeAuditResult, {
+          user: "Score code evidence for this single manuscript claim in this chunk. " +
+            "Use 0 when unsupported and 1 when fully implemented. All chunks are checked.\n" +
+            `CLAIM\n${claim}\nDIFF CHUNK ${index + 1}\n${chunk}`,
+          meta: { n: 1, chunk: index + 1 },
+        });
+        supported = Math.max(supported, Math.min(1, Math.max(0, result.alignment)));
+        if (result.notes) notes.push(result.notes);
+      }
+      total += supported;
+    }
+    const alignment = lower > 0 ? Math.min(lower, total / claims.length) : 0;
     if (missing.length) notes.push(`${missing.length} claims not lexically supported by the diff`);
     return makeIntegrity({
       score_verified: verifyScores(manuscript.claims.length > 0, opts.evidence ?? null),
       method_code_alignment: Math.round(alignment * 1000) / 1000,
-      checked_claims: manuscript.claims.length,
+      checked_claims: claims.length,
       notes,
     });
   }

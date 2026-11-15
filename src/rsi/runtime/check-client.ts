@@ -3,9 +3,8 @@
  *
  * The worker is a separate container/process with no credentials and no
  * network. The only channel is a request/result directory under the run root:
- * the main process writes a job, the worker writes the report. When no worker
- * is running, the caller falls back to the in-process executor unless the
- * operator requires the worker (`RSI_CHECK_WORKER=required`).
+ * the main process writes a job, the worker writes the report. Missing workers
+ * block checks by default. Explicit `RSI_CHECK_WORKER=off` selects the local executor.
  */
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -19,9 +18,9 @@ import type { CheckJobRequest, CheckJobResult, CheckWorkerReady } from "./check-
 export type CheckWorkerMode = "off" | "auto" | "required";
 
 export function checkWorkerMode(env: NodeJS.ProcessEnv = process.env): CheckWorkerMode {
-  const raw = (env.RSI_CHECK_WORKER ?? "off").trim().toLowerCase();
+  const raw = (env.RSI_CHECK_WORKER ?? "required").trim().toLowerCase();
   if (raw === "auto" || raw === "required" || raw === "off") return raw;
-  return "off";
+  return "required";
 }
 
 /** Default worker mailbox: the sibling of the run root, never inside the worktree. */
@@ -43,6 +42,7 @@ function processAlive(pid: number): boolean {
 export function checkWorkerReady(dir: string): boolean {
   try {
     const ready = JSON.parse(fs.readFileSync(path.join(dir, "ready.json"), "utf8")) as CheckWorkerReady;
+    if (ready.protocol !== 2) return false;
     if (typeof ready.pid === "number" && ready.host === os.hostname() && !processAlive(ready.pid)) return false;
     return true;
   } catch {

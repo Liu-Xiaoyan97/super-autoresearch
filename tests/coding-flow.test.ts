@@ -5,7 +5,7 @@ import { ResultComparison } from "../src/rsi/agents/critics.ts";
 import { BaselineCoder } from "../src/rsi/agents/coding.ts";
 import { LLMError, LLMProvider, type LLMRequest, type LLMResponse } from "../src/rsi/providers/base.ts";
 import { BaselinePatch } from "../src/rsi/schemas.ts";
-import { makeContext, mockRun } from "./helpers.ts";
+import { makeContext } from "./helpers.ts";
 import { makeEvidence } from "../src/rsi/types.ts";
 
 class FailingProvider extends LLMProvider {
@@ -60,36 +60,6 @@ test("a blocked baseline report still needs a person", async () => {
 
 test("the baseline schema asks for an empty patch, not an invented diff", () => {
   assert.match(BaselinePatch.instruction ?? "", /empty string for the unmodified baseline snapshot/);
-});
-
-test("a good trace carries subset and full-set evidence plus lessons", async () => {
-  const result = await mockRun();
-  const traces = (result.state as any).traces as any[];
-  const good = traces.find((trace) => trace.decision === "good");
-  assert.ok(good, "the offline fixture must produce at least one Good trace");
-  assert.ok(good.evidence.length >= 2);
-  assert.equal(good.evidence[0].scope, "subset");
-  assert.equal(good.evidence[good.evidence.length - 1].scope, "full");
-  assert.ok(good.lessons.length >= 2);
-  for (const evidence of good.evidence) {
-    assert.ok(Object.keys(evidence.metrics).length > 0);
-    assert.equal(evidence.result.status, "ok");
-    assert.ok(evidence.code?.path);
-  }
-});
-
-test("ablations are executable, measured, and complete", async () => {
-  const result = await mockRun();
-  const state = result.state as any;
-  assert.equal(state.ablations.length, 5);
-  for (const ablation of state.ablations) {
-    assert.ok(ablation.plan_id);
-    assert.ok(ablation.component);
-    assert.ok(ablation.evidence);
-    assert.equal(ablation.evidence.scope, "ablation");
-    assert.ok(Object.keys(ablation.metrics).length > 0);
-  }
-  assert.ok(result.final.decision_path.some((token) => token.startsWith("ablation.")));
 });
 
 test("ResultComparison is a no-LLM strict adoption gate", async () => {

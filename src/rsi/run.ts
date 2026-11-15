@@ -331,6 +331,7 @@ export async function runResearch(opts: RunOptions): Promise<RunResult> {
       config,
       JSON.parse(fs.readFileSync(previousState, "utf8")),
     );
+    resumedState.rebindWorktree(root);
   }
 
   // A stored/manual baseline is the reference; reproduce only the scope that

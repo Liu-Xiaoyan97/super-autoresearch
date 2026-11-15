@@ -87,7 +87,7 @@ async function processOne(file: string): Promise<void> {
         job.specs,
         job.languages,
         job.changedFiles,
-        job.lsp ?? {},
+        job.probeOnly,
       );
       result = { report };
       log(`${job.id} ${report.status} in ${((Date.now() - started) / 1000).toFixed(1)}s`);
@@ -113,7 +113,7 @@ function moveStaleClaims(): void {
 async function main(): Promise<void> {
   for (const item of [pending, running, results, cancel]) fs.mkdirSync(item, { recursive: true });
   moveStaleClaims();
-  const ready: CheckWorkerReady = { pid: process.pid, host: os.hostname(), started_at: new Date().toISOString() };
+  const ready: CheckWorkerReady = { protocol: 2, pid: process.pid, host: os.hostname(), started_at: new Date().toISOString() };
   writeAtomic(path.join(dir, "ready.json"), ready);
   log(`ready; mailbox ${dir}; allowed run root ${allowedRoot}`);
   let stopping = false;

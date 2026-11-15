@@ -65,6 +65,7 @@ export class FullSetEngineer extends BaseAgent {
     const reason = opts.reason ?? "ablation";
     const brief = this.ctx.workspace.brief?.(codeOf(opts.evidence), `${idea.mechanism} ${opts.feedback}`) ?? "";
     const out = await askUnifiedDiff(this, FullSetEngineeringPatch, {
+      allowEmpty: true,
       user:
         `${stableString(idea)}\nReason: ${reason}\nCritique: ${opts.feedback}\n` +
         `${stableString(opts.evidence)}\n` +

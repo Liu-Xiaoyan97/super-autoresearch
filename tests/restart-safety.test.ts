@@ -285,7 +285,7 @@ test("implementer resumes a mid-idea checkpoint without re-measuring", async () 
   assert.equal(trace.evidence[0], measured, "the checkpointed evidence is reused verbatim");
 });
 
-test("a resume keeps the run id and continues after a deleted external baseline", async () => {
+test("[integration] a resume keeps the run id and continues after a deleted external baseline", async () => {
   const { runResearch } = await import("../src/rsi/run.ts");
   const outDir = tempDir("rsi-resume-baseline-");
   const repo = tempDir("rsi-resume-repo-");
@@ -332,7 +332,7 @@ test("a resume keeps the run id and continues after a deleted external baseline"
   assert.match(state.baseline.result.stdout, /is gone; continued from the baseline recorded/);
 });
 
-test("a shutdown does not overwrite the outcome a finished run recorded", async () => {
+test("[integration] a shutdown does not overwrite the outcome a finished run recorded", async () => {
   const { SuperagentRuntime } = await import("../src/rsi/superagent/runtime.ts");
   const out = tempDir("rsi-shutdown-outcome-");
   const runtime = new SuperagentRuntime({ cwd: repoRoot, inMemory: true, workerFactory: () => ({
@@ -355,7 +355,7 @@ test("a shutdown does not overwrite the outcome a finished run recorded", async 
   assert.equal(state.interrupted, undefined, "a finished run is not marked interrupted");
 });
 
-test("a resume restores the idea-exhaustion count instead of restarting the budget", async () => {
+test("[integration] a resume restores the idea-exhaustion count instead of restarting the budget", async () => {
   const { runResearch } = await import("../src/rsi/run.ts");
   const outDir = tempDir("rsi-resume-retries-");
   const repo = tempDir("rsi-resume-retries-repo-");

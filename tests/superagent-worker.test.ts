@@ -2,8 +2,6 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { PiWorker } from "../src/rsi/providers/superagent.ts";
-import { LSP_TOOL_NAMES } from "../src/rsi/runtime/lsp-tools.ts";
-import type { LanguageSpec } from "../src/rsi/runtime/checks.ts";
 import type { Ticket } from "../src/rsi/superagent/model.ts";
 
 const MODEL = { provider: "test", id: "model", maxTokens: 1024, contextWindow: 8192 };
@@ -14,17 +12,6 @@ function registry() {
     getAvailable: () => [MODEL],
     hasConfiguredAuth: () => true,
     complete: async () => ({ text: "{}" }),
-  };
-}
-
-function specs(): Record<string, LanguageSpec> {
-  return {
-    python: {
-      id: "python",
-      extensions: [".py"],
-      checks: [],
-      lsp: { command: ["fake-lsp"], severity: "advisory" },
-    },
   };
 }
 
@@ -75,7 +62,7 @@ function ticket(task: string): Ticket {
   } as unknown as Ticket;
 }
 
-test("code workers receive read-only LSP tools; critics do not", async () => {
+test("code workers receive source-reading tools and critics receive reporting only", async () => {
   const captured: { options?: Record<string, unknown> } = {};
   const worker = new PiWorker({
     cwd: "/tmp",
@@ -84,14 +71,13 @@ test("code workers receive read-only LSP tools; critics do not", async () => {
     modelRuntime: {},
     providerId: MODEL.provider,
     defaultModel: MODEL.id,
-    lsp: { root: "/tmp", specs: specs() },
   });
   const outcome = await worker.run(ticket("code.subset"), new AbortController().signal);
   assert.equal(outcome.state, "ready");
   const tools = captured.options?.tools as string[];
   const custom = (captured.options?.customTools as Array<{ name: string }>).map((tool) => tool.name);
-  for (const name of LSP_TOOL_NAMES) assert.ok(tools.includes(name), name);
-  for (const name of LSP_TOOL_NAMES) assert.ok(custom.includes(name), name);
+  assert.deepEqual(tools, ["read", "grep", "find", "ls", "rsi_report"]);
+  assert.deepEqual(custom, ["rsi_report"]);
 
   const criticCaptured: { options?: Record<string, unknown> } = {};
   const critic = new PiWorker({
@@ -101,11 +87,10 @@ test("code workers receive read-only LSP tools; critics do not", async () => {
     modelRuntime: {},
     providerId: MODEL.provider,
     defaultModel: MODEL.id,
-    lsp: { root: "/tmp", specs: specs() },
   });
   await critic.run(ticket("critic.subset"), new AbortController().signal);
   const criticTools = criticCaptured.options?.tools as string[];
-  assert.equal(criticTools.some((name) => (LSP_TOOL_NAMES as readonly string[]).includes(name)), false);
+  assert.deepEqual(criticTools, ["rsi_report"]);
   await worker.close();
   await critic.close();
 });

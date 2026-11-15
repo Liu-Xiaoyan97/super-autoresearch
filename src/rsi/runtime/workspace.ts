@@ -21,11 +21,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { stableString } from "../json.ts";
 
+import { protectedPattern, matchesProtected } from "./protections.ts";
 import { crc32, unit } from "../crc32.ts";
 import type { Config } from "../config.ts";
-import { type AdapterSpec, type CheckReport, type LanguageSpec, checkTimeoutMs, detectLanguages, languageSpecs, loadAdapter, runCheckJob, safeCheckLabel } from "./checks.ts";
+import { type AdapterSpec, type CheckReport, type LanguageSpec, checkTimeoutMs, checkEnvironment, detectLanguages, languageSpecs, loadAdapter, runCheckJob, safeCheckLabel } from "./checks.ts";
 import { checkWorkerDir, checkWorkerMode, checkWorkerReady, runCheckInWorker, workerUnavailableReport } from "./check-client.ts";
-import type { LspSpec } from "./lsp.ts";
 import {
   type Evidence,
   type ExperimentResult,
@@ -99,6 +99,7 @@ export interface ExperimentRequest {
   label: string;
   /** Scope-specific budget env (subset screen), merged by the runner. */
   env?: Record<string, string>;
+  preflight?: string[];
 }
 
 export interface Runner {
@@ -119,6 +120,7 @@ export interface Workspace {
   onExperimentResult?: () => void;
   /** Source context for coding agents (git tree + relevant files at a commit). */
   brief?(repo: RepoRef, query?: string, maxChars?: number): string;
+  reviewSources?(repo: RepoRef): Array<{ path: string; text: string; trustedTest: boolean }>;
 }
 
 function okResult(metrics: Record<string, number>): ExperimentResult {
@@ -498,7 +500,11 @@ export class SubprocessRunner implements Runner {
 
 export function shellQuote(value: string): string {
   if (value && /^[A-Za-z0-9_./:=@+,-]+$/.test(value)) return value;
-  return `'${value.replace(/'/g, `'\\''`)}'`;
+  // A quoted leading tilde never expands. Keep `~/` outside the quotes so a
+  // remote base directory such as "~/rsi" means $HOME/rsi, not a literal "~".
+  const home = value.startsWith("~/") ? "~/" : "";
+  const rest = value.slice(home.length);
+  return `${home}'${rest.replace(/'/g, `'\\''`)}'`;
 }
 
 export interface RemoteInvocation {
@@ -533,8 +539,10 @@ export function buildRemoteInvocation(
     .map(([key, value]) => `${key}=${shellQuote(value)}`)
     .join(" ");
   const timeout = remote.timeout_s > 0 ? `timeout ${Math.trunc(remote.timeout_s)} ` : "";
-  const setup = remote.setup.trim() ? `${remote.setup.trim()}; ` : "";
-  const inner = `cd ${shellQuote(remoteWorktree)} && ${setup}${exports ? `export ${exports}; ` : ""}${timeout}${argv}`;
+  const setup = remote.setup.trim() ? `{ ${remote.setup.trim()}\n} && ` : "";
+  const preflight = req.preflight?.length
+    ? `${expandCommand(req.preflight, req, remoteWorktree, remoteOut, remote.python).map(shellQuote).join(" ")} && ` : "";
+  const inner = `cd ${shellQuote(remoteWorktree)} && ${setup}${exports ? `export ${exports} && ` : ""}${preflight}${timeout}${argv}`;
   return { inner, env };
 }
 
@@ -738,10 +746,11 @@ export class RemoteRunner implements Runner {
     const seq = ++this.sequence;
     const repoName = safeName(path.basename(path.resolve(req.repo.repo ?? req.repo.path)));
     const baseDir = this.remote.dir || "~/rsi";
-    // Reuse the target root by default. A per-run worktree is an explicit
-    // isolation choice, not the default: `--delete` keeps one source mirror
-    // current instead of copying the whole project for every run.
-    const worktreeTemplate = this.remote.worktree || baseDir;
+    // Isolation is the default: a shared source root lets a concurrent run's
+    // `rsync --delete` remove files that another run is still executing. Within
+    // one run the same directory is reused, so synchronization stays incremental.
+    const worktreeTemplate = this.remote.worktree ||
+      path.posix.join(baseDir, "rsi", "{run_id}", "worktree");
     const remoteWorktree = expandRemoteTemplate(worktreeTemplate, this.runId, repoName);
     // Results remain per run and are excluded from source synchronization, so
     // reusing the worktree never deletes checkpoints or evaluation evidence.
@@ -926,11 +935,6 @@ function safeName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "candidate";
 }
 
-function protectedPathMatch(file: string, rule: string): boolean {
-  const normalized = rule.replace(/^\/+/, "").replace(/\/+$/, "");
-  return file === normalized || file.startsWith(`${normalized}/`);
-}
-
 /** Extract a unified diff from model prose or a fenced block. */
 export function extractUnifiedDiff(text: string): string | null {
   if (!text) return null;
@@ -1104,7 +1108,7 @@ export class GitWorkspace implements Workspace {
     // Global prune would unregister another runtime's live (locally invisible)
     // user worktrees. Reclaim only our own explicitly selected worktree path.
     git(this.source, ["worktree", "add", "--force", "--detach", this.worktree, this.baseCommit]);
-    this.adapter = loadAdapter(this.source, this.problem);
+    this.adapter = loadAdapter(this.worktree, this.problem);
     this.initialized = true;
   }
 
@@ -1134,19 +1138,17 @@ export class GitWorkspace implements Workspace {
     repo: RepoRef,
     changedFiles: string[],
     specs: Record<string, LanguageSpec>,
-    lspSpecs: Record<string, LspSpec>,
+    environment: string,
   ): string {
     // The key covers every input that can change a check result. A toolchain
     // upgrade or adapter edit must not replay an old pass.
     const material = JSON.stringify({
-      // Bump when check semantics or ordering change; an old report must not
-      // bypass the reference-first gate.
-      check_version: 3,
+      // Invalidate reports when candidate-check semantics change.
+      check_version: 8,
+      environment,
       commit: repo.commit ?? "",
-      parent: repo.parent,
       changedFiles: changedFiles.slice().sort(),
       specs,
-      lsp: lspSpecs,
       python: process.env.RSI_PYTHON ?? "",
     });
     return createHash("sha256").update(material).digest("hex").slice(0, 32);
@@ -1162,6 +1164,7 @@ export class GitWorkspace implements Workspace {
     if (!report || report.commit !== (repo.commit ?? "")) return null;
     if (report.status === "unavailable" || report.checks?.some((check) => check.status === "unavailable" || check.status === "timeout")) return null;
     const copy = structuredClone(report);
+    copy.parent = repo.parent;
     copy.report_path = this.store.artifact(`checks/${safeCheckLabel(label)}/report.json`);
     this.store.writeJson(`checks/${safeCheckLabel(label)}/report.json`, copy);
     return copy;
@@ -1178,39 +1181,44 @@ export class GitWorkspace implements Workspace {
       checks: [],
     });
     if (this.simulatedRunner || !repo.commit || !repo.parent) return empty("unavailable");
-    const changed = git(this.worktree, ["diff", "--name-only", repo.parent, repo.commit], true);
+    const commit = repo.commit;
+    repo = { ...repo, path: this.worktree, repo: this.source };
+    this.checkout(commit, true);
+    const changed = git(this.worktree, ["diff", "--name-only", "-z", this.baseCommit, commit], true);
     if (changed.status !== 0) return empty("unavailable");
-    const changedFiles = changed.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-    if (!changedFiles.length) return empty("ok");
+    const changedFiles = changed.stdout.split("\0").filter(Boolean);
+    if (!changedFiles.length) changedFiles.push(...git(this.worktree, ["ls-tree", "-r", "--name-only", "-z", commit]).stdout.split("\0").filter(Boolean));
     const specs = languageSpecs(this.adapter);
     const languages = detectLanguages(changedFiles, specs);
     if (!languages.length) return empty("failed");
-    const lspSpecs: Record<string, LspSpec> = {};
-    for (const language of languages) {
-      const lsp = this.adapter?.languages?.[language]?.lsp;
-      if (lsp) lspSpecs[language] = lsp;
-    }
-    const cacheKey = this.checkCacheKey(repo, changedFiles, specs, lspSpecs);
+    const mode = checkWorkerMode();
+    const workerDir = checkWorkerDir(this.root);
+    const runRoot = path.resolve(this.root);
+    const worker = mode !== "off" && checkWorkerReady(workerDir);
+    if (mode !== "off" && !worker) return workerUnavailableReport(repo, `check worker is not ready at ${workerDir}`);
+    const environment = worker
+      ? (await runCheckInWorker(workerDir, { root: runRoot, repo, label: `${label}-environment`, specs, languages,
+          changedFiles, timeoutMs: 60000, probeOnly: true })).environment_fingerprint
+      : checkEnvironment(repo, specs, languages);
+    const cacheKey = this.checkCacheKey(repo, changedFiles, specs, environment ?? `unknown-${Date.now()}`);
     const memory = this.checkCache.get(cacheKey);
     if (memory) {
       const copy = structuredClone(memory);
+      copy.parent = repo.parent;
       copy.report_path = this.store.artifact(`checks/${safeCheckLabel(label)}/report.json`);
       this.store.writeJson(`checks/${safeCheckLabel(label)}/report.json`, copy);
       this.checkCache.set(cacheKey, copy);
-      try { this.checkout(repo.commit, true); } catch { /* report remains authoritative */ }
+      try { this.checkout(commit, true); } catch { /* report remains authoritative */ }
       return copy;
     }
     const cached = this.readCachedCheck(cacheKey, repo, label);
     if (cached) {
       this.checkCache.set(cacheKey, cached);
-      try { this.checkout(repo.commit, true); } catch { /* report remains authoritative */ }
+      try { this.checkout(commit, true); } catch { /* report remains authoritative */ }
       return cached;
     }
-    const mode = checkWorkerMode();
-    const workerDir = checkWorkerDir(this.root);
-    const runRoot = path.resolve(this.root);
     let report: CheckReport;
-    if (mode !== "off" && checkWorkerReady(workerDir)) {
+    if (worker) {
       report = await runCheckInWorker(workerDir, {
         root: runRoot,
         repo,
@@ -1218,22 +1226,21 @@ export class GitWorkspace implements Workspace {
         specs,
         languages,
         changedFiles,
-        lsp: lspSpecs,
-        timeoutMs: checkTimeoutMs(specs, languages, changedFiles, lspSpecs),
+        timeoutMs: checkTimeoutMs(specs, languages, changedFiles),
       });
-    } else if (mode === "required") {
+    } else if (mode !== "off") {
       report = workerUnavailableReport(repo, `check worker is not ready at ${workerDir}`);
     } else {
-      report = await runCheckJob(this.store, repo, label, specs, languages, changedFiles, lspSpecs);
+      report = await runCheckJob(this.store, repo, label, specs, languages, changedFiles);
     }
     // Checks may create caches or generated files. The measured commit, not a
     // dirty check worktree, is the candidate that goes to the runner.
-    try { this.checkout(repo.commit, true); } catch { /* report remains authoritative */ }
+    try { this.checkout(commit, true); } catch { /* report remains authoritative */ }
     report.report_path = this.store.artifact(`checks/${safeCheckLabel(label)}/report.json`);
     this.store.writeJson(`checks/${safeCheckLabel(label)}/report.json`, report);
     // An unavailable or timed-out tool is an infrastructure signal, not a
     // stable property of the candidate; do not replay it from the cache.
-    if (report.status !== "unavailable" && !report.checks.some((check) => check.status === "unavailable" || check.status === "timeout")) {
+    if (environment && report.environment_fingerprint === environment && report.status !== "unavailable" && !report.checks.some((check) => check.status === "unavailable" || check.status === "timeout")) {
       this.checkCache.set(cacheKey, report);
       this.store.writeJson(`checks/cache/${cacheKey}.json`, report);
     }
@@ -1340,15 +1347,30 @@ export class GitWorkspace implements Workspace {
       fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\ncommit equals parent\n`, "utf8");
       throw new PatchRejectedError("candidate commit equals its parent; refusing to measure the baseline as a candidate");
     }
-    const protectedRules = this.adapter?.protected_paths ?? [];
-    if (protectedRules.length && commit !== parent) {
-      const changed = git(this.worktree, ["diff", "--name-only", parent, commit], true).stdout
-        .split("\n").map((line) => line.trim()).filter(Boolean);
-      const forbidden = changed.filter((file) => protectedRules.some((rule) => protectedPathMatch(file, rule)));
+    if (commit !== parent && !this.simulatedRunner) {
+      const protectedRules = [
+        ".rsi", "tests", "test", "data", "datasets", "tokenizer", "tokenizers",
+        "eval", "evaluation", "evaluators", "lm_eval", "metrics", "protocol", "protocols",
+        "run_experiment.py", ...(this.adapter?.protected_paths ?? []),
+      ].map(protectedPattern);
+      const mutable = this.adapter?.mutable_paths?.map(protectedPattern);
+      if (mutable && !mutable.length) throw new PatchRejectedError("mutable_paths must contain an allowed path");
+      const files = git(this.worktree, ["diff", "--no-renames", "--name-only", "-z", parent, commit]).stdout
+        .split("\0").filter(Boolean);
+      const commands = [...(this.problem.experiment_command ?? []), ...(this.problem.diagnose_command ?? []), ...(this.adapter?.preflight ?? [])];
+      const forbidden = files.filter((file) =>
+        protectedRules.some((rule) => matchesProtected(file, rule)) ||
+        /(^|\/)(?:tests?|__tests__)(\/|$)/.test(file) ||
+        /(^|\/)(?:test_[^/]*|[^/]*(?:_test|\.test|\.spec))\.(?:py|go|ts|tsx|js|jsx|rs)$/.test(file) ||
+        /(^|\/)[^/]*(?:eval|metric|tokeniz)[^/]*\.(?:py|sh|js|ts|json|ya?ml|toml)$/i.test(file) ||
+        commands.some((token) => token.replaceAll("{repo}/", "") === file) ||
+        mutable && !mutable.some((rule) => matchesProtected(file, rule)),
+      );
       if (forbidden.length) {
+        this.checkout(parent, true);
         fs.writeFileSync(this.store.path("patches", `${safe}.diff`), diff ?? patch, "utf8");
-        fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\nprotected paths changed: ${forbidden.join(", ")}\n`, "utf8");
-        throw new PatchRejectedError(`candidate changes protected paths: ${forbidden.join(", ")}`);
+        fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\nprotected or disallowed paths changed: ${forbidden.join(", ")}\n`, "utf8");
+        throw new PatchRejectedError(`candidate changes protected or disallowed paths: ${forbidden.join(", ")}`);
       }
     }
     fs.writeFileSync(this.store.path("patches", `${safe}.diff`), diff ?? patch, "utf8");
@@ -1377,6 +1399,7 @@ export class GitWorkspace implements Workspace {
 
   async run(repo: RepoRef, scope: Scope, idea: Idea | null = null, seed?: number): Promise<ExperimentResult> {
     await this.init();
+    repo = { ...repo, path: this.worktree, repo: this.source };
     // Only tracked source changes affect the candidate identity. Untracked
     // target outputs are allowed after a previous experiment, but a dirty
     // tracked tree must never be measured under a clean commit label.
@@ -1424,12 +1447,18 @@ export class GitWorkspace implements Workspace {
       idea_id: idea?.id ?? "baseline",
       scope,
       repo,
-      datasets: scope === "subset" ? this.problem.subset_datasets.slice() : this.problem.datasets.slice(),
+      datasets: scope === "subset" || scope === "ablation" ? this.problem.subset_datasets.slice() : this.problem.datasets.slice(),
       metrics: this.problem.metrics.map((m) => m.name),
       idea,
       label: repo.label,
       env,
     };
+    if (this.problem.remote) {
+      const changed = repo.parent && repo.commit
+        ? git(this.worktree, ["diff", "--name-only", "-z", repo.parent, repo.commit]).stdout.split("\0") : [];
+      const pythonFiles = changed.filter((file) => file.endsWith(".py") && fs.existsSync(path.join(repo.path, file)));
+      req.preflight = this.adapter?.preflight ?? (pythonFiles.length ? ["{python}", "-m", "py_compile", ...pythonFiles] : []);
+    }
     const cache = this.measurementCache(req, seed);
     const cached = cache.read();
     if (cached) {
@@ -1477,6 +1506,7 @@ export class GitWorkspace implements Workspace {
       metrics: req.metrics,
       env: req.env ?? {},
     });
+    if (req.preflight?.length) parts.preflight = req.preflight;
     const key = measurementKey(parts);
     const root = path.resolve(this.config.outDir || "runs", ".rsi-cache", "measurements");
     // Smoke and adapter checks demand fresh raw evidence, never a replayed number.
@@ -1485,9 +1515,30 @@ export class GitWorkspace implements Workspace {
   }
 
   /** Build a bounded source brief from a git commit, not from copied files. */
+  reviewSources(repo: RepoRef): Array<{ path: string; text: string; trustedTest: boolean }> {
+    const commit = repo.commit;
+    if (!commit) return [];
+    const files = git(this.worktree, ["ls-tree", "-r", "--name-only", "-z", commit]).stdout.split("\0").filter(Boolean);
+    const changed = new Set(this.baseCommit !== commit
+      ? git(this.worktree, ["diff", "--no-renames", "--name-only", "-z", this.baseCommit, commit]).stdout.split("\0")
+      : files);
+    const commands = [...(this.problem.experiment_command ?? DEFAULT_EXPERIMENT_COMMAND), ...(this.problem.diagnose_command ?? [])];
+    const selected = files.filter((file) => changed.has(file) || commands.some((token) => token.replaceAll("{repo}/", "") === file));
+    const sources = selected.map((file) => ({ path: file, text: git(this.worktree, ["show", `${commit}:${file}`]).stdout, trustedTest: false }));
+    const tests = git(this.worktree, ["ls-tree", "-r", "--name-only", "-z", this.baseCommit]).stdout.split("\0")
+      .filter((file) => /\.(py|go|rs|[cm]?[jt]sx?)$/.test(file) &&
+        /(^|\/)(tests?|__tests__)(\/|$)|(^|\/)(test_[^/]*|[^/]*(_test|\.test|\.spec))\.(py|go|[cm]?[jt]sx?|rs)$/.test(file));
+    for (const file of tests) sources.push({ path: file, text: git(this.worktree, ["show", `${this.baseCommit}:${file}`]).stdout, trustedTest: true });
+    sources.push({ path: "(target check commands)", text: stableString(languageSpecs(this.adapter)), trustedTest: false });
+    return sources;
+  }
+
+  /** Build a bounded source brief for implementation prompts. */
   brief(repo: RepoRef, query = "", maxChars = 18000): string {
     const commit = repo.commit || this.baseCommit;
     if (!commit) return "";
+    const changed = new Set(repo.parent ? git(this.worktree, ["diff", "--no-renames", "--name-only", "-z", repo.parent, commit], true).stdout.split("\0").filter(Boolean) : []);
+    const codeExt = new Set([".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".go", ".rs", ".java", ".c", ".cc", ".cpp", ".h", ".hpp"]);
     const listed = git(this.worktree, ["ls-tree", "-r", "-l", commit], true);
     if (listed.status !== 0) return "";
     const entries = listed.stdout
@@ -1502,10 +1553,10 @@ export class GitWorkspace implements Workspace {
         (entry) =>
           !entry.name.startsWith(".git/") &&
           !["patch.txt", "patch.apply.log", ".rsi.patch", "run_experiment.py"].includes(entry.name) &&
-          /\.(py|md|toml|json|ya?ml|txt)$/.test(entry.name),
-      );
+          (codeExt.has(path.extname(entry.name)) || /\.(md|toml|json|ya?ml|txt)$/.test(entry.name)),
+      )
+      .sort((a, b) => Number(changed.has(b.name)) - Number(changed.has(a.name)) || a.name.localeCompare(b.name));
     const tokens = [...tokensOf(query)].slice(0, 20);
-    const codeExt = new Set([".py", ".ts", ".tsx", ".js", ".go", ".rs", ".java", ".c", ".cc", ".cpp", ".h"]);
     const sourceDir = /(^|\/)(src|lib|pkg|mamba_ssm|scripts|bench|tests)\//;
     const scored = entries
       .slice(0, 180)
@@ -1518,7 +1569,7 @@ export class GitWorkspace implements Workspace {
         const lower = `${entry.name}\n${text.slice(0, 20_000)}`.toLowerCase();
         const matches = tokens.reduce((sum, token) => sum + (lower.includes(token) ? 1 : 0), 0);
         const score =
-          matches * 4 +
+          (changed.has(entry.name) ? 100 : 0) + matches * 4 +
           (codeExt.has(path.extname(entry.name)) ? 3 : 0) +
           (sourceDir.test(entry.name) ? 2 : 0);
         return { ...entry, score, text };

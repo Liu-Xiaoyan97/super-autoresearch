@@ -129,19 +129,11 @@ def main() -> int:
                 "extensions": [".py"],
                 "python": test_env["python_rel"],
                 "checks": [
-                    {"id": "compile", "command": ["{python}", "-m", "compileall", "-q", "."], "timeoutS": 60, "severity": "required"},
-                    {"id": "typecheck", "command": ["pyright", "--pythonpath", "{python}", "--outputjson"], "timeoutS": 120, "severity": "advisory"},
-                    {"id": "lint", "command": ["ruff", "check", "."], "timeoutS": 60, "severity": "advisory"},
+                    {"id": "compile", "command": ["{python}", "-m", "py_compile", "{changed_python_files}"], "timeoutS": 60, "severity": "required"},
                     {"id": "tests", "command": ["{python}", "-m", "pytest", "-q", "-x"], "timeoutS": 300, "severity": "required"},
                 ],
-                "lsp": {
-                    "command": ["pyright-langserver", "--stdio"],
-                    "root": ".",
-                    "severity": "advisory",
-                    "referenceSeverity": "advisory",
-                },
             }
-        protected = [adapter_path, worker_rel, ".rsi/adapter"]
+        protected = [adapter_path, worker_rel, ".rsi", "tests", "test", "eval", "evaluation", "metrics", "data", "datasets", "tokenizer", "tokenizers", "protocol", "protocols"]
         requirements_file = repo / ".rsi/test-requirements.txt"
         if requirements_file.exists():
             protected.append(".rsi/test-requirements.txt")

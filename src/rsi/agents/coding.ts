@@ -1,5 +1,6 @@
 /** §3.2/§3.4 — snapshot coders and the bounded unified implementer. */
 
+import { createHash } from "node:crypto";
 import { crc32 } from "../crc32.ts";
 import { stableString } from "../json.ts";
 import {
@@ -7,6 +8,7 @@ import {
   BaselinePatch,
   FullSetPatch,
   ImplementationInstruction,
+  ImplementationAudit,
   RebuttalPatch,
   SubsetPatch,
 } from "../schemas.ts";
@@ -28,8 +30,10 @@ import {
   makeTrace,
 } from "../types.ts";
 import { BaseAgent, type AgentContext } from "./base.ts";
+import { BudgetExceeded } from "../runtime/budget.ts";
+import { SpecAuditor } from "./integrity.ts";
 import { LLMError } from "../providers/base.ts";
-import { askUnifiedDiff } from "./patch.ts";
+import { askUnifiedDiff, reviewChunks } from "./patch.ts";
 import { FullSetCritic, SubsetCritic } from "./critics.ts";
 import { FullSetEngineer, SubsetEngineer } from "./engineering.ts";
 
@@ -92,6 +96,7 @@ export async function runSeeded<T extends { run(repo: any, scope: any, idea?: an
     charge();
     result = await runner.run(repo, scope, idea, seed);
     samples.push({ seed, metrics: result.metrics, result });
+    if (result.status !== "ok") break;
   }
   return { metrics: meanMetrics(samples), samples, result };
 }
@@ -190,6 +195,88 @@ export function rejectedEvidence(idea: Idea, scope: Scope, base: Evidence, error
   return unappliedEvidence(idea, scope, base, (error as Error)?.message ?? String(error));
 }
 
+/** Review the committed modules and their entry-point integration. */
+export class ImplementationVerifier extends BaseAgent {
+  readonly NAME = "implementation_verifier";
+  readonly task = "code.verify";
+  readonly role = "coding";
+
+  async verify(idea: Idea, repo: RepoRef, scope: Scope) {
+    const implementationScope = scope === "subset" || scope === "full";
+    const key = createHash("sha256").update(stableString({
+      version: 5,
+      commit: repo.commit,
+      scope: implementationScope ? "implementation" : scope,
+      mechanism: idea.mechanism,
+      hypothesis: idea.hypothesis,
+      intervention: implementationScope ? "" : repo.patch,
+    })).digest("hex");
+    const cachePath = `checks/implementation-cache/${key}.json`;
+    try {
+      return ImplementationAudit.parse(this.ctx.store.readJson(cachePath));
+    } catch {
+      // Missing or malformed reports require a fresh source review.
+    }
+    const sources = this.ctx.workspace.reviewSources?.(repo);
+    const source = sources
+      ? sources.map((file) => `FILE ${file.path} trusted_test=${file.trustedTest}\n${file.text}`).join("\n\n")
+      : this.ctx.workspace.brief?.(repo, `${idea.mechanism} entrypoint forward train`, 24000) ?? "";
+    if (!source.trim()) {
+      return { decision: "engineer" as const, modules: [], tests: [], findings: ["Committed module source is unavailable."] };
+    }
+    const pieces = sources
+      ? sources.flatMap((file) => reviewChunks(file.text, 15000).map((chunk, index) =>
+          `FILE ${file.path} trusted_test=${file.trustedTest} part=${index + 1}\n${chunk}`))
+      : reviewChunks(`${source}\nINTERVENTION PATCH\n${repo.patch}`);
+    if (sources && repo.patch) pieces.push(...reviewChunks(repo.patch, 15000).map((chunk) => `INTERVENTION PATCH\n${chunk}`));
+    const chunks: string[] = [];
+    for (const piece of pieces) {
+      const previous = chunks.length - 1;
+      if (previous >= 0 && chunks[previous].length + piece.length + 2 <= 16000) chunks[previous] += `\n\n${piece}`;
+      else chunks.push(piece);
+    }
+    const modules: string[] = [], tests: string[] = [], findings: string[] = [];
+    for (const [index, chunk] of chunks.entries()) {
+      const part = await this.ask(ImplementationAudit, {
+        user: "Review the committed implementation and trusted independent tests. Map mechanisms to path:symbol evidence. " +
+          "Check entry-point integration, interfaces, tensor dimensions and state/cache handling. " +
+          "Record test path:symbol evidence for mechanism assertions, boundary cases and real entry-point execution. " +
+          "Training methods also need forward, gradient, parameter-update and checkpoint-reload assertions. " +
+          "Count only trusted_test=true assertions as independent test evidence. Never count inline tests in mutable source. " +
+          "Review this chunk only. Report concrete defects as findings. Leave evidence arrays empty when absent from this chunk. " +
+          "Task-specification auditing runs separately. For ablation/rebuttal verify the intervention in the patch.\n" +
+          stableString({ idea, scope, commit: repo.commit, chunk: index + 1, chunks: chunks.length }) +
+          `\nCOMMITTED SOURCE\n${chunk}`,
+        meta: { idea_id: idea.id, scope, commit: repo.commit, chunk: index + 1, chunks: chunks.length },
+      });
+      modules.push(...part.modules);
+      tests.push(...part.tests);
+      findings.push(...part.findings);
+      if (part.decision === "engineer" && !part.findings.length) findings.push("Source review requests engineering repair.");
+    }
+    if (!modules.length) findings.push("Module implementation evidence is missing.");
+    if (sources) {
+      const trustedPaths = sources.filter((file) => file.trustedTest).map((file) => `${file.path}:`);
+      if (!tests.length || tests.some((item) => !trustedPaths.some((prefix) => item.startsWith(prefix)))) {
+        findings.push("Independent test assertions for the mechanism and entry point are missing or untrusted.");
+      } else {
+        const coverage = await this.ask(ImplementationAudit, {
+          user: "Verify that this collected source/test evidence covers every requested mechanism, real entry point and boundary case. " +
+            "Training changes require forward, gradient, parameter-update and checkpoint-reload assertions. " +
+            "Report engineer with concrete missing assertions when coverage is incomplete.\n" + stableString({ idea, modules, tests }),
+          meta: { idea_id: idea.id, scope, commit: repo.commit, coverage: true },
+        });
+        findings.push(...coverage.findings);
+        if (coverage.decision === "engineer" && !coverage.findings.length) findings.push("Independent test coverage is incomplete.");
+      }
+    }
+    const audit = { decision: findings.length ? "engineer" as const : "good" as const,
+      modules: [...new Set(modules)], tests: [...new Set(tests)], findings: [...new Set(findings)] };
+    this.ctx.store.writeJson(cachePath, audit);
+    return audit;
+  }
+}
+
 /** Run target-owned checks after patch; a required failure is not a candidate. */
 export function checkFailedEvidence(
   idea: Idea,
@@ -227,15 +314,60 @@ export async function checkRejection(
   repo: RepoRef,
   label: string,
 ): Promise<Evidence | null> {
-  if (ctx.config.runner === "simulated" || !ctx.workspace.check) return null;
+  if (ctx.config.runner === "simulated") return null;
+  if (!ctx.workspace.check) return checkFailedEvidence(idea, scope, repo, base, "target checks are unavailable");
+  const started = Date.now();
+  let sourceSeconds = 0;
+  let checkSeconds = 0;
   try {
-    const report = await ctx.workspace.check(repo, label);
+    const checkLabel = `${label}-${repo.commit ?? "uncommitted"}`;
+    const audit = await new ImplementationVerifier(ctx).verify(idea, repo, scope);
+    const auditPath = ctx.store.writeJson(`checks/${checkLabel.replace(/[^a-zA-Z0-9_.-]+/g, "-")}/implementation.json`, {
+      commit: repo.commit, scope, ...audit,
+    });
+    ctx.traces.append("implementation_audit", { commit: repo.commit, scope, report_path: auditPath, ...audit });
+    if (audit.decision !== "good") {
+      return checkFailedEvidence(idea, scope, repo, base, stableString(audit), auditPath);
+    }
+    if (base.code && ctx.workspace.diff) {
+      const diff = await ctx.workspace.diff(base.code, repo);
+      const specification = await new SpecAuditor(ctx).audit(idea, { evidence: { ...base, code: repo, result: null }, diff });
+      ctx.store.writeJson(`checks/${checkLabel.replace(/[^a-zA-Z0-9_.-]+/g, "-")}/specification.json`, specification);
+      if (specification.spec_violations.length) return checkFailedEvidence(idea, scope, repo, base, specification.spec_violations.join("\n"), auditPath);
+    }
+    sourceSeconds = (Date.now() - started) / 1000;
+    const checkStarted = Date.now();
+    const report = await ctx.workspace.check(repo, checkLabel);
+    checkSeconds = (Date.now() - checkStarted) / 1000;
+    const expectedEnvironment = ctx.scratch.expected_check_environment;
+    if (expectedEnvironment && report.environment_fingerprint !== expectedEnvironment) {
+      return checkFailedEvidence(idea, scope, repo, base, "execution environment differs from recorded measurements; resume requires fresh measurements", report.report_path);
+    }
+    if (report.environment_fingerprint) ctx.scratch.check_environment = report.environment_fingerprint;
+    const recordedTests = report.checks.filter((check) => check.severity === "required" && check.executed_tests !== undefined);
+    if (recordedTests.length) {
+      const executed = recordedTests.flatMap((check) => check.executed_tests ?? []);
+      const missing = audit.tests.filter((item) => {
+        const ref = item.split(/\s/)[0];
+        const [file, symbol] = ref.split(":");
+        return !symbol || !executed.some((test) => test.startsWith(`${file}:${symbol}`) || test.split("::").at(-1) === symbol || test === symbol);
+      });
+      if (missing.length) return checkFailedEvidence(idea, scope, repo, base, `Reviewed assertions did not execute: ${missing.join(", ")}`, report.report_path);
+    }
     if (report.status === "ok") return null;
-    const failed = report.checks.filter((check) => check.status !== "ok");
-    const detail = failed.map((check) => `${check.id}:${check.status}:${check.stderr}`).join("\n").slice(0, 1200);
+    const failed = report.checks.filter((check) => check.severity === "required" && check.status !== "ok");
+    const detail = failed.map((check) => [
+      `${check.id}:${check.status}:exit=${check.exit_code}`,
+      `stdout\n${check.stdout.slice(-6000)}`,
+      `stderr\n${check.stderr.slice(-6000)}`,
+    ].join("\n")).join("\n");
     return checkFailedEvidence(idea, scope, repo, base, detail || report.status, report.report_path);
   } catch (error) {
+    if (error instanceof BudgetExceeded || (error as Error)?.name === "AbortError" || ctx.signal?.aborted) throw error;
     return checkFailedEvidence(idea, scope, repo, base, (error as Error)?.message ?? String(error));
+  } finally {
+    ctx.traces.append("delivery_timing", { commit: repo.commit, scope,
+      source_s: sourceSeconds || (Date.now() - started) / 1000, checks_s: checkSeconds, total_s: (Date.now() - started) / 1000 });
   }
 }
 
@@ -292,6 +424,7 @@ export class FullSetCoder extends BaseAgent {
   async scale(idea: Idea, opts: { subset: Evidence }): Promise<Evidence> {
     const brief = this.ctx.workspace.brief?.(codeOf(opts.subset), `${idea.mechanism} ${idea.hypothesis}`) ?? "";
     const out = await askUnifiedDiff(this, FullSetPatch, {
+      allowEmpty: true,
       user:
         `${stableString(idea)}\n\nReturn a unified diff against this snapshot that scales the validated change ` +
         `to the full benchmark without changing the method. Do not modify run_experiment.py or tests.\n\n${brief}`,
@@ -414,6 +547,7 @@ export class RebuttalCoder extends BaseAgent {
   async runTask(idea: Idea, task: RebuttalTask, opts: { best: Evidence }): Promise<Evidence> {
     const brief = this.ctx.workspace.brief?.(codeOf(opts.best), `${idea.mechanism} ${task.question}`) ?? "";
     const out = await askUnifiedDiff(this, RebuttalPatch, {
+      allowEmpty: true,
       user:
         `${stableString(idea)}\n${stableString(task)}\n\nReturn a unified diff that implements the ` +
         `supplementary experiment without changing the core method. Do not modify run_experiment.py or tests.\n\n${brief}`,
@@ -487,7 +621,7 @@ export class IdeaImplementer extends BaseAgent {
     opts: { round?: number; resume?: TraceCheckpoint; onProgress?: (progress: TraceCheckpoint) => void } = {},
   ): Promise<Trace> {
     const round = opts.round ?? 0;
-    const resume = opts.resume && opts.resume.idea_id === idea.id ? opts.resume : null;
+    const resume = opts.resume && (opts.resume.idea_id === idea.id || opts.resume.trace.idea.parent_ids.includes(idea.id)) ? opts.resume : null;
     // A resumed idea keeps its measured evidence and its spent budgets; only the
     // unfinished step runs again (and the measurement cache makes it cheap).
     const instruction = resume
@@ -515,10 +649,12 @@ export class IdeaImplementer extends BaseAgent {
       full_rounds: 0,
       full_repairs: 0,
     };
-    trace.idea = idea;
+    trace.seed_id ??= state.idea_id;
+    if (!resume) trace.idea = idea;
+    else idea = trace.idea;
     const checkpoint = () => {
       state.trace = trace;
-      state.idea_id = trace.idea.id;
+      state.idea_id = state.idea_id || idea.id;
       trace.decision = state.verdict?.decision === "good" ? "good" : "bad";
       trace.feedback = state.verdict?.feedback ?? "";
       opts.onProgress?.(state);

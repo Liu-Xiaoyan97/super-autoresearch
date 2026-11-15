@@ -76,6 +76,7 @@ export const SOP_STAGES: readonly StageSpec[] = [
     summary: "Implement candidates, gate subset and full-set evidence with critics and engineers, evolve ideas from traces.",
     tasks: [
       "code.implement",
+      "code.verify",
       "code.subset",
       "critic.subset",
       "engineer.subset",

@@ -1,6 +1,7 @@
 /** Mutable research state: the single source of truth for one run (I8). */
 
 import type { Config } from "../config.ts";
+import path from "node:path";
 import { asArray, asRecord, canonical } from "../json.ts";
 import { evidenceProvenanceError, evidenceSucceeded } from "../types.ts";
 import type {
@@ -9,6 +10,7 @@ import type {
   Diagnosis,
   Evidence,
   Idea,
+  IntegrityReport,
   Limitation,
   Manuscript,
   MetaReview,
@@ -21,6 +23,15 @@ import type {
 } from "../types.ts";
 import { rankKey } from "../agents/ideas.ts";
 
+function protocol(problem: Record<string, unknown>, config: Record<string, unknown>): string {
+  const fields = ["id", "repo", "datasets", "subset_datasets", "metrics", "constraints", "forbidden", "experiment_command", "budget"];
+  const settings = ["runner", "seed", "subsetFraction", "subsetMaxSteps", "subsetSeeds", "subsetMargin"];
+  return JSON.stringify(canonical({
+    problem: Object.fromEntries(fields.map((key) => [key, problem[key]])),
+    config: Object.fromEntries(settings.map((key) => [key, config[key]])),
+  }));
+}
+
 export class ResearchState {
   readonly problem: Problem;
   readonly config: Config;
@@ -32,11 +43,15 @@ export class ResearchState {
   seeds: Idea[] = [];
 
   baseline: Evidence | null = null;
+  /** Immutable source reference for specification and manuscript audits. */
+  auditBaseline: RepoRef | null = null;
+  specReports: Record<string, { commit: string; report: IntegrityReport }> = {};
   /** Full-set baseline, persisted so a resumed run does not rerun it. */
   baselineFull: Evidence | null = null;
   /** Where the active baseline came from; recorded so a resume never re-runs a reused one. */
   baselineSource: "reproduced" | "incumbent" | "manual" | "promoted" | "mixed" = "reproduced";
   baselinePath = "";
+  environmentFingerprint = "";
   traces: Trace[] = [];
   /** Mid-idea progress by idea id; survives a restart so measured seeds are not re-run. */
   checkpoints: Record<string, TraceCheckpoint> = {};
@@ -61,10 +76,12 @@ export class ResearchState {
   ablations: AblationResult[] = [];
   ablationPlans: AblationPlan[] = [];
   ablationRound = 0;
+  ablationCommit = "";
   /** Last attribution verdict; the data gate requires acceptance. */
   ablationVerdict: Verdict | null = null;
 
   manuscript: Manuscript | null = null;
+  manuscriptCommit = "";
   review: Review | null = null;
   /** Independent reviews of the current manuscript; every score gates acceptance. */
   reviews: Review[] = [];
@@ -87,6 +104,16 @@ export class ResearchState {
   /** Restore the mutable state fields from a previous run's state.json. */
   static fromDict(problem: Problem, config: Config, raw: unknown): ResearchState {
     const item = asRecord(raw) ?? {};
+    const version = Number(item.state_version ?? 1);
+    if (!Number.isInteger(version) || version < 1 || version > 2) throw new Error("unsupported research state version");
+    const previousProblem = asRecord(item.problem);
+    const previousConfig = asRecord(item.config);
+    if (config.runner !== "simulated" && (!previousProblem || !previousConfig) &&
+      (item.best_evidence || asArray(item.traces).length)) throw new Error("resume candidate evidence lacks a recorded problem or configuration");
+    if (previousProblem && previousConfig && protocol(previousProblem, previousConfig) !==
+      protocol(problem as unknown as Record<string, unknown>, config as unknown as Record<string, unknown>)) {
+      throw new Error("resume protocol differs from recorded datasets, metrics, constraints, command, budget or seeds");
+    }
     const state = new ResearchState(problem, config);
     state.diagnosis = (item.diagnosis ?? null) as Diagnosis | null;
     state.limitations = asArray(item.limitations) as Limitation[];
@@ -97,7 +124,16 @@ export class ResearchState {
       ? item.baseline_source
       : "reproduced";
     state.baselinePath = String(item.baseline_path ?? "");
+    state.environmentFingerprint = String(item.environment_fingerprint ?? "");
     state.traces = asArray(item.traces) as Trace[];
+    const initialCode = state.traces.flatMap((trace) => trace.evidence)
+      .find((evidence) => evidence.scope === "subset" && evidence.code?.parent)?.code;
+    state.auditBaseline = (item.audit_baseline ?? null) as RepoRef | null;
+    if (!state.auditBaseline && initialCode?.parent) {
+      state.auditBaseline = { ...initialCode, commit: initialCode.parent, parent: null, patch: "", label: "audit-baseline" };
+    }
+    state.auditBaseline ??= state.baseline?.code ?? null;
+    state.specReports = (asRecord(item.spec_reports) ?? {}) as ResearchState["specReports"];
     state.checkpoints = (asRecord(item.checkpoints) ?? {}) as ResearchState["checkpoints"];
     state.searchDone = item.search_done === true;
     state.ideaRetries = Math.max(0, Number(item.idea_retries ?? 0) || 0);
@@ -112,8 +148,10 @@ export class ResearchState {
     state.ablations = asArray(item.ablations) as AblationResult[];
     state.ablationPlans = asArray(item.ablation_plans) as AblationPlan[];
     state.ablationRound = Number(item.ablation_round ?? 0) || 0;
+    state.ablationCommit = String(item.ablation_commit ?? "");
     state.ablationVerdict = (item.ablation_verdict ?? null) as Verdict | null;
     state.manuscript = (item.manuscript ?? null) as Manuscript | null;
+    state.manuscriptCommit = String(item.manuscript_commit ?? "");
     state.review = (item.review ?? null) as Review | null;
     state.reviews = asArray(item.reviews) as Review[];
     state.metaReview = (item.meta_review ?? null) as MetaReview | null;
@@ -177,13 +215,35 @@ export class ResearchState {
       evidenceSucceeded(evidence) && !invalid(evidence),
     );
     if (invalid(state.bestSubset)) state.bestSubset = null;
+    for (const trace of state.traces) {
+      trace.seed_id ??= trace.evidence.find((evidence) => evidence.scope === "subset")?.idea_id ?? trace.idea.id;
+      if (!trace.invalid) state.evaluatedIds.add(trace.seed_id);
+    }
+    for (const [key, checkpoint] of Object.entries(state.checkpoints)) {
+      const seedId = checkpoint.trace.seed_id ?? checkpoint.trace.evidence.find((evidence) => evidence.scope === "subset")?.idea_id ?? key;
+      checkpoint.trace.seed_id = seedId;
+      checkpoint.idea_id = seedId;
+      if (key !== seedId) delete state.checkpoints[key];
+      state.checkpoints[seedId] = checkpoint;
+    }
     return state;
   }
 
   goodTraces(): Trace[] {
-    return this.traces
-      .filter((trace) => trace.decision === "good")
+    const winners = new Map<string, Trace>();
+    for (const trace of this.traces) {
+      if (trace.decision === "good" && !trace.invalid) winners.set(trace.seed_id ?? trace.idea.id, trace);
+    }
+    return [...winners.values()]
       .sort((a, b) => (a.round === b.round ? a.idea.id.localeCompare(b.idea.id) : a.round - b.round));
+  }
+
+  rebindWorktree(root: string): void {
+    const traces = [...this.traces, ...Object.values(this.checkpoints).map((checkpoint) => checkpoint.trace)];
+    const codes = [this.auditBaseline, this.baseline?.code, this.baselineFull?.code, this.bestCode,
+      this.bestEvidence?.code, this.bestSubset?.code, ...traces.flatMap((trace) => trace.evidence.map((evidence) => evidence.code)),
+      ...this.ablations.map((result) => result.evidence?.code), ...this.rebuttals.map((evidence) => evidence.code)];
+    for (const code of codes) if (code) code.path = path.join(root, "worktree");
   }
 
   nextSeeds(n: number): Idea[] {
@@ -208,7 +268,12 @@ export class ResearchState {
     // An implementation that never produced a candidate commit is UNKNOWN, not
     // a refutation. Keep the trace for audit, but never let it exclude the idea
     // from a later reseed or from the scientific refutation list.
-    if (!trace.invalid) this.evaluatedIds.add(trace.idea.id);
+    const seedId = trace.seed_id ?? trace.idea.id;
+    if (!trace.invalid) {
+      this.evaluatedIds.add(seedId);
+      this.evaluatedIds.add(trace.idea.id);
+    }
+    delete this.checkpoints[seedId];
     delete this.checkpoints[trace.idea.id];
   }
 
@@ -235,15 +300,19 @@ export class ResearchState {
   /** JSON-serializable full snapshot with snake_case field names (I8). */
   toDict(): Record<string, unknown> {
     const snapshot: Record<string, unknown> = {
+      state_version: 2,
       problem: this.problem,
       config: this.config,
       diagnosis: this.diagnosis,
       limitations: this.limitations,
       seeds: this.seeds,
       baseline: this.baseline,
+      audit_baseline: this.auditBaseline,
+      spec_reports: this.specReports,
       baseline_full: this.baselineFull,
       baseline_source: this.baselineSource,
       baseline_path: this.baselinePath,
+      environment_fingerprint: this.environmentFingerprint,
       traces: this.traces,
       checkpoints: this.checkpoints,
       search_done: this.searchDone,
@@ -259,8 +328,10 @@ export class ResearchState {
       ablations: this.ablations,
       ablation_plans: this.ablationPlans,
       ablation_round: this.ablationRound,
+      ablation_commit: this.ablationCommit,
       ablation_verdict: this.ablationVerdict,
       manuscript: this.manuscript,
+      manuscript_commit: this.manuscriptCommit,
       review: this.review,
       reviews: this.reviews,
       meta_review: this.metaReview,

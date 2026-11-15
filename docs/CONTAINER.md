@@ -161,12 +161,15 @@ Manual triggers:
 | `check-worker` | none | `none` | `runs/` only |
 
 The worker runs `src/rsi/runtime/check-worker.ts` and executes target-owned
-checks plus optional LSP diagnostics. It reads RSI source read-only and cannot
+module and dynamic checks. It reads RSI source read-only and cannot
 read `/root/.ssh` or the provider key.
 
-`pi-agent` uses `RSI_CHECK_WORKER=auto` by default. Set
-`RSI_CHECK_WORKER=required` in `container/.env` to fail closed when the worker is
-not ready; set `off` to use the main container only.
+运行时默认使用 `RSI_CHECK_WORKER=required`。
+Compose 默认设置 `RSI_CHECK_WORKER=auto`。
+`required` 和 `auto` 在 worker 未就绪时阻断候选。
+显式设置 `off` 使用主容器执行检查。
+worker 的 ready 协议版本为 2。
+更新镜像后，需要重建运行容器以加载新协议。
 
 ```bash
 ./container/up.sh logs check-worker

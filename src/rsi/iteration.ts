@@ -29,6 +29,7 @@ import {
   type Runner, type Workspace,
 } from "./runtime/workspace.ts";
 import type { Evidence, Idea, Problem, RepoRef, Verdict } from "./types.ts";
+import { protectedPattern, matchesProtected } from "./runtime/protections.ts";
 
 export interface IterationOptions {
   problem: string | Problem;
@@ -127,24 +128,6 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
 function positive(value: number, label: string): number {
   if (!Number.isFinite(value) || value <= 0) throw new Error(`${label} must be finite and positive`);
   return value;
-}
-
-function protectedPattern(value: string): string {
-  const normalized = value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/$/, "");
-  if (!normalized || path.posix.isAbsolute(normalized) || normalized.split("/").includes("..")) {
-    throw new Error(`protected path must be repo-relative: ${value}`);
-  }
-  return normalized;
-}
-
-function matchesProtected(file: string, pattern: string): boolean {
-  if (!pattern.includes("*") && !pattern.includes("?")) return file === pattern || file.startsWith(`${pattern}/`);
-  // Small, dependency-free glob matcher. ** spans directories; * does not.
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replaceAll("**/", "\u0001").replaceAll("**", "\u0000")
-    .replaceAll("*", "[^/]*").replaceAll("?", "[^/]")
-    .replaceAll("\u0000", ".*").replaceAll("\u0001", "(?:.*/)?");
-  return new RegExp(`^${escaped}$`).test(file);
 }
 
 const EXECUTABLE_SOURCE = /\.(py|ts|tsx|js|jsx|mjs|cjs|rs|go|c|cc|cpp|h|cu|sh)$/i;

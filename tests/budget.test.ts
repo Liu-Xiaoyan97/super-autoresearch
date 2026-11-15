@@ -15,13 +15,13 @@ test("budget charges and throws at every hard limit", () => {
   assert.throws(() => time.check(), BudgetExceeded);
 });
 
-test("an LLM-call budget abort is exported, not raised", async () => {
+test("[integration] an LLM-call budget abort is exported, not raised", async () => {
   const result = await mockRun({ maxLlmCalls: 3 });
   assert.equal(result.final.aborted, true);
   assert.match(result.final.abort_reason, /max_llm_calls=3/);
 });
 
-test("an experiment budget abort is exported, not raised", async () => {
+test("[integration] an experiment budget abort is exported, not raised", async () => {
   const result = await mockRun({ maxExperiments: 1 });
   assert.equal(result.final.aborted, true);
   assert.match(result.final.abort_reason, /max_experiments=1/);

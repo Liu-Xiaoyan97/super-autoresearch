@@ -24,9 +24,11 @@
   },
   "scripts": {
     "cli": "node src/rsi/cli.ts",
-    "test": "node --test tests/*.test.ts",
+    "test": "node --test --test-skip-pattern='^\\[integration\\]' tests/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "smoke": "pi -ne -e ./extensions/rsi.ts -p --no-session \"list the loaded rsi tools\""
+    "smoke": "pi -ne -e ./extensions/rsi.ts -p --no-session \"list the loaded rsi tools\"",
+    "test:full": "node --test tests/*.test.ts",
+    "test:integration": "node --test --test-name-pattern='^\\[integration\\]' tests/*.test.ts"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

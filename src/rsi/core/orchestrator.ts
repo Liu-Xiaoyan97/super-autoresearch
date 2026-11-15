@@ -12,7 +12,8 @@ import {
   RebuttalCoder,
   SubsetCoder,
   codeOf,
-  meanMetrics,
+  checkRejection,
+  runSeeded,
   subsetSeeds,
 } from "../agents/coding.ts";
 import { FullSetCritic, ResultComparison, Selector, SubsetCritic } from "../agents/critics.ts";
@@ -52,7 +53,6 @@ import {
   type RepoRef,
   type Review,
   type Scope,
-  type SeedSample,
   type Trace,
   type DiagnosisFinding,
   type TraceCheckpoint,
@@ -66,6 +66,7 @@ import {
   makeLimitation,
   makeManuscript,
   makeReview,
+  makeTrace,
   verdictAccepted,
 } from "../types.ts";
 import { ResearchState } from "./state.ts";
@@ -185,7 +186,6 @@ export class Orchestrator {
   readonly ctx: AgentContext;
   readonly agents: AgentBundle;
   readonly state: ResearchState;
-  private specReports = new Map<string, IntegrityReport>();
   private readonly diagnoseFn: DiagnoseFn;
   /** Candidate-ledger keys already written, so a resume does not duplicate rows. */
   private readonly journaled = new Set<string>();
@@ -219,12 +219,24 @@ export class Orchestrator {
       if (!resume || !limitsDone) await this.limitations();
       if (!resume || !this.state.seeds.length) await this.seedIdeas();
       if (!this.ctx.problem.diagnose_command) await this.baseline();
+      if (resume && this.ctx.config.runner !== "simulated" && this.state.bestIdea && this.state.bestCode && this.state.bestEvidence) {
+        this.ctx.scratch.expected_check_environment = this.state.environmentFingerprint;
+        const failure = await checkRejection(this.ctx, this.state.bestIdea, "full", this.state.bestEvidence, this.state.bestCode, "resume");
+        if (failure) {
+          this.state.exportReason = failure.result?.stderr ?? "resume candidate checks failed";
+          throw new ScientificAbort("data_gate_not_met");
+        }
+        delete this.ctx.scratch.expected_check_environment;
+      }
       // An exhausted search is not the end of the science: a refuted pool seeds
       // another idea round (bounded by maxSeedRounds) before the run gives up.
       if (!resume || !this.state.searchDone || !this.state.goodTraces().length) {
         await this.ideaSearchWithReseeding();
       }
-      const needsPaper = !resume || !this.state.manuscript || !this.state.review;
+      const paperAccepted = resume && !!this.state.manuscript && !!this.state.review &&
+        this.state.manuscriptCommit === this.state.bestCode?.commit &&
+        this.state.metaReview?.decision === "accept" && this.reviewsPass();
+      const needsPaper = !paperAccepted;
       if (needsPaper) {
         const gate = this.dataGate();
         if (!gate.ok) {
@@ -233,15 +245,14 @@ export class Orchestrator {
         }
       }
       if (!resume || !this.state.bestIdea) await this.select();
-      if (!resume || !this.state.ablations.length) await this.ablations();
+      if (!resume || !this.state.ablationVerdict || this.state.ablationCommit !== this.state.bestCode?.commit) await this.ablations();
       if (needsPaper && !this.attributionGate()) {
         this.transition("stage.gate", "data.gate:attribution", { reason: "attribution" });
         throw new ScientificAbort("data_gate_not_met");
       }
       // A paper that was already accepted is finished work; anything else
       // (missing, rejected, or an unaccepted resume) enters the bounded loop.
-      const paperAccepted = resume && !!this.state.manuscript && !!this.state.review && this.state.metaReview?.decision === "accept";
-      if (needsPaper && !paperAccepted) await this.paperLoop();
+      if (needsPaper) await this.paperLoop();
     } catch (error) {
       if (error instanceof BudgetExceeded) {
         this.state.aborted = true;
@@ -298,11 +309,13 @@ export class Orchestrator {
 
   /** Attribution is the other half of the data gate: a gain must survive ablations. */
   private attributionGate(): boolean {
-    if (this.state.ablationVerdict) return verdictAccepted(this.state.ablationVerdict);
-    return this.state.decisionPath.some((token) => token === "ablation.good" || token === "ablation.accept");
+    return !!this.state.bestCode?.commit && this.state.ablationCommit === this.state.bestCode.commit &&
+      !!this.state.ablationVerdict && verdictAccepted(this.state.ablationVerdict) &&
+      this.state.ablations.length > 0 && this.state.ablations.every((result) => result.ok);
   }
 
   private persist(): void {
+    if (typeof this.ctx.scratch.check_environment === "string") this.state.environmentFingerprint = this.ctx.scratch.check_environment;
     this.ctx.store.writeJson("../state.json", this.state.toDict());
     // Every transition is a new experiment datum; refresh the project ledger.
     refreshLedgerFromContext(this.ctx);
@@ -615,6 +628,7 @@ export class Orchestrator {
     const baseline = this.state.baseline;
     if (!baseline) throw new ScientificAbort("baseline_failed");
     this.ctx.scratch.baseline = baseline;
+    this.state.auditBaseline ??= baseline.code;
     // Persist the initial measurement into the project baseline store. Future
     // runs for this project reuse it even when no candidate was promoted.
     this.persistBaseline("subset", baseline, null);
@@ -669,11 +683,11 @@ export class Orchestrator {
     try {
       const evidence = trace.evidence.length ? trace.evidence[trace.evidence.length - 1] : null;
       if (!evidence) return;
-      const baseline = this.state.baseline;
+      const baseline = this.state.auditBaseline;
       let diff = "";
-      if (baseline?.code && evidence.code) diff = await this.ctx.workspace.diff(baseline.code, evidence.code);
+      if (baseline && evidence.code) diff = await this.ctx.workspace.diff(baseline, evidence.code);
       const report = await this.agents.specAuditor.audit(trace.idea, { evidence, diff });
-      this.specReports.set(trace.idea.id, report);
+      this.state.specReports[trace.idea.id] = { commit: evidence.code?.commit ?? "", report };
       this.ctx.traces.append("integrity", { agent: "spec_auditor", report });
       if (report.spec_violations.length) {
         trace.decision = "bad";
@@ -683,15 +697,17 @@ export class Orchestrator {
         });
       }
     } catch (error) {
-      if ((error as Error)?.name === "AbortError") throw error;
-      this.specReports.set(trace.idea.id, {
+      if (error instanceof BudgetExceeded || (error as Error)?.name === "AbortError") throw error;
+      trace.invalid = true;
+      trace.decision = "bad";
+      this.state.specReports[trace.idea.id] = { commit: finalEvidence(trace)?.code?.commit ?? "", report: {
         score_verified: false,
         spec_violations: [],
         ref_violations: [],
         method_code_alignment: 0,
         checked_claims: 0,
         notes: [`spec_auditor unavailable: ${(error as Error).name}`],
-      });
+      } };
       this.ctx.traces.append("integrity", { agent: "spec_auditor", error: (error as Error).name });
     }
   }
@@ -873,10 +889,21 @@ export class Orchestrator {
       verdictAccepted(verdict) &&
       isStrictlyBetter(evidence.metrics, base.metrics, this.ctx.problem.metrics);
     if (better) {
+      if (reason === "meta") {
+        const trace = makeTrace({ idea, decision: "good", evidence: [evidence] });
+        await this.auditTrace(trace);
+        if (trace.decision !== "good" || trace.invalid) return false;
+      }
+      if (this.state.bestCode?.commit !== evidence.code?.commit) {
+        this.state.ablations = [];
+        this.state.ablationPlans = [];
+        this.state.ablationVerdict = null;
+        this.state.ablationCommit = "";
+      }
       this.state.adopt(idea, evidence);
       // A full refinement after select (meta) invalidates the subset control;
       // the ablation stage re-measures it from the new code.
-      if (evidence.scope === "full" && reason !== "select") this.state.bestSubset = null;
+      if (evidence.scope === "full" && reason !== "select" && this.state.bestSubset?.code?.commit !== evidence.code?.commit) this.state.bestSubset = null;
       // Only a measured subset/full baseline is promoted. Ablation and other
       // local evidence updates the incumbent but must not replace a baseline.
       const scope: "subset" | "full" | null = evidence.scope === "full" ? "full" : evidence.scope === "subset" ? "subset" : null;
@@ -929,6 +956,12 @@ export class Orchestrator {
     // The control is the incumbent measured under the subset protocol. Reuse
     // the candidate's subset evidence when select captured it; after a full
     // refinement (meta) measure the new code at the same subset budget.
+    if (this.state.ablationCommit !== full.code?.commit) {
+      this.state.ablations = [];
+      this.state.ablationPlans = [];
+      this.state.ablationVerdict = null;
+      this.state.ablationCommit = full.code?.commit ?? "";
+    }
     const best = await this.incumbentSubset(idea, full);
     this.ctx.budget.check();
     this.state.ablationRound = 0;
@@ -976,23 +1009,32 @@ export class Orchestrator {
    * hyperparameters and seeds as the ablation variants.
    */
   private async incumbentSubset(idea: Idea, full: Evidence): Promise<Evidence> {
-    if (this.state.bestSubset && evidenceOk(this.state.bestSubset)) return this.state.bestSubset;
-    const seeds = subsetSeeds(this.ctx.config);
-    const samples: SeedSample[] = [];
-    for (const seed of seeds) {
+    const existing = this.state.bestSubset;
+    if (existing && existing.code?.commit === full.code?.commit && evidenceOk(existing) &&
+      existing.samples?.length && existing.samples.every((sample) => sample.result?.status === "ok" &&
+        this.ctx.problem.metrics.every((spec) => Number.isFinite(sample.metrics[spec.name])))) return existing;
+    const sourceSubset = this.state.traces.flatMap((trace) => trace.evidence)
+      .find((evidence) => evidence.scope === "subset" && evidence.code?.commit === full.code?.commit);
+    const controlCode = sourceSubset?.code ?? codeOf(full);
+    if (controlCode.parent === controlCode.commit) throw new ScientificAbort("data_gate_not_met");
+    const measured = await runSeeded(this.ctx.workspace, controlCode, idea, subsetSeeds(this.ctx.config), () => {
       checkAborted(this.ctx);
       this.ctx.budget.check();
       this.ctx.budget.chargeExperiment();
-      const result = await this.ctx.workspace.run(codeOf(full), "subset", idea, seed);
-      samples.push({ seed, metrics: result.metrics, result });
+    });
+    const samples = measured.samples;
+    if (samples.some((sample) => sample.result?.status !== "ok") ||
+      samples.some((sample) => this.ctx.problem.metrics.some((spec) => !Number.isFinite(sample.metrics[spec.name])))) {
+      this.transition("stage.ablation", "ablation.control.invalid");
+      throw new ScientificAbort("data_gate_not_met");
     }
     const control = makeEvidence({
       idea_id: idea.id,
       scope: "subset",
-      metrics: meanMetrics(samples),
+      metrics: measured.metrics,
       baseline_metrics: { ...full.baseline_metrics },
-      code: full.code,
-      result: samples.map((sample) => sample.result).find((item) => item?.status === "ok") ?? null,
+      code: controlCode,
+      result: measured.result,
       label: `${full.label}-subset-control`,
       samples,
     });
@@ -1005,7 +1047,7 @@ export class Orchestrator {
     const [idea, best] = this.incumbent();
     // A persisted manuscript from an interrupted attempt is finished work: only
     // a meta refinement or a missing draft starts a new one.
-    const redraft = Boolean(reviewerFeedback) || !this.state.manuscript;
+    const redraft = Boolean(reviewerFeedback) || !this.state.manuscript || this.state.manuscriptCommit !== this.state.bestCode?.commit;
     if (redraft) {
       this.state.peerRound = 0;
       this.state.reviewRefinements = 0;
@@ -1018,6 +1060,7 @@ export class Orchestrator {
         round: this.state.metaRound,
         reviewerFeedback,
       });
+      this.state.manuscriptCommit = this.state.bestCode?.commit ?? "";
       // Keep the draft even if the host dies before the panel returns.
       this.persist();
     }
@@ -1112,7 +1155,7 @@ export class Orchestrator {
    * The retry counter is persisted so a resume does not restart the budget.
    */
   private async paperLoop(): Promise<void> {
-    if (!this.state.manuscript || !this.state.review) await this.draftAndReview();
+    if (!this.state.manuscript || !this.state.review || this.state.manuscriptCommit !== this.state.bestCode?.commit) await this.draftAndReview();
     for (;;) {
       if (!this.state.metaReview) await this.metaReview();
       const accepted = this.state.metaReview?.decision === "accept" && (this.state.review?.score ?? 0) >= this.ctx.config.reviewThreshold;
@@ -1166,7 +1209,7 @@ export class Orchestrator {
 
   private async metaReview(): Promise<void> {
     progress(this.ctx, "§3.6 meta-review");
-    for (let index = 0; index <= this.ctx.config.maxMetaRounds; index++) {
+    for (let index = this.state.metaRound; index <= this.ctx.config.maxMetaRounds; index++) {
       checkAborted(this.ctx);
       this.ctx.budget.check();
       this.state.metaRound = index;
@@ -1202,6 +1245,7 @@ export class Orchestrator {
       }
       this.state.metaRound = index + 1;
       await this.ablations();
+      if (!this.attributionGate()) throw new ScientificAbort("data_gate_not_met");
       await this.draftAndReview(this.state.metaReview.critique);
     }
   }
@@ -1216,8 +1260,20 @@ export class Orchestrator {
   private async exportIntegrity(): Promise<IntegrityReport> {
     const reports: IntegrityReport[] = [];
     if (this.state.bestIdea) {
-      const report = this.specReports.get(this.state.bestIdea.id);
-      if (report) reports.push(report);
+      const idea = this.state.bestIdea;
+      let audit = this.state.specReports[idea.id];
+      if ((!audit || !audit.report.score_verified || audit.commit !== this.state.bestCode?.commit) && this.state.bestEvidence) {
+        try {
+          await this.auditTrace(makeTrace({ idea, decision: "good", evidence: [this.state.bestEvidence] }));
+        } catch (error) {
+          if (!(error instanceof BudgetExceeded)) throw error;
+          this.state.aborted = true;
+          this.state.abortReason = error.message;
+        }
+        audit = this.state.specReports[idea.id];
+      }
+      if (audit) reports.push(audit.report);
+      else reports.push(combine());
     }
     if (!this.state.manuscript) return combine(...reports);
     const manuscript = this.state.manuscript;
@@ -1231,9 +1287,9 @@ export class Orchestrator {
             report = await this.agents.referenceAuditor.audit(manuscript);
           } else {
             let diff = "";
-            const baseline = this.state.baseline;
-            if (baseline?.code && this.state.bestCode) {
-              diff = await this.ctx.workspace.diff(baseline.code, this.state.bestCode);
+            const baseline = this.state.auditBaseline;
+            if (baseline && this.state.bestCode) {
+              diff = await this.ctx.workspace.diff(baseline, this.state.bestCode);
             }
             report = await this.agents.methodCodeAuditor.audit(manuscript, {
               diff,
@@ -1288,7 +1344,8 @@ export class Orchestrator {
       !integrity.ref_violations.length &&
       integrity.score_verified &&
       integrity.method_code_alignment >= 0.5;
-    accepted = accepted && clean;
+    accepted = accepted && clean && !this.state.aborted && this.attributionGate() && this.dataGate().ok &&
+      this.reviewsPass() && this.state.manuscriptCommit === this.state.bestCode?.commit;
     const extra: Record<string, unknown> = { accepted, ...(interrupted ? { interrupted: true } : {}) };
     if (!accepted && !this.state.aborted) {
       if (!this.state.exportReason) {

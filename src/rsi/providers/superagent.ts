@@ -21,8 +21,6 @@ import type { Engine } from "../superagent/engine.ts";
 import type { Ticket } from "../superagent/model.ts";
 import { roleOfTask } from "../superagent/sop.ts";
 import { workerSystem } from "../superagent/prompts.ts";
-import type { LanguageSpec } from "../runtime/checks.ts";
-import { LSP_TOOL_NAMES, lspTools, type LspToolSet } from "../runtime/lsp-tools.ts";
 
 const DEFAULT_WEB_TASKS: ReadonlySet<string> = new Set(["ideas.novelty", "integrity.refs"]);
 /** Coding workers inspect the target snapshot but never write it directly. */
@@ -111,8 +109,6 @@ export interface PiWorkerOptions {
   thinkingLevel?: string;
   /** Per-task tool allowlist; empty means "decide from webTasks". */
   tools?: string[];
-  /** Read-only LSP tools bound to this worker's target directory. */
-  lsp?: { root: string; specs: Record<string, LanguageSpec>; timeoutMs?: number };
   webTasks?: ReadonlySet<string>;
   webSearch?: boolean;
   /** Test seam: use this SDK object instead of importing Pi. */
@@ -139,7 +135,6 @@ export class PiWorker implements TaskWorker {
   private readonly registry: WorkerRegistry;
   private readonly modelRuntime?: unknown;
   private readonly sdkOverride: any;
-  private readonly lspBundle: LspToolSet | null;
   private sdkPromise: Promise<any> | null = null;
   private runtimePromise: Promise<any> | null = null;
   private copiedProviders = new Map<string, { native?: any; config?: any }>();
@@ -155,7 +150,6 @@ export class PiWorker implements TaskWorker {
     this.modelRuntime = opts.modelRuntime;
     this.registry = opts.registry;
     this.resolver = new PiLLMProvider(opts);
-    this.lspBundle = opts.lsp ? lspTools(opts.lsp) : null;
   }
 
   private toolsFor(task: string): string[] {
@@ -163,7 +157,7 @@ export class PiWorker implements TaskWorker {
     // A coder asked to produce a diff must be able to inspect the source.
     // Keep the allowlist read-only: write/edit/bash would bypass the patch flow.
     if (CODE_TASK.test(task)) {
-      return this.lspBundle ? [...READ_ONLY_TOOLS, ...LSP_TOOL_NAMES] : READ_ONLY_TOOLS;
+      return READ_ONLY_TOOLS;
     }
     if (this.webSearch && this.webTasks.has(task)) return ["web_search"];
     return [];
@@ -345,9 +339,6 @@ export class PiWorker implements TaskWorker {
           tools: [...new Set([...tools, REPORT_TOOL_NAME])],
           customTools: [
             this.reportTool(collected, payload.schemaName),
-            ...(tools.some((name) => (LSP_TOOL_NAMES as readonly string[]).includes(name))
-              ? this.lspBundle?.tools ?? []
-              : []),
           ],
           resourceLoader: loader,
           sessionManager: sdk.SessionManager.inMemory(),
@@ -398,7 +389,6 @@ export class PiWorker implements TaskWorker {
   }
 
   async close(): Promise<void> {
-    await this.lspBundle?.close();
     for (const session of this.sessions) session.dispose();
     this.sessions.clear();
     // Native OAuth refresh persists through the runtime's credential store.

@@ -206,6 +206,8 @@ export class MockLLMProvider extends LLMProvider {
   ): unknown {
     const n = Math.max(0, Math.trunc(num(req.meta.n, 1)));
     switch (schema) {
+      case "ImplementationAudit":
+        return { decision: "good", modules: ["offline fixture module"], findings: [] };
       case "LimitationBatch":
         return {
           limitations: Array.from({ length: Math.max(1, n) }, (_, i) =>

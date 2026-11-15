@@ -607,20 +607,17 @@ Novelty 检查的引用必须针对 idea 的机制；CCNet、数据去重之类�
 
 ```text
 read, grep, find, ls
-lsp_diagnostics, lsp_definition, lsp_references, lsp_hover,
-lsp_document_symbols, lsp_workspace_symbols
 ```
 
-worker 的 cwd 指向目标仓库。LSP 工具绑定同一目录，路径不能逃逸；它们只读，
-不发 rename/format/applyEdit。候选改动仍通过 unified diff → git commit 的受控
-patch 流程。
+worker 的 cwd 指向目标仓库。候选通过 unified diff 和 git commit 产生。
+实施核查检查模块和入口连接。目标测试验证运行行为。
 
 ### 确定性检查使用哪个容器
 
-`container/compose.yaml` 的 `check-worker` 服务运行确定性检查和 LSP：无
+`container/compose.yaml` 的 `check-worker` 服务运行目标声明的检查：无
 `OPENCODE_API_KEY`、无 SSH、`network_mode: none`、RSI 源码只读、只有 `runs/`
-可写。主容器默认 `RSI_CHECK_WORKER=auto`：worker ready 时使用 worker，否则回退
-主容器本地执行。
+可写。主容器默认 `RSI_CHECK_WORKER=auto`。worker 缺失时阻断候选。
+显式 `RSI_CHECK_WORKER=off` 使用本地执行器。
 
 ```bash
 ./container/up.sh logs check-worker
@@ -662,3 +659,11 @@ runs/<run_id>/artifacts/experiments/diagnosis-<id>.log
 - [`docs/REMOTE.md`](docs/REMOTE.md)：远端 rsync/SSH/GPU 执行。
 - [`docs/SUPERAGENT.md`](docs/SUPERAGENT.md)：run/task ticket 和 policy。
 - [`AGENTS.md`](AGENTS.md)：main agent 与受限执行者的边界。
+
+### 测试入口
+
+`npm test` 执行快速回归。
+`npm run test:integration` 执行完整流程回归。
+`npm run test:full` 执行全部回归。
+完整流程的用例名称带 `[integration]`。
+入口配置见 `package.json` 的 `scripts`。

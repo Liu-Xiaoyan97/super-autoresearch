@@ -62,7 +62,6 @@ function request(root: string, repo: string, languageSpecs = specs(), label = "c
     specs: languageSpecs,
     languages: ["python"],
     changedFiles: ["a.py"],
-    lsp: {},
     timeoutMs: 15000,
   };
 }
@@ -96,10 +95,10 @@ async function stop(child: ChildProcess): Promise<void> {
 }
 
 test("worker mode and readiness are explicit", () => {
-  assert.equal(checkWorkerMode({} as NodeJS.ProcessEnv), "off");
+  assert.equal(checkWorkerMode({} as NodeJS.ProcessEnv), "required");
   assert.equal(checkWorkerMode({ RSI_CHECK_WORKER: "auto" } as NodeJS.ProcessEnv), "auto");
   assert.equal(checkWorkerMode({ RSI_CHECK_WORKER: "required" } as NodeJS.ProcessEnv), "required");
-  assert.equal(checkWorkerMode({ RSI_CHECK_WORKER: "typo" } as NodeJS.ProcessEnv), "off");
+  assert.equal(checkWorkerMode({ RSI_CHECK_WORKER: "typo" } as NodeJS.ProcessEnv), "required");
   const { root, workerDir } = layout();
   assert.equal(checkWorkerDir(root, {} as NodeJS.ProcessEnv), path.join(path.dirname(root), ".check-worker"));
   assert.equal(checkWorkerReady(workerDir), false);

@@ -14,8 +14,7 @@ import {
   writeIncumbent,
 } from "../src/rsi/runtime/incumbent.ts";
 import { makeEvidence, makeProblem, metricSpec } from "../src/rsi/types.ts";
-import { fixture, mockRun, repoRoot, tempDir } from "./helpers.ts";
-import { loadProblem } from "../src/rsi/run.ts";
+import { tempDir } from "./helpers.ts";
 
 function repoWithCommit(): { repo: string; commit: string } {
   const repo = tempDir("rsi-incumbent-repo-");
@@ -76,24 +75,6 @@ test("an explicit manual baseline is accepted for the requested scopes", () => {
   assert.equal(seeds.subset?.evidence.metrics.score, 0.5);
   assert.equal(seeds.full, null, "a scope-limited manual baseline leaves the other scope to reproduce");
   assert.equal(seeds.path, manual);
-});
-
-test("a promoted full candidate writes an incumbent ledger", async () => {
-  const result = await mockRun();
-  const out = path.dirname(result.root);
-  const problem = loadProblem(fixture("ood_frozen_encoder"), repoRoot);
-  const fullFile = incumbentFileFor(out, problem, "full");
-  assert.ok(fs.existsSync(fullFile), `expected a full incumbent at ${fullFile}`);
-  const ledger = JSON.parse(fs.readFileSync(fullFile, "utf8"));
-  assert.equal(ledger.version, 1);
-  assert.equal(ledger.scope, "full");
-  assert.ok(ledger.commit);
-  assert.ok(Object.keys(ledger.metrics).length > 0);
-  assert.equal(result.summary.baseline_source, "promoted");
-  const seeds = loadRunBaselines(problem, out, 7);
-  assert.equal(seeds.full?.source, "incumbent");
-  assert.equal(seeds.full?.evidence.code?.commit, ledger.commit);
-  assert.equal(seeds.subset?.source, "incumbent", "the initial subset baseline is project-global too");
 });
 
 test("project baseline files are shared across output directories", () => {

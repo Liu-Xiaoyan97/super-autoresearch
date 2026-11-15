@@ -80,6 +80,7 @@ export abstract class BaseAgent {
     for (let attempt = 0; attempt <= 2; attempt++) {
       checkAborted(this.ctx);
       this.ctx.budget.chargeLlm();
+      const started = Date.now();
       const output = await this.ctx.llm.structured(
         {
           task: this.task,
@@ -99,6 +100,7 @@ export abstract class BaseAgent {
         schema: spec.name,
         attempt,
         meta: opts.meta ?? {},
+        duration_s: (Date.now() - started) / 1000,
       });
       if (code) return output;
       // Normalize data-shaped prose before linting: split semicolon-separated

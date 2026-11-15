@@ -37,7 +37,7 @@ fi
 # Open-box deterministic-code toolchain verification. These binaries are
 # installed by container/Dockerfile; startup must never silently install them.
 missing_tools=()
-for tool in ssh rsync socat python3 pyright pyright-langserver ruff pytest rustc cargo rust-analyzer go gopls; do
+for tool in ssh rsync socat python3 ruff pytest rustc cargo go; do
   command -v "$tool" >/dev/null 2>&1 || missing_tools+=("$tool")
 done
 if ((${#missing_tools[@]})); then

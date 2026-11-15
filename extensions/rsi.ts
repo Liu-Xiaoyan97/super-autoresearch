@@ -44,7 +44,6 @@ import { orchestratorBriefing, policySection } from "../src/rsi/superagent/promp
 import { SuperagentRuntime, type DispatchParams, type RunStatus, type RunSummary } from "../src/rsi/superagent/runtime.ts";
 import { SUPERAGENT_PARAMS, formatStatus, superagentAction } from "../src/rsi/superagent/tools.ts";
 import { PiWorker } from "../src/rsi/providers/superagent.ts";
-import { languageSpecs, loadAdapter, type LanguageSpec } from "../src/rsi/runtime/checks.ts";
 import type { RunSpec } from "../src/rsi/superagent/model.ts";
 import {
   type InspectResult,
@@ -314,12 +313,10 @@ function workerFor(ctx: ToolContext, spec: RunSpec, signal: AbortSignal): TaskWo
   // Coding workers need to read the target snapshot. Resolve the Problem repo
   // so `read`/`grep` inspect the project, not the RSI harness checkout.
   let workerCwd = ctx.cwd;
-  let lsp: { root: string; specs: Record<string, LanguageSpec> } | undefined;
   try {
     const problem = loadProblem(spec.problem, ctx.cwd);
     if (problem.repo) {
       workerCwd = path.resolve(ctx.cwd, problem.repo);
-      lsp = { root: workerCwd, specs: languageSpecs(loadAdapter(workerCwd, problem)) };
     }
   } catch {
     /* the runtime reports a clearer load error later */
@@ -327,7 +324,6 @@ function workerFor(ctx: ToolContext, spec: RunSpec, signal: AbortSignal): TaskWo
   return new PiWorker({
     ...common,
     cwd: workerCwd,
-    lsp,
     webSearch: spec.options.web_search !== false,
   });
 }

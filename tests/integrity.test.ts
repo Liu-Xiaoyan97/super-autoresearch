@@ -15,6 +15,7 @@ import {
   type ExperimentResult,
 } from "../src/rsi/types.ts";
 import { makeContext } from "./helpers.ts";
+import { reviewChunks } from "../src/rsi/agents/patch.ts";
 
 function failedResult(): ExperimentResult {
   return {
@@ -87,7 +88,7 @@ test("reference auditor flags references with no local support", () => {
   assert.deepEqual(auditor.unknownRefs(["Totally Fake Paper"], ["X-Mahalanobis"]), ["Totally Fake Paper"]);
 });
 
-test("method-code auditor's lexical floor cannot be manufactured by the model", () => {
+test("method-code auditor requires source overlap and model support", async () => {
   const ctx = makeContext();
   const auditor = new MethodCodeAuditor(ctx);
   const manuscript = makeManuscript({
@@ -99,6 +100,8 @@ test("method-code auditor's lexical floor cannot be manufactured by the model", 
   assert.deepEqual(missing, []);
   const [none] = auditor.lexicalAlignment(manuscript, "completely unrelated code");
   assert.equal(none, 0);
+  const report = await auditor.audit(manuscript, { diff: "implemented spectral prior alignment" });
+  assert.equal(report.method_code_alignment, 0);
 });
 
 test("problems without forbidden phrases never produce spec violations", () => {
@@ -106,4 +109,29 @@ test("problems without forbidden phrases never produce spec violations", () => {
   const auditor = new SpecAuditor(ctx);
   const problem = makeProblem();
   assert.deepEqual(auditor.hardViolations(problem, "anything", makeEvidence({ metrics: { a: 1 } })), []);
+});
+
+test("review chunks preserve all source characters within the request budget", () => {
+  const source = "first file\n" + "x".repeat(50000) + "\nlast file\n";
+  const chunks = reviewChunks(source, 4000);
+  assert.equal(chunks.join(""), source);
+  assert.ok(chunks.every((chunk) => chunk.length <= 4000));
+  assert.deepEqual(reviewChunks(""), [""]);
+  assert.throws(() => reviewChunks(source, 0), /positive/);
+});
+
+test("specification audit checks later chunks and reuses source evidence", async () => {
+  const ctx = makeContext();
+  let calls = 0;
+  ctx.llm.structured = async (request, spec) => {
+    calls++;
+    return spec.parse({ violations: request.user.includes("LATE_VIOLATION") ? ["Late protocol breach."] : [], notes: "Source checked." });
+  };
+  const diff = "x".repeat(40000) + "LATE_VIOLATION";
+  const auditor = new SpecAuditor(ctx);
+  const first = await auditor.audit((await import("../src/rsi/types.ts")).makeIdea(), { evidence: makeEvidence(), diff });
+  assert.ok(first.spec_violations.includes("Late protocol breach."));
+  const initial = calls;
+  await auditor.audit((await import("../src/rsi/types.ts")).makeIdea(), { evidence: makeEvidence(), diff });
+  assert.equal(calls, initial);
 });

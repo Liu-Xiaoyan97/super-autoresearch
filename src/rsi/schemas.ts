@@ -78,6 +78,7 @@ export function parsePlan(raw: unknown): AblationPlan {
     description: str(item.description),
     expects: str(item.expects),
     variant_of: str(item.variant_of),
+    code_refs: strArray(item.code_refs),
   };
 }
 
@@ -277,7 +278,7 @@ export const FullSetEngineeringPatch: StructuredSpec<{
 
 export const AblationPlanBatch: StructuredSpec<{ plans: AblationPlan[]; hypothesis: string }> = {
   name: "AblationPlanBatch",
-  instruction: '{"plans":[{"id":"...","component":"one removable component","description":"intervention and protocol","expects":"expected degradation","variant_of":"idea id"}],"hypothesis":""}',
+  instruction: '{"plans":[{"id":"...","component":"one removable component","code_refs":["path:symbol"],"description":"intervention and protocol","expects":"expected degradation","variant_of":"idea id"}],"hypothesis":""}',
   parse(raw) {
     const item = asRecord(raw) ?? {};
     return { plans: recordArray(item.plans).map(parsePlan), hypothesis: str(item.hypothesis) };
@@ -368,3 +369,32 @@ export const MethodCodeAuditResult: StructuredSpec<{
 };
 
 export { ReferenceAuditSpec as ReferenceAuditResultSpec };
+
+/** Source-level module review before target-owned execution. */
+export const ImplementationAudit: StructuredSpec<{
+  decision: "good" | "engineer";
+  modules: string[];
+  tests: string[];
+  findings: string[];
+}> = {
+  name: "ImplementationAudit",
+  instruction: '{"decision":"good|engineer","modules":["path:symbol and verified requirement"],"tests":["trusted test path:symbol and verified assertions"],"findings":["concrete missing or incorrect implementation"]}',
+  parse(raw) {
+    const item = asRecord(raw);
+    if (!item || !Array.isArray(item.modules) || !Array.isArray(item.findings)) {
+      throw new Error("implementation audit requires module evidence and findings");
+    }
+    if (!item.modules.every((value) => typeof value === "string" && value.trim()) ||
+      !item.findings.every((value) => typeof value === "string" && value.trim())) {
+      throw new Error("implementation audit evidence must contain nonempty strings");
+    }
+    const modules = strArray(item.modules);
+    const findings = strArray(item.findings);
+    const tests = strArray(item.tests);
+    if (item.decision !== "good" && item.decision !== "engineer") {
+      throw new Error("implementation audit decision must be good or engineer");
+    }
+    return { decision: item.decision === "good" && !findings.length ? "good" : "engineer", modules, tests, findings };
+  },
+  fallback: () => ({ decision: "engineer", modules: [], tests: [], findings: ["Module review is unavailable."] }),
+};

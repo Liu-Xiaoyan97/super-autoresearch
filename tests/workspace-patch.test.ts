@@ -163,6 +163,25 @@ test("brief reads the git tree and relevant files at a commit", async () => {
   assert.match(brief, /def f/);
 });
 
+test("brief prioritizes changed source across supported languages in a large tree", async () => {
+  const extra: Record<string, string> = {};
+  for (let index = 0; index < 185; index += 1) {
+    extra[`a${String(index).padStart(3, "0")}.py`] = "unrelated = 1\n";
+  }
+  const files = ["z/module.ts", "z/module.go", "z/module.rs", "z/module.mjs"];
+  for (const file of files) extra[file] = "old implementation\n";
+  const repo = fixtureRepo(extra);
+  const workspace = new GitWorkspace(makeProblem({ id: "p", repo }), defaultConfig(), tempDir("rsi-brief-"));
+  const base = await workspace.baselineRepo();
+  const patch = files.map((file) => [
+    `diff --git a/${file} b/${file}`, `--- a/${file}`, `+++ b/${file}`,
+    "@@ -1 +1 @@", "-old implementation", `+updated implementation for ${file}`, "",
+  ].join("\n")).join("");
+  const candidate = await workspace.writePatch(base, patch, "multi-language");
+  const brief = workspace.brief(candidate, "unrelated", 8000);
+  for (const file of files) assert.ok(brief.includes(`updated implementation for ${file}`));
+});
+
 test("a diff with a malformed hunk header still applies when git can verify placement", async () => {
   const repo = fixtureRepo({ "three.txt": "a\nb\nc\nd\ne\n" });
   const problem = makeProblem({ id: "p", repo });
@@ -190,4 +209,33 @@ test("a diff that applies but changes nothing is refused, not measured", async (
     fs.readFileSync(path.join(base.path, "..", "patches", "noop.apply.log"), "utf8"),
     /status=0[\s\S]*no change after apply/,
   );
+});
+
+test("patch policy protects tests and enforces the baseline mutable paths", async () => {
+  const repo = fixtureRepo({
+    ".rsi/adapter.json": JSON.stringify({ problem: "policy", mutable_paths: ["pkg/**"], protected_paths: [] }),
+    "tests/test_model.py": "value = 1\n",
+  });
+  const workspace = new GitWorkspace(makeProblem({ id: "policy", repo }), defaultConfig({ runner: "subprocess" }), tempDir("rsi-policy-"));
+  const base = await workspace.baselineRepo();
+  const patch = (file: string, before: string, after: string) => [
+    `diff --git a/${file} b/${file}`, `--- a/${file}`, `+++ b/${file}`, "@@ -1 +1 @@", `-${before}`, `+${after}`, "",
+  ].join("\n");
+  await assert.rejects(workspace.writePatch(base, patch("tests/test_model.py", "value = 1", "value = 2"), "tests-change"), /protected or disallowed/);
+  await assert.rejects(workspace.writePatch(base, patch("a.txt", "hello", "changed"), "outside-mutable"), /protected or disallowed/);
+  // A mutable source checkout cannot alter the baseline's policy.
+  fs.writeFileSync(path.join(repo, ".rsi/adapter.json"), JSON.stringify({ problem: "policy", mutable_paths: ["**"] }));
+  await assert.rejects(workspace.writePatch(base, patch("a.txt", "hello", "changed"), "dirty-policy"), /protected or disallowed/);
+  const allowed = ["diff --git a/pkg/cache.py b/pkg/cache.py", "--- a/pkg/cache.py", "+++ b/pkg/cache.py", "@@ -1,2 +1,2 @@", " def f():", "-    return 1", "+    return 2", ""].join("\n");
+  assert.notEqual((await workspace.writePatch(base, allowed, "allowed-source")).commit, base.commit);
+});
+
+test("patch policy protects nested and language-specific test files", async () => {
+  const repo = fixtureRepo({ "pkg/cache_test.go": "value = 1\n", "pkg/__tests__/case.ts": "value = 1\n" });
+  const workspace = new GitWorkspace(makeProblem({ id: "policy", repo }), defaultConfig({ runner: "subprocess" }), tempDir("rsi-test-policy-"));
+  const base = await workspace.baselineRepo();
+  for (const file of ["pkg/cache_test.go", "pkg/__tests__/case.ts"]) {
+    const patch = [`diff --git a/${file} b/${file}`, `--- a/${file}`, `+++ b/${file}`, "@@ -1 +1 @@", "-value = 1", "+value = 2", ""].join("\n");
+    await assert.rejects(workspace.writePatch(base, patch, "tests-change"), /protected or disallowed/);
+  }
 });
