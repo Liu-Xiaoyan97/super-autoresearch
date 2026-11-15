@@ -167,7 +167,14 @@ export class LspClient {
   private stderrText = "";
 
   constructor(root: string, spec: LspSpec, opts: { timeoutMs?: number } = {}) {
-    this.root = path.resolve(root);
+    // Canonicalize once: on macOS /var is a symlink to /private/var, and a
+    // server that canonicalizes URIs would otherwise see files outside its
+    // workspace root and miss cross-file references.
+    try {
+      this.root = fs.realpathSync(path.resolve(root));
+    } catch {
+      this.root = path.resolve(root);
+    }
     this.spec = spec;
     this.timeoutMs = opts.timeoutMs ?? 8000;
   }

@@ -494,6 +494,7 @@ src/rsi/runtime/lsp-audit.ts
 src/rsi/runtime/lsp-tools.ts
 tests/lsp.test.ts
 tests/lsp-audit.test.ts
+tests/lsp-languages.test.ts
 ```
 
 要求：
