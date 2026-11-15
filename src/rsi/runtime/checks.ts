@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { Problem, RepoRef } from "../types.ts";
-import { changedLineRanges, lspReferenceAudit, LSP_AUDIT_MAX_SYMBOLS } from "./lsp-audit.ts";
+import { changedLineRanges, lspReferenceAudit, LSP_AUDIT_MAX_FILES, LSP_AUDIT_MAX_SYMBOLS } from "./lsp-audit.ts";
 import { lspDiagnostics, type LspSpec } from "./lsp.ts";
 import { ArtifactStore } from "./store.ts";
 
@@ -312,6 +312,7 @@ export function checkTimeoutMs(
     if (lspSpecs[language]) {
       // Reference audit starts a clean server and queries changed symbols
       // before checks can generate build files; diagnostics run later.
+      total += LSP_AUDIT_MAX_FILES * 100;
       total += (Math.max(1, changedFiles.length) + LSP_AUDIT_MAX_SYMBOLS) * 8000 + 15_000;
       total += Math.max(1, changedFiles.length) * 8000 + 15_000;
     }
