@@ -93,3 +93,6 @@ export function readJson(file: string): any {
 process.env.RSI_BASELINE_DIR ??= tempDir("rsi-baseline-home-");
 process.env.RSI_LEDGER_DIR ??= tempDir("rsi-ledger-home-");
 process.env.RSI_LEDGER_RENDER ??= "0";
+// Tests use temporary run roots, which are outside the container worker's
+// mailbox. Keep the default local so a running worker cannot change a test.
+process.env.RSI_CHECK_WORKER = "off";

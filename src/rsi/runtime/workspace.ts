@@ -23,8 +23,9 @@ import { stableString } from "../json.ts";
 
 import { crc32, unit } from "../crc32.ts";
 import type { Config } from "../config.ts";
-import { type AdapterSpec, type CheckReport, detectLanguages, languageSpecs, loadAdapter, runChecks } from "./checks.ts";
-import { lspDiagnostics } from "./lsp.ts";
+import { type AdapterSpec, type CheckReport, type LanguageSpec, checkTimeoutMs, detectLanguages, languageSpecs, loadAdapter, runCheckJob, safeCheckLabel } from "./checks.ts";
+import { checkWorkerDir, checkWorkerMode, checkWorkerReady, runCheckInWorker, workerUnavailableReport } from "./check-client.ts";
+import type { LspSpec } from "./lsp.ts";
 import {
   type Evidence,
   type ExperimentResult,
@@ -1129,6 +1130,40 @@ export class GitWorkspace implements Workspace {
     };
   }
 
+  private checkCacheKey(
+    repo: RepoRef,
+    changedFiles: string[],
+    specs: Record<string, LanguageSpec>,
+    lspSpecs: Record<string, LspSpec>,
+  ): string {
+    // The key covers every input that can change a check result. A toolchain
+    // upgrade or adapter edit must not replay an old pass.
+    const material = JSON.stringify({
+      commit: repo.commit ?? "",
+      parent: repo.parent,
+      changedFiles: changedFiles.slice().sort(),
+      specs,
+      lsp: lspSpecs,
+      python: process.env.RSI_PYTHON ?? "",
+    });
+    return createHash("sha256").update(material).digest("hex").slice(0, 32);
+  }
+
+  private readCachedCheck(key: string, repo: RepoRef, label: string): CheckReport | null {
+    let report: CheckReport;
+    try {
+      report = JSON.parse(fs.readFileSync(this.store.artifact(`checks/cache/${key}.json`), "utf8")) as CheckReport;
+    } catch {
+      return null;
+    }
+    if (!report || report.commit !== (repo.commit ?? "")) return null;
+    if (report.status === "unavailable" || report.checks?.some((check) => check.status === "unavailable" || check.status === "timeout")) return null;
+    const copy = structuredClone(report);
+    copy.report_path = this.store.artifact(`checks/${safeCheckLabel(label)}/report.json`);
+    this.store.writeJson(`checks/${safeCheckLabel(label)}/report.json`, copy);
+    return copy;
+  }
+
   async check(repo: RepoRef, label: string): Promise<CheckReport> {
     await this.init();
     const empty = (status: CheckReport["status"]): CheckReport => ({
@@ -1144,45 +1179,61 @@ export class GitWorkspace implements Workspace {
     if (changed.status !== 0) return empty("unavailable");
     const changedFiles = changed.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
     if (!changedFiles.length) return empty("ok");
-    const cacheKey = `${repo.commit}:${changedFiles.slice().sort().join(",")}`;
-    const cached = this.checkCache.get(cacheKey);
-    if (cached) return cached;
     const specs = languageSpecs(this.adapter);
     const languages = detectLanguages(changedFiles, specs);
     if (!languages.length) return empty("failed");
-    const checkHome = this.store.path("checks", safeName(label), "home");
-    fs.mkdirSync(checkHome, { recursive: true });
-    const report = runChecks(this.store, repo, label, specs, languages, changedFiles);
-    // LSP is an optional semantic diagnostic. It is advisory unless the target
-    // adapter explicitly requires it. It never edits the worktree.
+    const lspSpecs: Record<string, LspSpec> = {};
     for (const language of languages) {
       const lsp = this.adapter?.languages?.[language]?.lsp;
-      if (!lsp) continue;
-      const started = Date.now();
-      const result = await lspDiagnostics(repo.path, {
-        ...lsp,
-        env: { ...(lsp.env ?? {}), HOME: checkHome, TMPDIR: path.join(checkHome, "tmp") },
-      }, changedFiles);
-      const severity = lsp.severity ?? "advisory";
-      report.checks.push({
-        id: `lsp-${language}`,
-        command: lsp.command,
-        status: result.status === "ok" ? "ok" : result.status,
-        severity,
-        exit_code: null,
-        stdout: "",
-        stderr: result.stderr,
-        duration_s: (Date.now() - started) / 1000,
+      if (lsp) lspSpecs[language] = lsp;
+    }
+    const cacheKey = this.checkCacheKey(repo, changedFiles, specs, lspSpecs);
+    const memory = this.checkCache.get(cacheKey);
+    if (memory) {
+      const copy = structuredClone(memory);
+      copy.report_path = this.store.artifact(`checks/${safeCheckLabel(label)}/report.json`);
+      this.store.writeJson(`checks/${safeCheckLabel(label)}/report.json`, copy);
+      this.checkCache.set(cacheKey, copy);
+      try { this.checkout(repo.commit, true); } catch { /* report remains authoritative */ }
+      return copy;
+    }
+    const cached = this.readCachedCheck(cacheKey, repo, label);
+    if (cached) {
+      this.checkCache.set(cacheKey, cached);
+      try { this.checkout(repo.commit, true); } catch { /* report remains authoritative */ }
+      return cached;
+    }
+    const mode = checkWorkerMode();
+    const workerDir = checkWorkerDir(this.root);
+    const runRoot = path.resolve(this.root);
+    let report: CheckReport;
+    if (mode !== "off" && checkWorkerReady(workerDir)) {
+      report = await runCheckInWorker(workerDir, {
+        root: runRoot,
+        repo,
+        label,
+        specs,
+        languages,
+        changedFiles,
+        lsp: lspSpecs,
+        timeoutMs: checkTimeoutMs(specs, languages, changedFiles, lspSpecs),
       });
-      if (severity === "required" && result.status !== "ok") report.status = "failed";
-      this.store.writeText(`checks/${safeName(label)}/lsp-${language}.log`, JSON.stringify(result, null, 2));
+    } else if (mode === "required") {
+      report = workerUnavailableReport(repo, `check worker is not ready at ${workerDir}`);
+    } else {
+      report = await runCheckJob(this.store, repo, label, specs, languages, changedFiles, lspSpecs);
     }
     // Checks may create caches or generated files. The measured commit, not a
     // dirty check worktree, is the candidate that goes to the runner.
     try { this.checkout(repo.commit, true); } catch { /* report remains authoritative */ }
-    report.report_path = this.store.artifact(`checks/${safeName(label)}/report.json`);
-    this.store.writeJson(`checks/${safeName(label)}/report.json`, report);
-    this.checkCache.set(cacheKey, report);
+    report.report_path = this.store.artifact(`checks/${safeCheckLabel(label)}/report.json`);
+    this.store.writeJson(`checks/${safeCheckLabel(label)}/report.json`, report);
+    // An unavailable or timed-out tool is an infrastructure signal, not a
+    // stable property of the candidate; do not replay it from the cache.
+    if (report.status !== "unavailable" && !report.checks.some((check) => check.status === "unavailable" || check.status === "timeout")) {
+      this.checkCache.set(cacheKey, report);
+      this.store.writeJson(`checks/cache/${cacheKey}.json`, report);
+    }
     return report;
   }
 

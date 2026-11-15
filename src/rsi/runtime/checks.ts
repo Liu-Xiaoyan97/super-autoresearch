@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import type { Problem, RepoRef } from "../types.ts";
+import { lspDiagnostics, type LspSpec } from "./lsp.ts";
 import { ArtifactStore } from "./store.ts";
 
 export type CheckSeverity = "required" | "advisory";
@@ -123,9 +124,15 @@ export function loadAdapter(repoPath: string, problem: Problem): AdapterSpec | n
   } catch { /* no target adapter directory */ }
   const parsed = candidates.map((file) => readJson(file) as AdapterSpec | null).filter(Boolean) as AdapterSpec[];
   if (!parsed.length) return null;
-  return parsed.find((item) => item.problem === problem.id) ??
-    parsed.find((item) => item.source_fixture && item.source_fixture.includes(problem.id)) ??
-    parsed[0];
+  const exact = parsed.filter((item) => item.problem === problem.id);
+  if (exact.length) return exact.length === 1 ? exact[0] : null;
+  const fixture = parsed.filter((item) => item.source_fixture && item.source_fixture.includes(problem.id));
+  if (fixture.length) return fixture.length === 1 ? fixture[0] : null;
+  // A generic manifest is valid only when it is the sole candidate and does not
+  // claim another problem. Choosing the first of several would bind a run to an
+  // arbitrary target.
+  if (parsed.length === 1 && !parsed[0].problem && !parsed[0].source_fixture) return parsed[0];
+  return null;
 }
 
 export function languageSpecs(adapter: AdapterSpec | null): Record<string, LanguageSpec> {
@@ -159,7 +166,25 @@ export function detectLanguages(
   return [...out].sort();
 }
 
-const SAFE_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"] as const;
+const SAFE_ENV_KEYS = [
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "LANG",
+  "LC_ALL",
+  "TZ",
+  // Toolchain homes are configuration, not credentials. Without them the
+  // image's rustup/go proxies cannot find an installed compiler after HOME is
+  // isolated to the check artifact directory.
+  "RUSTUP_HOME",
+  "CARGO_HOME",
+  "RUSTUP_TOOLCHAIN",
+  "GOTOOLCHAIN",
+  "GOPATH",
+  "GOBIN",
+  "GOCACHE",
+  "GOMODCACHE",
+] as const;
 
 function safeEnv(extra: Record<string, string> | undefined, home?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
@@ -188,6 +213,16 @@ function expand(command: string[], repo: RepoRef): string[] {
     .replaceAll("{python}", process.env.RSI_PYTHON || "python3"));
 }
 
+function applies(check: CheckSpec, changedFiles: string[]): boolean {
+  if (!check.paths?.length) return true;
+  return changedFiles.some((file) => check.paths!.some((glob) =>
+    file === glob || file.startsWith(`${glob.replace(/\/$/, "")}/`)));
+}
+
+export function safeCheckLabel(label: string): string {
+  return label.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "checks";
+}
+
 /** Run the selected checks and persist every result under artifacts/checks/<label>/. */
 export function runChecks(
   store: ArtifactStore,
@@ -198,15 +233,14 @@ export function runChecks(
   changedFiles: string[],
 ): CheckReport {
   const checks: CheckResult[] = [];
-  const safe = label.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "checks";
+  const safe = safeCheckLabel(label);
   const checkHome = path.join(store.path("checks", safe), "home");
   fs.mkdirSync(checkHome, { recursive: true });
   for (const language of languages) {
     const spec = specs[language];
     if (!spec) continue;
     for (const check of spec.checks) {
-      if (check.paths?.length && !changedFiles.some((file) => check.paths!.some((glob) =>
-        file === glob || file.startsWith(`${glob.replace(/\/$/, "")}/`)))) continue;
+      if (!applies(check, changedFiles)) continue;
       const cwd = path.resolve(repo.path, check.cwd ?? ".");
       if (!inside(repo.path, cwd)) {
         checks.push({
@@ -253,9 +287,75 @@ export function runChecks(
   const root = store.path("checks", safe);
   fs.mkdirSync(root, { recursive: true });
   for (const check of checks) {
-    const file = path.join(root, `${check.id}.log`);
+    const file = path.join(root, `${safeCheckLabel(check.id)}.log`);
     fs.writeFileSync(file, `command: ${check.command.join(" ")}\nstatus: ${check.status}\nexit: ${check.exit_code}\n\n${check.stdout}\n${check.stderr}\n`, "utf8");
   }
+  store.writeJson(`checks/${safe}/report.json`, report);
+  return report;
+}
+
+/** Upper bound for one check job, including optional LSP diagnostics. */
+export function checkTimeoutMs(
+  specs: Record<string, LanguageSpec>,
+  languages: string[],
+  changedFiles: string[],
+  lspSpecs: Record<string, LspSpec> = {},
+): number {
+  let total = 0;
+  for (const language of languages) {
+    const spec = specs[language];
+    if (!spec) continue;
+    for (const check of spec.checks) {
+      if (applies(check, changedFiles)) total += Math.max(1, check.timeoutS) * 1000;
+    }
+    if (lspSpecs[language]) total += Math.max(1, changedFiles.length) * 8000 + 15_000;
+  }
+  return Math.min(total + 60_000, 3_600_000);
+}
+
+/**
+ * Run deterministic checks and optional LSP diagnostics as one job.
+ *
+ * The local executor and the secret-free worker share this function, so their
+ * reports and artifacts are identical. LSP stays advisory unless the target
+ * adapter marks that language's server as required.
+ */
+export async function runCheckJob(
+  store: ArtifactStore,
+  repo: RepoRef,
+  label: string,
+  specs: Record<string, LanguageSpec>,
+  languages: string[],
+  changedFiles: string[],
+  lspSpecs: Record<string, LspSpec> = {},
+): Promise<CheckReport> {
+  const report = runChecks(store, repo, label, specs, languages, changedFiles);
+  const safe = safeCheckLabel(label);
+  const checkHome = store.path("checks", safe, "home");
+  fs.mkdirSync(path.join(checkHome, "tmp"), { recursive: true });
+  for (const language of languages) {
+    const lsp = lspSpecs[language];
+    if (!lsp) continue;
+    const started = Date.now();
+    const result = await lspDiagnostics(repo.path, {
+      ...lsp,
+      env: { ...(lsp.env ?? {}), HOME: checkHome, TMPDIR: path.join(checkHome, "tmp") },
+    }, changedFiles);
+    const severity = lsp.severity ?? "advisory";
+    report.checks.push({
+      id: `lsp-${language}`,
+      command: lsp.command,
+      status: result.status === "ok" ? "ok" : result.status,
+      severity,
+      exit_code: null,
+      stdout: "",
+      stderr: result.stderr,
+      duration_s: (Date.now() - started) / 1000,
+    });
+    if (severity === "required" && result.status !== "ok") report.status = "failed";
+    store.writeText(`checks/${safe}/lsp-${language}.log`, JSON.stringify(result, null, 2));
+  }
+  report.report_path = store.artifact(`checks/${safe}/report.json`);
   store.writeJson(`checks/${safe}/report.json`, report);
   return report;
 }

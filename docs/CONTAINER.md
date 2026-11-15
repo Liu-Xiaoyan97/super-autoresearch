@@ -151,6 +151,32 @@ Manual triggers:
 `container/ssh/` is gitignored. `./container/up.sh run` creates it from the host
 `~/.ssh` if it is missing.
 
+## Deterministic check worker
+
+`container/compose.yaml` starts two services:
+
+| Service | Credentials | Network | Writable mounts |
+|---|---|---|---|
+| `pi-agent` | `OPENCODE_API_KEY`, SSH | host proxy | `/workspace/RSI`, `/repos/coral-rsi` |
+| `check-worker` | none | `none` | `runs/` only |
+
+The worker runs `src/rsi/runtime/check-worker.ts` and executes target-owned
+checks plus optional LSP diagnostics. It reads RSI source read-only and cannot
+read `/root/.ssh` or the provider key.
+
+`pi-agent` uses `RSI_CHECK_WORKER=auto` by default. Set
+`RSI_CHECK_WORKER=required` in `container/.env` to fail closed when the worker is
+not ready; set `off` to use the main container only.
+
+```bash
+./container/up.sh logs check-worker
+./container/up.sh exec ls runs/.check-worker
+```
+
+The worker never installs tools at startup. Its Python, Rust and Go toolchains
+come from the image, and `bootstrap.sh` verifies the same binaries in the main
+container.
+
 ## External target repositories
 
 Set the host workspace and container mount in `container/.env`:

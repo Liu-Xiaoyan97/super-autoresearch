@@ -1,11 +1,12 @@
 # 确定性代码层 — 交接文档
 
-状态：实现交接。确定性核心已经加入：
-`src/rsi/runtime/checks.ts`、`src/rsi/runtime/lsp.ts`、`GitWorkspace.check`、
-coder 检查门，以及内嵌的 Python/Rust/Go 容器工具链。
-本文档记录设计理由和独立评审决策。
+状态：实现完成。确定性核心、模型-facing LSP 工具和 secret-free check worker
+已经加入：`src/rsi/runtime/checks.ts`、`src/rsi/runtime/lsp.ts`、
+`src/rsi/runtime/lsp-tools.ts`、`src/rsi/runtime/check-worker.ts`、
+`GitWorkspace.check`、coder 检查门，以及内嵌的 Python/Rust/Go 容器工具链。
+本文档记录设计理由、独立评审决策和验证证据。
 
-## Progress snapshot — 2026-11-15 15:21 CST
+## Progress snapshot — 2026-11-15 16:00 CST
 
 已完成：
 
@@ -18,18 +19,30 @@ coder 检查门，以及内嵌的 Python/Rust/Go 容器工具链。
 - samples-only parent proxy、parentless evidence、缺失 per-seed metrics 拦截；
 - dirty tracked worktree 不参与测量；
 - bounded iteration 转发 check，并消费 coder 返回的 failed evidence；
-- `src/rsi/runtime/lsp.ts`：可选只读 LSP diagnostics；
+- `src/rsi/runtime/lsp.ts`：只读 LSP diagnostics 与 definition/references/
+  hover/documentSymbols/workspaceSymbols 客户端；
+- `src/rsi/runtime/lsp-tools.ts`：六个模型-facing 只读 LSP 工具；只对
+  `code.*`/`engineer.*`/`ablation.*`/`rebuttal.*` 暴露；路径逃逸拒绝；
+- `src/rsi/runtime/check-worker.ts` 与 `check-client.ts`：secret-free check
+  worker，文件邮箱、ready 检测、超时/取消、越界拒绝；
+- `container/compose.yaml`：`check-worker` 服务；无 provider key、无 SSH、
+  `network_mode: none`、RSI 源码只读、只有 `runs/` 可写；主容器默认
+  `RSI_CHECK_WORKER=auto`；
+- adapter 多清单按 `problem`/`source_fixture` 唯一匹配；歧义 fail closed；
 - `container/Dockerfile` 内嵌 pyright/ruff/pytest/Rust/Go/gopls，镜像已重建；
-- `handoff.md`、`docs/Deterministic_code.md`、README 入口。
+- 运行中的 `pi-agent-rsi` 与 `pi-agent-rsi-check-worker` 已切换到新镜像；
+- `handoff.md`、`docs/Deterministic_code.md`、`docs/CONTAINER.md`、README 入口。
 
 最新验证：
 
 ```text
-122 tests pass
 npx tsc --noEmit 通过
+完整套件：141 pass（0 fail）
+新增/修改测试：24 pass（adapter, worker, checks, LSP, Pi worker）
+容器内定向测试：LSP/worker/adapter 通过
 ```
 
-镜像验证：
+容器验证：
 
 ```text
 pyright 1.1.414
@@ -39,15 +52,29 @@ rustc 1.99.0
 rust-analyzer 1.99.0
 go 1.27.2
 gopls v0.24.0
+
+check-worker ready; mailbox /workspace/RSI/runs/.check-worker
+worker: no OPENCODE_API_KEY, /root/.ssh absent
+worker: /workspace/RSI/src/rsi/types.ts read-only, /workspace/RSI/runs writable
+
+worker probe: python compile + pyright-langserver ok
+worker probe: cargo check --offline ok
+worker probe: go build ok
+LSP probe: pyright / rust-analyzer / gopls diagnostics ok
+
+check env preserves RUSTUP_HOME, CARGO_HOME, RUSTUP_TOOLCHAIN,
+GOTOOLCHAIN, GOPATH, GOBIN, GOCACHE, GOMODCACHE after HOME isolation.
 ```
 
 尚未完成 / 风险：
 
-- 当前 check/LSP 仍在带凭据的主容器中运行；`HOME`/`TMPDIR` 已隔离，
-  但没有完整 filesystem/network sandbox；secret-free worker 未实现。
-- LSP 是可选 diagnostics 路径；模型-facing definition/references 工具尚未暴露。
-- 运行中的 `pi-agent-rsi` 容器仍是旧镜像；新镜像 `pi-agent:local` 已构建但未自动切换。
-- 最新代码改动尚未提交（本快照写入时会与下文提交一起提交）。
+- Worker 的边界是“无凭据、无网络、RSI 源码只读、只有 `runs/` 可写”；
+  它不是嵌套 VM。目标 check 命令仍可修改 `runs/` 内的运行数据；隔离目标
+  是凭据和网络，不是恶意 target 代码的完整性证明。
+- Worker 通过文件邮箱通信；worker 崩溃时 `ready.json` 可能残留。主进程会
+  等待到 job timeout，然后 required check 返回 `unavailable`，不会静默通过。
+- LSP 工具只绑定 worker 的 target 目录，不绑定 candidate commit；候选改动
+  仍必须通过 patch/commit 流程。
 
 仓库：RSI（`git rev-parse --show-toplevel`）。
 目标仓库身份：`Problem.repo`。不得使用固定绝对路径。
@@ -233,15 +260,22 @@ patch
 
 | 文件 | 角色 |
 |---|---|
-| `src/rsi/runtime/workspace.ts` | `GitWorkspace.writePatch`、`run`、worktree、provenance 守卫 |
+| `src/rsi/runtime/workspace.ts` | `GitWorkspace.writePatch`、`run`、worktree、provenance 守卫、check 路由 |
+| `src/rsi/runtime/checks.ts` | CheckSpec、语言检测、`runChecks`、`runCheckJob` |
+| `src/rsi/runtime/lsp.ts` | 只读 LSP 客户端：diagnostics/definition/references/hover/symbols |
+| `src/rsi/runtime/lsp-tools.ts` | 模型-facing 只读 LSP 工具 |
+| `src/rsi/runtime/check-protocol.ts` | worker request/result 契约 |
+| `src/rsi/runtime/check-client.ts` | worker 模式、ready 检测、请求/等待/取消 |
+| `src/rsi/runtime/check-worker.ts` | secret-free worker 进程 |
 | `src/rsi/agents/coding.ts` | subset/full/ablation/rebuttal coders、`unappliedEvidence` |
 | `src/rsi/agents/engineering.ts` | subset/full engineer |
 | `src/rsi/agents/critics.ts` | subset/full critics；确定性门 |
 | `src/rsi/core/orchestrator.ts` | 代码循环、科学循环、journal、adoption |
 | `src/rsi/core/state.ts` | checkpoint、invalid evidence 恢复 |
-| `src/rsi/providers/superagent.ts` | PiWorker 只读工具白名单 |
+| `src/rsi/providers/superagent.ts` | PiWorker 只读工具白名单、LSP 工具注入 |
 | `src/rsi/iteration.ts` | 目标 adapter/受保护路径执行路径 |
 | `container/Dockerfile` | 当前容器工具链 |
+| `container/compose.yaml` | 主容器 + secret-free check worker |
 | `docs/Deterministic_code.md` | 详细目标契约 |
 
 当前实现限制：
@@ -249,9 +283,11 @@ patch
 - `src/rsi/runtime/checks.ts` 提供 target/builtin CheckSpec 执行；
 - `GitWorkspace.check` 检测变更文件语言，并运行 required/advisory 检查；
 - 所有 coder/engineer scope 把失败的 required 检查拒绝为 failed evidence；
-- `src/rsi/runtime/lsp.ts` 提供可选只读诊断；
+- `src/rsi/runtime/lsp.ts` 提供只读诊断和读取查询；
+- `lsp-tools.ts` 把同一客户端暴露为代码 worker 工具；路径逃逸拒绝；
 - `container/Dockerfile` 内嵌 pyright、pyright-langserver、ruff、pytest、
   rustc/cargo/rust-analyzer 和 Go/gopls；
+- `container/compose.yaml` 的 `check-worker` 无凭据、无网络，RSI 源码只读；
 - 目标 `.rsi/adapter/*.json` 仍是目标专属 check/LSP 配置的来源。
 
 LSP 诊断路径是可选的。当前只在选中的目标 adapter 声明 `lsp` 块时运行。
@@ -282,8 +318,7 @@ LSP 诊断路径是可选的。当前只在选中的目标 adapter 声明 `lsp` 
         {"id":"lint","command":["ruff","check","."],"timeoutS":60,"severity":"advisory"},
         {"id":"tests","command":["pytest","-q","-x"],"timeoutS":300,"severity":"required"}
       ],
-      "lsp": {"command":["pyright-langserver","--stdio"],"root":"."},
-      "toolchain": {"image":"rsi-toolchain-python:local","workdir":"/workspace/repo"}
+      "lsp": {"command":["pyright-langserver","--stdio"],"root":"."}
     }
   }
 }
@@ -306,7 +341,6 @@ export interface CheckSpec {
   timeoutS: number;
   severity: CheckSeverity;
   paths?: string[];
-  parser?: "text" | "json" | "sarif";
 }
 
 export interface LanguageSpec {
@@ -318,10 +352,9 @@ export interface LanguageSpec {
     command: string[];
     root?: string;
     env?: Record<string, string>;
+    severity?: CheckSeverity;
     initializationOptions?: Record<string, unknown>;
   };
-  testSelection?: Array<{ globs: string[]; command: string[] }>;
-  toolchain?: { image?: string; workdir?: string; env?: Record<string, string> };
 }
 
 export interface CheckResult {
@@ -342,8 +375,12 @@ export interface CheckReport {
   changed_files: string[];
   status: "ok" | "failed" | "unavailable";
   checks: CheckResult[];
+  report_path?: string;
 }
 ```
+
+`parser`、`testSelection` 和 per-language `toolchain.image` 是未来扩展，不在当前
+core 接口中。
 
 ### 5.3 Workspace 扩展
 
@@ -366,19 +403,20 @@ interface Workspace {
 交付物：
 
 ```text
-src/rsi/runtime/adapter.ts
-src/rsi/runtime/language.ts
-tests/language.test.ts
+src/rsi/runtime/checks.ts  (loadAdapter/languageSpecs/detectLanguages)
+tests/adapter.test.ts
 ```
 
 要求：
 
 - 加载 `.rsi/adapter.json` 和 `.rsi/adapter/*.json`；
-- 存在多个清单时，依据 `problem`/`source_fixture` 选择；
-- 校验 schema 和必需字段；
+- 存在多个清单时，依据 `problem` 唯一匹配；
+- 没有唯一 `problem` 时，依据 `source_fixture` 唯一匹配；
+- 仍不唯一 → `null`（fail closed），不选第一个；
+- 只有一个无身份声明的通用清单时使用它；
 - 从变更文件和清单检测语言；
 - 支持多语言项目；
-- adapter 缺失 → `unavailable`，不得静默通过；
+- 内置 Python/Rust/Go provider 作为 adapter 缺失时的默认；
 - 不做绝对路径假设。
 
 ### 6.2 CheckRunner
@@ -387,6 +425,8 @@ tests/language.test.ts
 
 ```text
 src/rsi/runtime/checks.ts
+src/rsi/runtime/check-client.ts
+src/rsi/runtime/check-worker.ts
 ```
 
 要求：
@@ -399,14 +439,17 @@ src/rsi/runtime/checks.ts
 - 不使用 GPU；
 - 默认不使用网络；
 - 不访问 worktree 之外的目标路径；
-- 按 commit + 变更文件 + 命令 + env + toolchain 缓存。
+- 按 commit + 变更文件 + specs + LSP + `RSI_PYTHON` 缓存；
+- `auto`/`required` 模式把同一 job 交给 secret-free worker；
+- worker 缺失/超时/越界 → required `unavailable`。
 
 ### 6.3 ImplementationGate
 
 交付物：
 
 ```text
-src/rsi/runtime/gate.ts
+src/rsi/runtime/checks.ts  (runCheckJob)
+src/rsi/runtime/workspace.ts  (GitWorkspace.check)
 ```
 
 要求：
@@ -444,7 +487,8 @@ src/rsi/agents/engineering.ts
 
 ```text
 src/rsi/runtime/lsp.ts
-optional diagnostics integration in GitWorkspace.check
+src/rsi/runtime/lsp-tools.ts
+tests/lsp.test.ts
 ```
 
 要求：
@@ -457,7 +501,10 @@ optional diagnostics integration in GitWorkspace.check
 - abort 清理；
 - 只读。不得直接编辑文件；
 - Python 使用 `pyright-langserver`，Rust 使用 `rust-analyzer`，Go 使用 `gopls`；
-- LSP 不可用时记录。required/advisory 由 adapter 决定。
+- LSP 不可用时记录。required/advisory 由 adapter 决定；
+- 六个读取工具只对 coder/engineer scope 暴露；
+- 路径逃逸（含 symlink）拒绝；
+- 不发送 rename/format/applyEdit/executeCommand。
 
 ### 6.6 容器开箱可用
 
@@ -487,21 +534,33 @@ go / gopls
 
 ### 6.6.1 Current execution boundary
 
-The embedded tools are available in the main `pi-agent:local` image. Checks and
-LSP currently run from that container, with `HOME`/`TMPDIR` redirected to the
-check artifact directory and API/SSH environment variables not inherited.
-This is **not a complete filesystem or network sandbox**: the target process can
-still read mounts visible to the main container and can attempt network access.
+The embedded tools are available in both `pi-agent:local` services. The default
+container path is the secret-free worker:
 
-The secret-free isolated worker is the recommended hardening step but is not
-implemented in this change. Do not claim filesystem/network isolation until that
-worker exists.
+- `container/compose.yaml` starts `check-worker` with no `OPENCODE_API_KEY`, no
+  SSH mount, `network_mode: "none"`, `cap_drop: ALL` and
+  `no-new-privileges`;
+- `/workspace/RSI` is read-only; only `/workspace/RSI/runs` is writable;
+- the worker runs `src/rsi/runtime/check-worker.ts`;
+- the main process submits jobs through `runs/.check-worker/` and waits for a
+  report;
+- `RSI_CHECK_WORKER=auto|required|off` selects worker, fail-closed worker, or
+  local execution.
+
+The main container still keeps a local execution path. That path has
+`HOME`/`TMPDIR` redirected to the check artifact directory and does not inherit
+API/SSH environment variables, but it is not a filesystem or network sandbox.
+
+The worker boundary is not a nested VM. Target check commands can write inside
+`runs/`; the worker prevents credential and network access, not arbitrary
+tampering by malicious target code.
 
 ### 6.7 失败语义
 
 - required 检查失败 → `failed evidence` → `invalid` → 修复；
 - advisory 失败 → 记录并继续；
 - required 不可用 → failed evidence（fail closed）；advisory 不可用 → 明确记录并继续；
+- worker 缺失/超时/越界 → required `unavailable`；
 - 失败的检查永不进入 `evaluated_ids`、否证、候选 journal；
 - 运行时失败仍为 `SubsetCritic`/`FullSetCritic` invalid；
 - 任何确定性检查不得覆盖 AI 输出或科学算术。
@@ -518,7 +577,11 @@ worker exists.
 - 超时；
 - unavailable；
 - 缓存；
-- LSP 不可用/超时记录（fake server fixture is an optional follow-up）；
+- LSP diagnostics、definition、references、hover、documentSymbols、
+  workspaceSymbols；
+- LSP 路径逃逸拒绝；
+- LSP 不可用/超时记录；
+- worker required 成功/失败、越界拒绝、缺失 fail closed；
 - baseline 空 patch；
 - full/rebuttal 仅协议 patch；
 - h6 回归仍然通过；
@@ -541,10 +604,11 @@ node --test tests/*.test.ts
 | 实现失败是 unknown | `ca2ba8d`；`unappliedEvidence`；`tests/provenance.test.ts`；`trace.invalid` 处理 |
 | 不污染候选 journal | `4f3e61d`；`journalCandidates` 过滤 invalid verdict/trace/sample |
 | 恢复不得信任旧代理 | `c772b42`；`ResearchState.fromDict` 检查最终证据并清除依赖产物 |
-| GPU 之前先编译/测试 | h6 + 计划的 `ImplementationGate`；避免把 subset/full 预算花在坏代码上 |
+| GPU 之前先编译/测试 | h6 + `ImplementationGate`；避免把 subset/full 预算花在坏代码上 |
 | 检查由目标仓库拥有 | 目标仓库拥有其构建系统。RSI 不得硬编码 Python 或包名 |
-| LSP 只读 | 防止绕过 `writePatch`/git commit/provenance。`PiWorker` 当前只允许 read/grep/find/ls |
+| LSP 只读 | 防止绕过 `writePatch`/git commit/provenance。诊断和读取工具都只发读取请求；路径逃逸拒绝 |
 | 容器开箱可用 | 用户要求。工具必须在执行镜像中，不得启动后手工安装 |
+| 检查无凭据、无网络 | `check-worker` 无 API key/SSH，`network_mode: none`，RSI 源码只读 |
 | 科学阶段保留 | 确定性检查证明代码有效性，不证明指标改进、完整协议、归因或结论 |
 
 ---
@@ -567,19 +631,28 @@ node --test tests/*.test.ts
 12. samples-only parent proxy 也受同一 provenance 规则约束。
 13. dirty tracked worktree 不测量。
 14. bounded iteration 消费 coder failed evidence。
-15. LSP 默认 advisory；完整隔离 worker 仍是后续工作。
+15. LSP 默认 advisory；required 由每个语言的 `lsp.severity` 决定。
+16. 模型-facing LSP 工具只读，绑定 worker 目标目录，路径逃逸拒绝。
+17. 确定性检查交给 secret-free `check-worker`；compose 主容器默认 `auto`，
+    代码缺省 `off`，`required` fail closed。
+18. adapter 多清单按 `problem` 唯一匹配，再按 `source_fixture` 唯一匹配；
+    仍不唯一则 fail closed。
+19. check report 写入 `artifacts/checks/<label>/report.json`，同时按
+    commit + changed files + specs + LSP + `RSI_PYTHON` 的哈希持久化到
+    `artifacts/checks/cache/`，resume 可复用。
 
-### 评审者的待定问题
+### 已解决的评审问题
 
-- `CheckReport` 对 resume 和审计是否足够，还是应按 `TraceCheckpoint` 存储？
-- 科学运行时缺少 adapter 应 fail-open 还是 fail-closed？
-  当前实现：不支持的文件变更和 required 工具不可用为 fail closed。
-  仅协议 patch（无文件变更）不做代码检查。
-- required 检查应在主容器运行，还是在无密钥的隔离 worker 运行？
-- 多语言 Python/Rust/Go 项目如何选择公共构建命令？
-- Rust/Go 的最小安全且有意义 smoke 是什么？
-- 目标清单发现如何从多个 `.rsi/adapter/*.json` 中选择？
-- LSP 诊断是否可以对一种语言 required，对另一种 advisory？
+- `CheckReport` 对 resume/audit 足够：evidence 保存 `check_report` 路径；
+  cache 文件覆盖全部输入，readCachedCheck 会复制到当前 label 并更新路径。
+- 缺少 adapter：内置 Python/Rust/Go provider 继续可用；多个清单无法唯一匹配
+  时 fail closed（`null`）。
+- required 检查运行位置：compose 默认 `auto` 使用 secret-free worker；代码缺省
+  `off`；主容器本地执行是显式回退。
+- 多语言公共构建命令：由 adapter 的每语言 `checks` 表达；core 不猜。
+- Rust/Go smoke：由目标 adapter 声明；builtin 只提供 check/test 基线。
+- 清单发现：`problem` → `source_fixture` → 唯一通用清单；否则 fail closed。
+- LSP required/advisory：按语言独立配置 `lsp.severity`。
 
 ---
 
@@ -595,13 +668,19 @@ node --test tests/*.test.ts
 8. 容器为 Python/Rust/Go 提供可用的语言服务器。
 9. 现有 Python 测试和 h6 回归保持通过。
 10. 目标实验仍拥有真实的 train/eval/checkpoint 证据。
+11. secret-free worker 无 provider key、无 SSH、无网络，RSI 源码只读。
+12. worker 缺失/超时/越界时 required check 为 `unavailable`。
+13. 模型-facing LSP 工具只读，路径逃逸拒绝。
+14. resume 从持久化 check report cache 复用结果。
 
 ---
 
 ## 10. 当前状态
 
-- 确定性代码**尚未**实现。
-- 当前 provenance 守卫已实现并推送。
-- 本交接必须由独立 Super Agent 在最终实现之前评审。
-- 最终变更必须同时更新 `docs/Deterministic_code.md`、本交接、代码、测试
-  以及容器 `bootstrap.sh`/`Dockerfile`。
+- 确定性代码、模型-facing LSP 工具和 secret-free check worker **已实现**。
+- 运行中的主容器和 worker 已切换到新镜像。
+- 当前变更已通过类型检查和定向测试；完整套件结果记录在上方快照。
+- 仍需在真实目标仓库上执行一次 Python/Rust/Go adapter smoke，以确认
+  目标声明命令与依赖环境；这属于目标仓库验证，不是 RSI 代码缺失。
+- 最终变更同时更新了 `docs/Deterministic_code.md`、`docs/CONTAINER.md`、
+  README、本交接、代码、测试和 `container/compose.yaml`。

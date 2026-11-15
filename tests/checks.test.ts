@@ -116,3 +116,47 @@ test("a failed check never invokes the experiment runner", async () => {
   await evidence;
   assert.equal(runs, 0);
 });
+
+test("check reports persist across a resumed workspace", async () => {
+  const counter = path.join(tempDir("rsi-check-count-"), "runs.log");
+  const repo = repoWithAdapter([{
+    id: "count",
+    command: ["sh", "-c", `printf x >> ${counter}`],
+    env: { RSI_CHECK_COUNTER: counter },
+  }]);
+  const problem = makeProblem({ id: "check-problem", repo });
+  const runRoot = tempDir("rsi-check-resume-");
+  const config = defaultConfig({ runner: "subprocess" });
+  const first = new GitWorkspace(problem, config, runRoot);
+  const base = await first.baselineRepo();
+  const patch = ["--- a/a.py", "+++ b/a.py", "@@ -1 +1 @@", "-x = 1", "+x = 2"].join("\n");
+  const repoRef = await first.writePatch(base, patch, "h1-subset");
+  const one = await first.check(repoRef, "h1-subset");
+  assert.equal(one.status, "ok");
+  assert.equal(fs.readFileSync(counter, "utf8"), "x");
+
+  const resumed = new GitWorkspace(problem, config, runRoot);
+  const two = await resumed.check(repoRef, "h1-subset-resume");
+  assert.equal(two.status, "ok");
+  assert.equal(fs.readFileSync(counter, "utf8"), "x", "the resumed check must come from the report cache");
+  assert.match(two.report_path ?? "", /h1-subset-resume/);
+});
+
+test("required worker mode fails closed when no worker is ready", async () => {
+  const previousMode = process.env.RSI_CHECK_WORKER;
+  const previousDir = process.env.RSI_CHECK_WORKER_DIR;
+  process.env.RSI_CHECK_WORKER = "required";
+  process.env.RSI_CHECK_WORKER_DIR = path.join(tempDir("rsi-check-missing-"), ".check-worker");
+  try {
+    const { workspace, repoRef } = await candidate([{ id: "ok", command: ["sh", "-c", "exit 0"] }]);
+    const report = await workspace.check(repoRef, "h1-subset");
+    assert.equal(report.status, "unavailable");
+    assert.equal(report.checks[0].id, "check-worker");
+    assert.equal(report.checks[0].status, "unavailable");
+  } finally {
+    if (previousMode === undefined) delete process.env.RSI_CHECK_WORKER;
+    else process.env.RSI_CHECK_WORKER = previousMode;
+    if (previousDir === undefined) delete process.env.RSI_CHECK_WORKER_DIR;
+    else process.env.RSI_CHECK_WORKER_DIR = previousDir;
+  }
+});

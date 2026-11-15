@@ -4,7 +4,8 @@
 subset/full GPU 实验之前，必须通过哪些可执行检查，以及新增目标语言时如何接入。
 
 当前实现已经包含 `writePatch` provenance guard、语言检测、`CheckRunner`、
-`GitWorkspace.check`、coder 集成和只读 LSP diagnostics 客户端。
+`GitWorkspace.check`、coder 集成、只读 LSP 客户端、模型-facing LSP 工具和
+secret-free check worker。
 目标 adapter 可以声明 required/advisory checks；required check 不可用或失败会阻断实验。
 容器镜像已经内置 Python/Rust/Go 的检查工具和语言服务器；`pi-agent:local`
 已在本地重建并用一次性容器验证过工具存在。
@@ -128,7 +129,7 @@ code.<scope> / engineer.<scope>
 
 ```ts
 export interface LanguageSpec {
-  id: "python" | "rust" | "go" | string;
+  id: string;
   extensions: string[];
   manifests?: string[];
 
@@ -138,21 +139,15 @@ export interface LanguageSpec {
     command: string[];
     root?: string;
     env?: Record<string, string>;
+    severity?: "required" | "advisory";
     initializationOptions?: Record<string, unknown>;
-  };
-
-  testSelection?: Array<{
-    globs: string[];
-    command: string[];
-  }>;
-
-  toolchain?: {
-    image?: string;
-    workdir?: string;
-    env?: Record<string, string>;
   };
 }
 ```
+
+`testSelection` 和按语言 `toolchain.image` 是未来扩展，不在当前 core 接口中。
+当前 worker 使用同一镜像；目标需要不同工具时，把命令写进 adapter checks，或在
+目标仓库自己的 CI/devcontainer 中执行。
 
 ### 4.2 CheckSpec
 
@@ -169,9 +164,6 @@ export interface CheckSpec {
 
   /** 只有这些路径变化才运行；空表示由 language detection 决定。 */
   paths?: string[];
-
-  /** text / json / sarif；默认 text。 */
-  parser?: "text" | "json" | "sarif";
 }
 ```
 
@@ -187,12 +179,6 @@ export interface CheckResult {
   stdout: string;
   stderr: string;
   duration_s: number;
-  diagnostics?: Array<{
-    file: string;
-    line?: number;
-    severity: "error" | "warning" | "info";
-    message: string;
-  }>;
 }
 
 export interface CheckReport {
@@ -202,6 +188,7 @@ export interface CheckReport {
   changed_files: string[];
   status: "ok" | "failed" | "unavailable";
   checks: CheckResult[];
+  report_path?: string;
 }
 ```
 
@@ -219,10 +206,17 @@ export interface CheckReport {
 如果没有 adapter：
 
 ```text
-checks = unavailable
+内置 Python/Rust/Go provider 生效
 ```
 
-不能静默认为通过，也不能自动猜测语言。
+多个清单不能按 `problem` 或 `source_fixture` 唯一匹配时：
+
+```text
+adapter = null
+```
+
+这不等于“所有检查通过”。目标专属 smoke/tests 缺失时必须由 adapter 显式声明；
+不能静默认为通过，也不能自动猜测目标身份。
 
 ---
 
@@ -473,30 +467,31 @@ advisory failed
 key：
 
 ```text
-commit
+commit + parent
 + changed files
-+ check command
-+ env
-+ language provider
-+ toolchain image
++ LanguageSpec/checks（命令、env、timeout、severity、paths）
++ LSP spec
++ RSI_PYTHON
 ```
 
 规则：
 
-- 通过结果可复用；
-- failed 结果不复用为成功；
-- timeout 不复用；
+- `ok` 和确定性的 `failed` 结果可复用；
+- `unavailable` / `timeout` 不复用；
+- failed 结果不能复用为成功；
 - cache 必须记录来源 commit；
 - 不跨 commit 复用；
-- 不跨 toolchain 复用。
+- 不跨 specs/LSP/`RSI_PYTHON` 复用。
 
-缓存位置建议：
+缓存位置：
 
 ```text
-runs/<run_id>/artifacts/checks/<label>/
-  report.json
-  <check-id>.stdout.log
-  <check-id>.stderr.log
+runs/<run_id>/artifacts/checks/
+  cache/<hash>.json
+  <label>/
+    report.json
+    <check-id>.log
+    lsp-<language>.log
 ```
 
 ---
@@ -513,11 +508,11 @@ runs/<run_id>/artifacts/checks/<label>/
 
 ### 9.2 当前实现形态
 
-当前实现是 **只读 diagnostics gate**：`GitWorkspace.check` 在 adapter 声明
-`languages.<lang>.lsp` 时启动语言服务器，打开 changed files，收集 diagnostics，
-然后停止 server。
+`GitWorkspace.check` 在 adapter 声明 `languages.<lang>.lsp` 时启动语言服务器，
+打开 changed files，收集 diagnostics，然后停止 server。LSP 默认 advisory。
 
-以下模型-facing LSP 工具是扩展点，不是当前已暴露的工具：
+同一 LSP 客户端也作为只读模型工具暴露给 `code.*`、`engineer.*`、`ablation.*`、
+`rebuttal.*` 的 Pi worker：
 
 ```text
 lsp_diagnostics
@@ -528,7 +523,10 @@ lsp_document_symbols
 lsp_workspace_symbols
 ```
 
-未来暴露时只允许 coding/engineering 任务，并必须绑定到已批准的候选 snapshot。
+工具绑定到 worker 的目标仓库目录。每个路径先解析并检查不能逃逸目录（包括
+symlink）。工具只发送 initialize、didOpen 和读取请求；不发送 rename、format、
+applyEdit 或 executeCommand。代码改动仍必须通过 unified diff → `writePatch` →
+git commit。
 
 ### 9.3 约束
 
@@ -556,9 +554,9 @@ LSP 不可用、超时或 error diagnostic 都会阻断实验。
 当前部署选择是 **一个可直接使用的 `pi-agent-rsi` 镜像**：Python、Rust、Go 的
 检查工具和语言服务器都嵌入镜像，避免用户进入容器后再手工安装。
 
-同时保留可选的隔离执行方式：把同一镜像作为 CPU-only、无 secrets 的 check/LSP
-worker，或按语言拆分 toolchain 镜像。主容器默认仍可用于开箱即用；但目标代码
-检查不应获得 API key、SSH 或无关宿主机目录。
+同时提供 secret-free 执行方式：把同一镜像作为 CPU-only、无 secrets 的 check/LSP
+worker，或按语言拆分 toolchain 镜像。主容器默认使用 `auto`：worker ready 时使用
+worker，否则回退主容器。目标代码检查不应获得 API key、SSH 或无关宿主机目录。
 
 也可以直接使用目标仓库自己的 CI/devcontainer：
 
@@ -576,14 +574,52 @@ nix develop
 - 检查工作区只挂载候选 worktree；
 - 不把 RSI 源码作为可写输入；
 - 检查环境不暴露 API key、SSH 或无关 secrets；
-- 当前已嵌入主镜像，但主容器仍以 root 运行；已隔离 HOME/TMPDIR 和最小 env，
-  仍未实现完整 filesystem/network sandbox；如需严格隔离应使用 secret-free worker。
 - timeout；
 - 资源限制；
 - check 产物不写回目标仓库；
 - 版本固定；
-- 不自动下载语言工具；
-- 当前已嵌入主镜像，但 check/LSP 的完整隔离工作区仍是后续硬化项。
+- 不自动下载语言工具。
+
+### 10.1 Secret-free check worker
+
+`container/compose.yaml` 增加 `check-worker` 服务：
+
+- 与主容器使用同一镜像，但没有 `OPENCODE_API_KEY`；
+- `network_mode: "none"`；
+- 不挂载 `~/.ssh` 或 `container/pi-home`；
+- RSI 源码只读；只有 `runs/` 可写；
+- 以 `cap_drop: ALL` 和 `no-new-privileges` 运行；
+- 启动 `src/rsi/runtime/check-worker.ts`。
+
+主进程通过 `runs/.check-worker/` 的 request/result 文件通信。工作目录包含：
+
+```text
+ready.json
+pending/<id>.json
+running/<id>.json
+results/<id>.json
+cancel/<id>.json
+```
+
+`RSI_CHECK_WORKER` 取值：
+
+```text
+off       # 默认；在主容器内执行
+auto      # worker ready 时使用 worker；否则回退本地
+required  # worker 不 ready 时 fail closed
+```
+
+compose 主容器默认使用 `auto`。worker 缺失、超时或结果无效时，required check
+返回 `unavailable`，不会静默通过。worker 只接受 `runs/<run_id>/` 下的 run root
+和 candidate worktree；越界请求返回错误。
+
+主容器仍保留本地执行路径，便于宿主机测试和没有 worker 的部署。worker 的
+filesystem 边界是“只读 RSI + 只写 runs”，不是嵌套 VM。
+
+检查/LSP 环境只继承 `PATH`、`HOME`、`TMPDIR`、locale 和工具链配置：
+`RUSTUP_HOME`、`CARGO_HOME`、`RUSTUP_TOOLCHAIN`、`GOTOOLCHAIN`、`GOPATH`、
+`GOBIN`、`GOCACHE`、`GOMODCACHE`。`HOME`/`TMPDIR` 重定向到 check 隔离目录；
+API key 和 SSH 变量不继承。
 
 ---
 
@@ -661,24 +697,20 @@ nix develop
 
 LSP 不是 required gate 的默认项；由 adapter 决定 required/advisory。
 
-### Step 5：声明 toolchain
+### Step 5：工具链
 
-```json
-{
-  "toolchain": {
-    "image": "rsi-toolchain-cpp:2026-...",
-    "workdir": "/workspace/repo"
-  }
-}
-```
+当前 core 不在同一 job 中切换 per-language 镜像。新增语言时：
 
-镜像只包含：
+- 使用 worker 镜像已有命令；或
+- 在 adapter `checks` 中调用目标自带的构建脚本；或
+- 在目标仓库自己的 CI/devcontainer 中运行该检查，并把结果作为 advisory。
 
-- 编译器；
-- 构建系统；
-- LSP；
-- 测试工具；
-- 不包含 GPU 驱动和 secrets。
+如果未来加入 `toolchain.image`，它必须保持：
+
+- CPU-only；
+- 无 GPU；
+- 无 secrets；
+- 固定版本。
 
 ### Step 6：添加 fixtures
 
@@ -732,7 +764,9 @@ target-specific smoke
 
 - check fail 不丢 patch；保留 `.diff`、`.apply.log`、check logs；
 - check fail 不消耗 experiment budget；
-- resume 时已通过的 check 可命中 cache；
+- check report 按 commit + changed files + specs + LSP + `RSI_PYTHON` 的哈希
+  持久化到 `artifacts/checks/cache/`；resume 可命中并复制到当前 label；
+- `unavailable`/`timeout` 不写入 cache，避免把基础设施故障当成候选属性；
 - timeout 记录为 `timeout`，不当作科学失败；
 - adapter 或工具缺失记录 `unavailable`；
 - 不把 check failure 写进 scientific refutation；
@@ -768,17 +802,25 @@ target-specific smoke
 
 ### Gate
 
-- [ ] required failure → 0 runner calls
-- [ ] required failure → 0 experiment charge
-- [ ] failed evidence 不进入 `evaluated_ids`
-- [ ] failed evidence 不进入 refutation
-- [ ] failed evidence 不进入 `candidates.jsonl`
-- [ ] advisory failure 可继续
-- [ ] unavailable 显式记录
-- [ ] patch / no-op / parent-commit guard 仍生效
-- [ ] baseline 空 patch 不误判
-- [ ] full/rebuttal protocol-only 可运行 smoke
-- [ ] resume 命中 check cache
+- [x] required failure → 0 runner calls
+- [x] required failure → 0 experiment charge
+- [x] failed evidence 不进入 `evaluated_ids`
+- [x] failed evidence 不进入 refutation
+- [x] failed evidence 不进入 `candidates.jsonl`
+- [x] advisory failure 可继续
+- [x] unavailable 显式记录
+- [x] patch / no-op / parent-commit guard 仍生效
+- [x] baseline 空 patch 不误判
+- [x] full/rebuttal protocol-only 可运行 smoke
+- [x] resume 命中 check cache
+
+### Worker / LSP
+
+- [x] secret-free check worker 无凭据、无网络、RSI 源码只读
+- [x] worker 缺失/超时/越界 → required unavailable
+- [x] 模型-facing LSP 只读工具
+- [x] LSP 路径逃逸拒绝
+- [x] adapter 多清单歧义 → fail closed
 
 ### 多语言
 

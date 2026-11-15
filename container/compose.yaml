@@ -21,6 +21,9 @@ services:
       RSI_SUPERAGENT_POLICY: ${RSI_SUPERAGENT_POLICY:-yolo}
       # Host workspace mounted at /repos in the container.
       RSI_TARGET_REPO: ${RSI_TARGET_REPO:-/repos/coral-rsi}
+      # Deterministic checks run in the secret-free check-worker when it is up.
+      RSI_CHECK_WORKER: ${RSI_CHECK_WORKER:-auto}
+      RSI_CHECK_WORKER_DIR: ${RSI_CHECK_WORKER_DIR:-/workspace/RSI/runs/.check-worker}
       # Project-global baseline store; persisted under the mounted RSI repo so
       # recreating the container does not discard measured baselines.
       RSI_BASELINE_DIR: ${RSI_BASELINE_DIR:-/workspace/RSI/.rsi-baseline}
@@ -39,3 +42,45 @@ services:
     stdin_open: true
     tty: true
     command: ["-lc", "/workspace/RSI/container/bootstrap.sh; exec sleep infinity"]
+    depends_on:
+      check-worker:
+        condition: service_started
+
+  # Secret-free deterministic-check worker. It has no provider key, no SSH
+  # mount, and no network. Only runs/ is writable; the RSI source and target
+  # repository mounts are read-only.
+  check-worker:
+    build:
+      context: ..
+      dockerfile: container/Dockerfile
+    image: pi-agent:local
+    container_name: pi-agent-rsi-check-worker
+    working_dir: /workspace/RSI
+    network_mode: "none"
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 60s
+    user: "0:0"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      HOME: /tmp
+      TMPDIR: /tmp
+      PI_CODING_AGENT_DIR: /tmp/pi-agent
+      PATH: /opt/rsi-tools/bin:/usr/local/cargo/bin:/usr/local/go/bin:/root/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      RUSTUP_HOME: /usr/local/rustup
+      CARGO_HOME: /usr/local/cargo
+      GOTOOLCHAIN: local
+      GOPATH: /root/go
+      GOBIN: /usr/local/bin
+      RSI_CHECK_WORKER_DIR: ${RSI_CHECK_WORKER_DIR:-/workspace/RSI/runs/.check-worker}
+    volumes:
+      - ..:/workspace/RSI:ro
+      - ../runs:/workspace/RSI/runs
+      - ${RSI_EXTERNAL_ROOT:-./external}:/repos:ro
+      - ${RSI_TARGET_HOST:-/Users/liuxiaoyan/workspace/coral-rsi}:/repos/coral-rsi:ro
+    stdin_open: false
+    tty: false
+    command: ["-lc", "exec node --no-warnings src/rsi/runtime/check-worker.ts"]
