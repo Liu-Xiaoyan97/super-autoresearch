@@ -245,13 +245,16 @@ node src/rsi/cli.ts run examples/my_problem.json --mock --strict-directions
 python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
   --problem examples/<project>.json \
   --repo /path/to/independent/target \
-  --name project
+  --name project \
+  --requirements .rsi/test-requirements.txt
 ```
 
 脚本直接写入目标 `experiment_command` 的规范 bench 路径（默认
 `bench/rsi_project_train_eval.py`）和 `.rsi/adapter/project.json`、
-`.rsi/adapter/project.md`。不要在 RSI 内生成安装脚本或项目实现；评测 helper、
-训练修复和项目测试都提交到目标独立候选 ref。
+`.rsi/adapter/project.md`。它同时创建目标自有 `.rsi/venv`，安装
+`.rsi/test-requirements.txt`，并把解释器写入 `languages.python.python`。
+不要在 RSI 内生成安装脚本或项目实现；评测 helper、训练修复和项目测试都提交到
+目标独立候选 ref。
 
 把待验收 Problem 的 `repo_ref` 指向该候选，在 Pi 中执行：
 

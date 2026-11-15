@@ -95,12 +95,15 @@ comment and implement around it — do not edit the contract.
   python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
     --problem examples/<project>.json \
     --repo /path/to/independent/target \
-    --name project
+    --name project \
+    --requirements .rsi/test-requirements.txt
   ```
 
   This writes the canonical target command path (normally
   `bench/rsi_project_train_eval.py`) and target `.rsi/adapter/project.json` /
-  `project.md`. It does not certify readiness or install RSI-side integrations.
+  `project.md`. It also creates the target-owned `.rsi/venv`, installs the
+  declared test requirements, and records `languages.python.python`. It does
+  not certify readiness or install RSI-side integrations.
 - After committing the implementation, point the test Problem's `repo_ref` at
   that candidate. Only a remote real-data tiny end-to-end pass makes the tested
   commit/ref deliverable as a usable `repo_ref`.

@@ -68,6 +68,44 @@ check env preserves RUSTUP_HOME, CARGO_HOME, RUSTUP_TOOLCHAIN,
 GOTOOLCHAIN, GOPATH, GOBIN, GOCACHE, GOMODCACHE after HOME isolation.
 ```
 
+## Target test environment linkage — 2026-11-15
+
+之前目标测试没有和 adapter 绑定：解释器来自全局 `RSI_PYTHON`，目标依赖不在
+adapter 契约里。现在改为目标自有环境：
+
+- adapter `languages.python.python` 声明解释器，例如
+  `.rsi/venv/bin/python`；
+- 相对路径相对**目标源 checkout** 解析，不相对候选 worktree；
+- `skills/rsi-adapter/scripts/scaffold_adapter.py` 创建 adapter 时同步调用
+  `test_env.py`，创建 `.rsi/venv`，安装 `.rsi/test-requirements.txt`，
+  写入 `.rsi/.gitignore`，并生成上述 manifest 字段；
+- `RSI_PYTHON` 只保留为没有 adapter 解释器时的 fallback；
+- `check_version` 升到 3，旧缓存不再复用。
+
+coral 验证：
+
+```text
+target: /repos/coral-rsi
+venv: .rsi/venv (997 MB)
+python: .rsi/venv/bin/python
+torch 2.12.0+cpu, numpy 2.4.6, pyarrow 26.0.1, pytest 9.2.0
+worker probe: compile ok
+worker probe: tests failed with the real h14 shape bug
+worker probe command[0]: /repos/coral-rsi/.rsi/venv/bin/python
+```
+
+风险仍然存在：
+
+- h14 的 shape bug 未修；测试现在会阻断它；
+- typecheck 是 advisory，pyright 仍有 53 个错误；
+- LSP 对 `forward` 的引用误判为 advisory；
+- 目标 `.rsi/test-requirements.txt`、`.rsi/.gitignore` 和 adapter manifest
+  修改还未提交到目标仓库；
+- 依赖变化后需要运行 `test_env.py` 更新 venv；检查缓存不会自动感知
+  `pip install` 的内容变化；
+- Venv 必须在 Linux 主容器中创建；宿主 macOS 的 venv 不能在 worker 中执行。
+
+
 尚未完成 / 风险：
 
 - Worker 的边界是“无凭据、无网络、RSI 源码只读、只有 `runs/` 可写”；

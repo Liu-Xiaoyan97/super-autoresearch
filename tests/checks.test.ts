@@ -11,7 +11,7 @@ import { makeEvidence, makeIdea, makeProblem } from "../src/rsi/types.ts";
 import { makeContext } from "./helpers.ts";
 import { tempDir } from "./helpers.ts";
 
-function repoWithAdapter(checks: unknown[]): string {
+function repoWithAdapter(checks: unknown[], python?: string): string {
   const root = tempDir("rsi-check-repo-");
   fs.mkdirSync(path.join(root, ".rsi"), { recursive: true });
   fs.writeFileSync(path.join(root, "a.py"), "x = 1\n", "utf8");
@@ -20,6 +20,7 @@ function repoWithAdapter(checks: unknown[]): string {
     languages: {
       python: {
         extensions: [".py"],
+        ...(python ? { python } : {}),
         checks: checks.map((check) => ({ timeoutS: 10, severity: "required", ...(check as object) })),
       },
     },
@@ -74,6 +75,27 @@ test("a missing required tool is unavailable, never a silent pass", async () => 
   const report = await workspace.check(repoRef, "h1-subset");
   assert.equal(report.status, "failed");
   assert.equal(report.checks[0].status, "unavailable");
+});
+
+test("the adapter Python resolves from the target source checkout", async () => {
+  const repo = repoWithAdapter(
+    [{ id: "configured-python", command: ["{python}"] }],
+    ".rsi/fake-python",
+  );
+  const fake = path.join(repo, ".rsi", "fake-python");
+  fs.writeFileSync(fake, "#!/bin/sh\nexit 0\n", "utf8");
+  fs.chmodSync(fake, 0o755);
+  const problem = makeProblem({ id: "check-problem", repo });
+  const workspace = new GitWorkspace(problem, defaultConfig({ runner: "subprocess" }), tempDir("rsi-check-run-"));
+  const base = await workspace.baselineRepo();
+  const patch = ["--- a/a.py", "+++ b/a.py", "@@ -1 +1 @@", "-x = 1", "+x = 2"].join("\n");
+  const repoRef = await workspace.writePatch(base, patch, "h1-subset");
+  // The fake interpreter is untracked, so it exists only in the source checkout.
+  assert.equal(fs.existsSync(path.join(repoRef.path, ".rsi", "fake-python")), false);
+  const report = await workspace.check(repoRef, "h1-subset-python");
+  assert.equal(report.status, "ok");
+  assert.equal(report.checks[0].command[0], fs.realpathSync(fake));
+  assert.equal(report.checks[0].status, "ok");
 });
 
 test("a failed check never invokes the experiment runner", async () => {

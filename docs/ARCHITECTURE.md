@@ -221,12 +221,15 @@ The optional deterministic helper is:
 python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
   --problem examples/<project>.json \
   --repo /path/to/independent/target \
-  --name project
+  --name project \
+  --requirements .rsi/test-requirements.txt
 ```
 
 It writes the target's canonical command path (normally
 `bench/rsi_project_train_eval.py`) and `.rsi/adapter/project.json` plus
-`.rsi/adapter/project.md`. Scaffolding alone cannot certify a usable ref.
+`.rsi/adapter/project.md`. It also creates the target-owned `.rsi/venv`,
+installs `.rsi/test-requirements.txt`, and records
+`languages.python.python`. Scaffolding alone cannot certify a usable ref.
 
 Point the test Problem's `repo_ref` at the candidate, then invoke the native Pi
 gate before delivering that ref as usable:

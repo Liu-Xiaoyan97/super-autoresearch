@@ -229,16 +229,17 @@ adapter = null
 {
   "extensions": [".py"],
   "manifests": ["pyproject.toml", "requirements.txt", "setup.py"],
+  "python": ".rsi/venv/bin/python",
   "checks": [
     {
       "id": "compile",
-      "command": ["python3", "-m", "compileall", "-q", "."],
+      "command": ["{python}", "-m", "compileall", "-q", "."],
       "timeoutS": 60,
       "severity": "required"
     },
     {
       "id": "typecheck",
-      "command": ["pyright", "--outputjson"],
+      "command": ["pyright", "--pythonpath", "{python}", "--outputjson"],
       "timeoutS": 120,
       "severity": "required"
     },
@@ -250,7 +251,7 @@ adapter = null
     },
     {
       "id": "tests",
-      "command": ["pytest", "-q", "-x"],
+      "command": ["{python}", "-m", "pytest", "-q", "-x"],
       "timeoutS": 300,
       "severity": "required"
     }
@@ -261,6 +262,10 @@ adapter = null
   }
 }
 ```
+
+`python` 相对目标仓库解析，不相对候选 worktree；adapter 创建时
+`scaffold_adapter.py` 同步创建 `.rsi/venv`。没有 `python` 时使用
+`RSI_PYTHON` fallback。
 
 Python AI 目标还应有 target-owned smoke：
 
@@ -471,9 +476,9 @@ key：
 check semantics version
 + commit + parent
 + changed files
-+ LanguageSpec/checks（命令、env、timeout、severity、paths）
++ LanguageSpec/checks（命令、env、timeout、severity、paths、python）
 + LSP spec（diagnostics/references severity）
-+ RSI_PYTHON
++ RSI_PYTHON fallback
 ```
 
 规则：
@@ -483,7 +488,7 @@ check semantics version
 - failed 结果不能复用为成功；
 - cache 必须记录来源 commit；
 - 不跨 commit 复用；
-- 不跨 specs/LSP/`RSI_PYTHON` 复用。
+- 不跨 specs/LSP/Python 路径复用。
 
 缓存位置：
 
@@ -638,10 +643,12 @@ filesystem 边界是“只读 RSI + 只写 runs”，不是嵌套 VM。
 `GOBIN`、`GOCACHE`、`GOMODCACHE`。`HOME`/`TMPDIR` 重定向到 check 隔离目录；
 API key 和 SSH 变量不继承。
 
-`RSI_PYTHON` 指向目标 CPU 测试解释器，默认
-`/workspace/RSI/runs/.check-env/bin/python`。Python built-in 的 compile、
-pyright 和 pytest 使用该解释器；目标 adapter 可以覆盖检查命令。宿主 macOS
-的 Python/torch 不能直接在 Linux worker 中运行。
+`RSI_PYTHON` 是 fallback，不是目标测试环境的默认来源。目标 adapter 在
+`languages.python.python` 中声明测试解释器，例如
+`.rsi/venv/bin/python`；该路径相对目标仓库解析，不相对候选 worktree。
+adapter 创建时 `scaffold_adapter.py` 同步创建 `.rsi/venv` 并安装
+`.rsi/test-requirements.txt`。宿主 macOS 的 Python/torch 不能直接在 Linux
+worker 中运行。
 
 ---
 
@@ -787,7 +794,7 @@ target-specific smoke
 - check fail 不丢 patch；保留 `.diff`、`.apply.log`、check logs；
 - check fail 不消耗 experiment budget；
 - check report 按 check semantics version + commit + changed files + specs + LSP +
-  `RSI_PYTHON` 的哈希持久化到 `artifacts/checks/cache/`；resume 可命中并复制到当前 label；
+  Python 路径的哈希持久化到 `artifacts/checks/cache/`；resume 可命中并复制到当前 label；
 - `unavailable`/`timeout` 不写入 cache，避免把基础设施故障当成候选属性；
 - timeout 记录为 `timeout`，不当作科学失败；
 - adapter 或工具缺失记录 `unavailable`；

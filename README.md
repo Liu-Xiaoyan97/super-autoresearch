@@ -357,6 +357,11 @@ git switch -c rsi-bench
 /skill:rsi-adapter /workspace/RSI/examples/coral.json --repo /repos/coral-rsi
 ```
 
+adapter 创建时会同步创建目标自有 `.rsi/venv`，并安装
+`.rsi/test-requirements.txt`。解释器路径写入
+`.rsi/adapter/coral.json` 的 `languages.python.python`；候选 worktree 不包含
+这个 venv。venv 不提交，requirements 和 adapter manifest 提交。
+
 Adapter 需要实现：
 
 ```text

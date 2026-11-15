@@ -76,13 +76,21 @@ skill directory; the command below assumes an RSI checkout):
 ```bash
 python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
   --problem examples/<project>.json \
-  --repo /path/to/independent/target --name <project>
+  --repo /path/to/independent/target --name <project> \
+  --requirements .rsi/test-requirements.txt
 ```
 
 The helper writes directly into the **existing target git repository**; it does
-not install a second copy into RSI or create a `setup.sh`. A skeleton still has
-TODOs and is not implemented. Fill them and repair missing target code. Keep
-helper evaluators, project-specific regression tests and docs in the target.
+not install a second copy into RSI or create a `setup.sh`. It also creates the
+target-owned test venv `.rsi/venv`, installs pytest plus
+`.rsi/test-requirements.txt`, writes `.rsi/.gitignore`, and records
+`languages.python.python` in the manifest. Run scaffolding in the execution
+container so the venv is Linux. Do not commit the venv; commit the requirements
+file and adapter manifest. If you write the adapter without the scaffold, call
+`test_env.py` explicitly and add the same manifest field before commit. A
+skeleton still has TODOs and is not implemented. Fill them and repair missing
+target code. Keep helper evaluators, project-specific regression tests and docs
+in the target.
 
 The adapter contract is:
 
@@ -184,8 +192,10 @@ Run target regression tests, syntax/help and missing-asset failure checks.
 On the **execution host**, verify SSH, actual Python imports and CLI, readable
 real data batches/schema/split, tokenizer/model/cache loading, writable output
 and free assigned GPU capacity. Existing path != loadable data. Never print
-credentials, install packages/download assets without authority, overwrite a
-server project or kill unrelated jobs.
+credentials, overwrite a server project or kill unrelated jobs. Install target
+test dependencies only from the committed `.rsi/test-requirements.txt` into
+the target venv; never install them on the remote execution host from this
+step.
 
 Remote sync uses `rsync --delete`: use unique normalized per-run worktree and
 output paths; output must be **outside** the synced worktree so later candidate
@@ -257,7 +267,9 @@ A tiny smoke proves compatibility, not scientific validity/full training quality
 
 If asked to delete and regenerate, back up evidence, delete only generated
 adapter files in an independent target checkout from inside the container, then
-invoke this skill afresh through Pi. Do not restore/copy the old adapter as the
+invoke this skill afresh through Pi. Run `test_env.py --recreate` when the
+Python version or dependency pins change; keep the old venv until the new one
+passes. Do not restore/copy the old adapter as the
 "regeneration". Reinspect target APIs, generate/implement again, commit and rerun
 real train → checkpoint save/reload → lm-eval before the regenerated version is
 usable. Do not delete source/user changes, datasets, checkpoints or prior evidence.

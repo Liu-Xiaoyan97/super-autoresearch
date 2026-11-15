@@ -1141,7 +1141,7 @@ export class GitWorkspace implements Workspace {
     const material = JSON.stringify({
       // Bump when check semantics or ordering change; an old report must not
       // bypass the reference-first gate.
-      check_version: 2,
+      check_version: 3,
       commit: repo.commit ?? "",
       parent: repo.parent,
       changedFiles: changedFiles.slice().sort(),

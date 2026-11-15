@@ -180,23 +180,50 @@ container.
 ### Target CPU check environment
 
 Target tests often need dependencies that are not in the check image, for
-example `torch` and `pyarrow`. Install a Linux CPU environment in the shared
-`runs/` mount:
+example `torch` and `pyarrow`. The target adapter owns these dependencies and
+records its interpreter in `.rsi/adapter/<project>.json`:
 
-```bash
-./container/up.sh exec bash -lc '
-  python3 -m venv /workspace/RSI/runs/.check-env
-  /workspace/RSI/runs/.check-env/bin/python -m pip install \
-    --index-url https://pypi.org/simple \
-    --extra-index-url https://download.pytorch.org/whl/cpu \
-    "torch==2.12.0+cpu" numpy pyarrow pytest
-'
+```json
+"languages": {
+  "python": {
+    "python": ".rsi/venv/bin/python"
+  }
+}
 ```
 
-`container/compose.yaml` passes `RSI_PYTHON` to both services, defaulting to
-`/workspace/RSI/runs/.check-env/bin/python`. Built-in Python compile, pyright
-and pytest commands use `{python}`.
+Adapter scaffolding creates and populates that venv automatically:
 
+```bash
+python3 skills/rsi-adapter/scripts/scaffold_adapter.py \
+  --problem examples/<project>.json \
+  --repo /repos/<project> \
+  --requirements .rsi/test-requirements.txt
+```
+
+Keep the target pins in `.rsi/test-requirements.txt`; install from inside the
+main container so the venv is Linux and the read-only worker can execute it.
+`coral-rsi` requires the CPU torch index:
+
+```text
+--index-url https://pypi.org/simple
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.12.0+cpu
+numpy==2.4.6
+pyarrow==26.0.1
+pytest==9.2.0
+```
+
+Scaffolding installs `pytest` and the requirements, writes
+`.rsi/.gitignore` for the venv, and records `.rsi/venv/bin/python` in the
+manifest. Do not commit the venv. Regenerate it with:
+
+```bash
+python3 skills/rsi-adapter/scripts/test_env.py \
+  --repo /repos/<project> \
+  --requirements .rsi/test-requirements.txt
+```
+
+`RSI_PYTHON` is only the fallback for checks without an adapter interpreter.
 The target adapter owns the actual checks. `coral-rsi` uses:
 
 ```text
@@ -211,7 +238,9 @@ candidate code. Use the target adapter to select the target's tests and
 environment; the built-in defaults are only a starting point.
 
 The host's macOS Python/torch environment cannot run in the Linux worker.
-Create a Linux environment inside the shared mount instead.
+Create a Linux environment inside the target repository from the main
+container. `.rsi/venv` is ignored by target git; `.rsi/test-requirements.txt`
+is committed and protected.
 
 ## External target repositories
 

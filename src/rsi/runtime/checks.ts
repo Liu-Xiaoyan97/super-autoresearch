@@ -31,11 +31,14 @@ export interface LanguageSpec {
   extensions: string[];
   manifests?: string[];
   checks: CheckSpec[];
+  /** Target-owned Python interpreter, relative to the target repository. */
+  python?: string;
   lsp?: {
     command: string[];
     root?: string;
     env?: Record<string, string>;
     severity?: CheckSeverity;
+    referenceSeverity?: CheckSeverity;
   };
 }
 
@@ -147,6 +150,7 @@ export function languageSpecs(adapter: AdapterSpec | null): Record<string, Langu
       extensions: override.extensions ?? builtin.extensions,
       manifests: override.manifests ?? builtin.manifests,
       checks: override.checks ?? builtin.checks,
+      python: override.python ?? builtin.python,
       lsp: override.lsp ?? builtin.lsp,
     };
   }
@@ -207,11 +211,20 @@ function inside(root: string, candidate: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
-function expand(command: string[], repo: RepoRef): string[] {
+function resolveCheckPython(repo: RepoRef, spec: LanguageSpec): string {
+  if (!spec.python) return process.env.RSI_PYTHON || "python3";
+  if (path.isAbsolute(spec.python)) return spec.python;
+  // The adapter lives in the source checkout. Candidate worktrees do not
+  // contain its untracked test venv, so resolve relative paths against the
+  // canonical target repository, not the candidate checkout.
+  return path.resolve(repo.repo ?? repo.path, spec.python);
+}
+
+function expand(command: string[], repo: RepoRef, python: string): string[] {
   return command.map((token) => token
     .replaceAll("{repo}", repo.path)
     .replaceAll("{commit}", repo.commit ?? "")
-    .replaceAll("{python}", process.env.RSI_PYTHON || "python3"));
+    .replaceAll("{python}", python));
 }
 
 function applies(check: CheckSpec, changedFiles: string[]): boolean {
@@ -240,6 +253,7 @@ export function runChecks(
   for (const language of languages) {
     const spec = specs[language];
     if (!spec) continue;
+    const python = resolveCheckPython(repo, spec);
     for (const check of spec.checks) {
       if (!applies(check, changedFiles)) continue;
       const cwd = path.resolve(repo.path, check.cwd ?? ".");
@@ -250,8 +264,9 @@ export function runChecks(
         });
         continue;
       }
+      const command = expand(check.command, repo, python);
       const started = Date.now();
-      const result = spawnSync(expand(check.command, repo)[0], expand(check.command, repo).slice(1), {
+      const result = spawnSync(command[0], command.slice(1), {
         cwd,
         env: safeEnv(check.env, checkHome),
         encoding: "utf8",
@@ -263,7 +278,7 @@ export function runChecks(
       const status: CheckResult["status"] = timedOut ? "timeout" : missing ? "unavailable" : (result.status ?? 1) === 0 ? "ok" : "failed";
       checks.push({
         id: check.id,
-        command: expand(check.command, repo),
+        command,
         status,
         severity: check.severity,
         exit_code: result.status ?? null,
