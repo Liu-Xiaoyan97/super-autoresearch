@@ -522,6 +522,42 @@ export class Engine {
     });
   }
 
+  private nextDecisionId(...parts: unknown[]): string {
+    // Task decisions use the same FNV key. A resumed engine restarts its
+    // sequence, so check the durable decision table before reusing an id.
+    let id: string;
+    do {
+      id = key("decision", ...parts, this.sequence++);
+    } while (this.store.decisions.get(id));
+    return id;
+  }
+
+  private uniqueTicketId(input: {
+    kind: Ticket["kind"];
+    runId?: string;
+    task?: string;
+    decision: Decision;
+  }): string {
+    // `sequence` restarts at zero in a new engine. A resumed run can otherwise
+    // recreate a ticket id from an earlier attempt, and Store.save would
+    // overwrite that ticket instead of appending a new one. Event history is
+    // the durable record even after a ticket was overwritten, so it is part of
+    // the uniqueness check too.
+    const used = new Set(this.store.tickets.list().map((ticket) => ticket.id));
+    for (const event of this.store.events()) {
+      const data: unknown = event.data;
+      if (data && typeof data === "object" && "ticketId" in data) {
+        const ticketId = data.ticketId;
+        if (typeof ticketId === "string") used.add(ticketId);
+      }
+    }
+    let id: string;
+    do {
+      id = `${input.kind}-${key(input.kind, input.runId ?? "", input.task ?? "", input.decision.id, this.sequence++)}`;
+    } while (used.has(id));
+    return id;
+  }
+
   private createTicket(input: {
     kind: Ticket["kind"];
     title: string;
@@ -538,7 +574,7 @@ export class Engine {
     run?: RunSpec;
     at: string;
   }): Ticket {
-    const id = `${input.kind}-${key(input.kind, input.runId ?? "", input.task ?? "", input.decision.id, this.sequence++)}`;
+    const id = this.uniqueTicketId(input);
     const ticket: Ticket = {
       id,
       shortName: input.shortName,
@@ -586,7 +622,7 @@ export class Engine {
     const at = this.nowDate();
     const ticket = this.store.atomic(() => {
       const decision: Decision = {
-        id: key("decision", run.id, request.task, request.attempt ?? 0, this.sequence),
+        id: this.nextDecisionId(run.id, request.task, request.attempt ?? 0),
         thread: run.subscriptions[0] ?? threadKey({ source: "run", id: run.runId ?? run.id }),
         triggerIds: [run.origin.triggerId],
         strength: run.mandate.strength,
