@@ -97,8 +97,10 @@ Ablation 和 rebuttal 的缓存另行绑定干预补丁。
 核查读取基线独立测试。
 核查分块覆盖全部正文。
 报告记录独立断言的路径和符号。
-标准动态测试记录实际执行的测试标识。
-断言缺少执行证据时，交付流程阻断候选。
+pytest、Rust 和 Go 检查记录实际执行的测试标识。
+当前执行标识比对仍使用前缀匹配。
+自定义命令缺少执行标识时跳过该比对。
+这两个缺口的复现见 `NOTES.md` 的 A3 和 A4。
 实现证据为 `GitWorkspace.reviewSources` 和 `ImplementationVerifier.verify`。
 
 模型核查仍需要动态测试提供运行证据。

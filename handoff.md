@@ -66,6 +66,15 @@ Go 默认执行 `go test -v ./...`。
 
 ## 剩余验证
 
+当前 CORAL 默认检查存在解释器选择问题。
+选中的基线 manifest 缺少测试 venv 配置。
+系统 Python 收集模型测试返回 `ModuleNotFoundError: No module named 'torch'`。
+目标 venv 收集相同文件成功，共 7 项测试。
+模块核查仍缺少可信测试补充步骤。
+测试执行匹配仍存在前缀匹配和自定义命令缺口。
+启动流程缺少前置检查环境探测。
+问题证据和复现结果见 `NOTES.md` 的 A1 至 A5。
+
 远端入口执行结果为 `unknown`。
 缺少本次修改后的实机报告。
 端到端加速为 `unknown`。

@@ -64,7 +64,7 @@
 
 | 编号 | 状态 | 处理结果 | 实现证据 |
 |---|---|---|---|
-| U1 | good | 核查机制、入口和边界的独立断言。缺少证据会阻断候选。标准测试报告记录实际执行标识。 | `ImplementationVerifier.verify` 的 `tests`，`runChecks` 的 `executed_tests`，`checkRejection` 的 `missing`。 |
+| U1 | engineer | 标准测试报告记录执行标识。前缀匹配和自定义命令仍存在执行证据缺口，见 A3、A4。 | `ImplementationVerifier.verify` 的 `tests`，`runChecks` 的 `executed_tests`，`checkRejection` 的 `missing`。 |
 | U2 | unknown | 人工停止跟进。 | 本轮用户指令。 |
 | U3 | good | 增加逐次模型耗时和交付阶段耗时。复用相同 commit 的核查和测试证据。合并小文件审计请求。 | `BaseAgent.ask` 的 `duration_s`，`checkRejection` 的 `delivery_timing`，`ImplementationVerifier.verify` 的 `chunks`。 |
 | U4 | good | 预检与实验共用远端会话。预检失败阻断实验。首个失败 seed 终止后续调度。 | `AdapterSpec.preflight`，`buildRemoteInvocation` 的 `preflight`，`runSeeded`。 |
@@ -79,7 +79,7 @@
 | U13 | good | 默认要求 worker。`auto` 在 worker 缺失时阻断。显式 `off` 选择本地执行。 | `checkWorkerMode`，`GitWorkspace.check` 的 `mode`。 |
 | U14 | good | 全部 diff 正文进入分块审计。方法正文的全部陈述接受审计。 | `SpecAuditor.audit` 和 `MethodCodeAuditor.audit` 的 `reviewChunks`。 |
 | U15 | good | 模块核查检查实施和测试映射。Spec 审计集中检查任务约束，并缓存源码证据。 | `ImplementationVerifier.verify` 的 prompt，`SpecAuditor.audit` 的 `spec-cache`。 |
-| U16 | good | 模块核查只接受基线独立测试证据。可修改源码内联断言无法提供该证据。 | `GitWorkspace.reviewSources` 的 `trustedTest`，`ImplementationVerifier.verify` 的 `trustedPaths`。 |
+| U16 | engineer | 模块核查只接受基线独立测试证据。新增机制缺少可信测试补充流程，见 A2。 | `GitWorkspace.reviewSources` 的 `trustedTest`，`ImplementationVerifier.verify` 的 `trustedPaths`。 |
 | U17 | good | 读取累计变更文件和入口的完整正文。审计分块覆盖全部正文。 | `GitWorkspace.reviewSources`，`ImplementationVerifier.verify` 的 `pieces`。 |
 | U18 | good | 默认 Rust 和 Go 只执行测试命令。删除独立构建及重复静态检查。 | `BUILTIN.rust.checks` 和 `BUILTIN.go.checks`。 |
 | U19 | unknown | 人工停止跟进。用户确认 baseline 已提交。 | 本轮用户指令。 |
@@ -209,6 +209,11 @@ worker 日志包含 `ready`。
 
 ## 记录更正
 
+旧 `NOTES.md` 将 U1、U16 的状态写为 `good`。
+本次核查将状态更正为 `engineer`。
+执行证据匹配和可信测试补充仍存在缺口。
+复现和源码证据见 A2 至 A4。
+
 本轮 `docs/CONTAINER.md` 曾写“检查模式默认使用 `RSI_CHECK_WORKER=required`”。
 当前内容区分运行时默认值和 Compose 默认值。
 运行时默认值为 `required`，Compose 默认值为 `auto`。
@@ -262,3 +267,29 @@ worker 日志包含 `ready`。
 构建上下文包含 `.codegraph/daemon.sock`。
 本次 agent 停止该构建，并添加 `.dockerignore`。
 重试仅发送 Dockerfile，构建退出码为 0。
+
+## 容器重建后的流程核查
+
+本次核查以 `examples/coral.json` 和默认 seed 7 为依据。
+本节记录仍需处理的事项。
+
+| 编号 | 状态 | 问题及影响 | 证据 |
+|---|---|---|---|
+| A1 | engineer | 选中基线的 manifest 未声明测试解释器。框架选择系统 Python，模型测试收集失败。 | 容器内 `loadIncumbent` 接受 commit `6a2cadc41c4436f4ac08da8db6e7865c66a98ef5`。其 `languages.python.python` 缺失。系统 Python 收集 `tests/test_dense_stack.py` 返回退出码 2，错误为 `ModuleNotFoundError: No module named 'torch'`。 |
+| A2 | engineer | 模块核查要求独立测试覆盖新机制。补丁保护禁止修改测试。当前流程缺少补充可信测试的步骤。 | `GitWorkspace.reviewSources` 只将基线测试标记为 `trustedTest=true`。`writePatch` 保护测试路径。`ImplementationVerifier.verify` 要求训练变更具备 checkpoint 重载断言。CORAL 的 `CpuSmokeTest.test_two_step_run` 使用 `--no-save`。 |
+| A3 | engineer | 执行标识使用前缀匹配。相邻名称能被计入另一断言的执行证据。 | `checkRejection` 的 `test.startsWith`。最小复现将 `tests/test_model.py:test_step_disabled` 匹配到 `tests/test_model.py:test_step`，输出 `matching=true`。 |
+| A4 | engineer | 自定义测试命令缺少执行标识时仍能获得 `status=ok`。此时交付核查跳过断言执行比对。 | 临时目录内调用 `runChecks`。required 自定义命令为 `python3 -c pass`，`kind=test`。输出为 `status=ok`、`executed_tests=null`。`checkRejection` 只在 `recordedTests.length>0` 时比对。 |
+| A5 | engineer | 启动流程缺少前置测试环境探测。检查环境问题在候选交付阶段暴露。 | `Orchestrator.run` 先执行 baseline、diagnose 和 idea search。`checkRejection` 在候选实施后调用 `workspace.check`。 |
+| A6 | unknown | 最新框架的远端训练、修复、消融、写作全流程缺少实机验证。 | 现有完整流程测试调用 `mockRun`。远端回归注入模拟 transport。`handoff.md` 缺少本次版本的真实完整 run 报告。 |
+
+目标 `.rsi/venv/bin/python` 包含 pytest、torch 和 pyarrow。
+使用该解释器收集同一测试文件时，退出码为 0。
+该命令收集 7 项测试，耗时为 0.94 秒。
+这次检查仅收集测试。
+测试执行结果为 `unknown`。
+缺少目标 venv 下实际执行这些测试的报告。
+
+远端只读 SSH 查询退出码为 0。
+查询命令为 `nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader`。
+查询输出为空。
+该结果只说明查询时没有列出的 GPU 计算进程。
