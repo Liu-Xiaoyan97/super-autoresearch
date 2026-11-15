@@ -136,9 +136,11 @@ def setup_test_env(
     return {
         "repo": str(root),
         "venv": str(venv_dir),
+        "venv_rel": venv_dir.relative_to(root).as_posix(),
         "python": str(python),
         "python_rel": python.relative_to(root).as_posix(),
         "requirements": ",".join(str(file) for file in reqs),
+        "requirements_rel": [file.relative_to(root).as_posix() for file in reqs],
     }
 
 
