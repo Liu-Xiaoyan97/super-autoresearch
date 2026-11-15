@@ -184,14 +184,25 @@ Go 默认执行 `go test -v ./...`。
 日志为 `/tmp/rsi-container-worker-validation.log`。
 独立验证容器已经删除。
 删除命令退出码为 0。
-现有运行容器仍需重建以加载新镜像和 worker 协议 2。
-`docker inspect` 显示主容器和 worker 使用镜像 `7709c87fecbc`。
+上一轮交付时，运行容器需要重建以加载新镜像和 worker 协议 2。
+当时 `docker inspect` 显示主容器和 worker 使用镜像 `7709c87fecbc`。
 `docker image inspect pi-agent:local` 显示最新镜像为 `e31db013abd7`。
 主容器直接挂载当前 RSI 源码。
-现有 worker 的 ready 文件缺少 `protocol` 字段。
+当时 worker 的 ready 文件缺少 `protocol` 字段。
 新框架要求 `protocol=2`，因此阻断该 worker 的检查请求。
 当前任务是否已经受影响为 `unknown`。
 缺少任务启动版本和运行日志。
+
+用户授权后，`./container/up.sh run --force-recreate` 退出码为 0。
+两个容器于 2026 年 11 月 15 日 23 时 27 分 07 秒启动。
+时区为 Asia/Shanghai。
+`docker inspect` 显示两个容器使用镜像 `e31db013abd7`。
+两个容器均为 `status=running`，`restarts=0`。
+主容器日志包含 `deterministic Python/Rust/Go toolchain ready`。
+worker 日志包含 `ready`。
+主容器协议检查输出 `protocol=2` 和 `ready=true`。
+该检查调用 `checkWorkerReady`，退出码为 0。
+容器重建会中断原容器进程。
 
 远端入口执行结果为 `unknown`。
 缺少本次修改后的实机报告。
