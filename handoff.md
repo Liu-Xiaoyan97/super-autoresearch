@@ -85,6 +85,21 @@ Go 默认执行 `go test -v ./...`。
 
 本轮实现修复 A1 至 A5。
 问题证据、实现入口和回归结果见 `NOTES.md`。
+再次复查发现 B1 至 B3。
+恢复协议缺少远端配置和诊断命令。
+旧候选缺少环境指纹时跳过环境一致性比对。
+中断处理会覆盖损坏状态文件。
+U10 的当前状态更正为 `engineer`。
+复现证据见 `NOTES.md` 的再次复查记录。
+
+当前两个容器运行中，worker 协议为 3，ready 为 true。
+本次核查无需重建容器。
+旧 run `coral-wikitext-ppl-s7-3` 可以解析，14 项代码引用均存在。
+其保存的远端配置和诊断命令与当前 fixture 相同。
+独立启动探测返回 `status=ok`，收集 25 项测试。
+证据为 `runs/reaudit-startup-1794761497638/artifacts/checks/startup/report.json`。
+真实恢复后的全流程结果为 `unknown`。
+缺少恢复任务的实际执行日志。
 
 真实候选的完整科研流程结果为 `unknown`。
 缺少真实修复、归因和论文交付的完整报告。

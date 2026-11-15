@@ -73,7 +73,7 @@
 | U7 | unknown | 人工停止跟进。 | 本轮用户指令。 |
 | U8 | unknown | 人工停止跟进。 | 本轮用户指令。 |
 | U9 | good | 消融只接收已有组件的 `path:symbol` 证据。删除结构探针补足逻辑。 | `AblationPlanner.plan` 的 `supported`，`AblationPlan.code_refs`。 |
-| U10 | good | 恢复校验科学协议和状态版本。候选检查重新绑定当前 worktree。恢复时重新验证当前环境。 | `ResearchState.fromDict`、`rebindWorktree`，`Orchestrator.run` 的 `resume` 分支。 |
+| U10 | engineer | 状态版本和 worktree 绑定已实现。远端协议、旧环境证据和损坏状态保护仍有缺口。 | `ResearchState.fromDict`、`rebindWorktree`，本轮 B1 至 B3。 |
 | U11 | good | 镜像构建通过。独立隔离 worker 启动并执行检查任务。 | `/tmp/rsi-container-build.log`，`/tmp/rsi-container-worker-validation.log`。 |
 | U12 | good | 解析 manifest 时移除旧服务命令。保留目标动态测试配置。 | `languageSpecs` 的命令过滤，`tests/checks.test.ts` 的迁移断言。 |
 | U13 | good | 默认要求 worker。`auto` 在 worker 缺失时阻断。显式 `off` 选择本地执行。 | `checkWorkerMode`，`GitWorkspace.check` 的 `mode`。 |
@@ -342,6 +342,51 @@ worker 日志包含 `ready`。
 主容器验证输出 `protocol=3`、`ready=true` 和 `test_task_stage=search`。
 该验证调用 `checkWorkerReady` 和 `stageOfTask`，退出码为 0。
 镜像仍为 `e31db013abd7`，本轮源码通过挂载加载。
+
+## 再次复查恢复风险
+
+本轮用户要求复查风险、容器和旧 run 的恢复条件。
+本轮核查保留研究状态，并在临时目录复现缺陷。
+
+| 编号 | 状态 | 缺陷 | 证据 |
+|---|---|---|---|
+| B1 | engineer | 恢复协议未包含 `remote` 和 `diagnose_command`。远端上下文长度变化后，旧状态仍被接受。 | `src/rsi/core/state.ts` 的 `protocol.fields`。容器内将保存状态的 `remote.env.RSI_CORAL_MAX_LENGTH` 从 `1024` 改为 `2048`，`ResearchState.fromDict` 返回成功。复现只修改内存副本。 |
+| B2 | engineer | 旧候选缺少环境指纹时仍可恢复。空指纹跳过环境一致性比对。恢复核查只覆盖当前 incumbent。 | `ResearchState.fromDict` 默认 `environmentFingerprint=""`。`checkRejection` 仅在 `expectedEnvironment` 非空时比较。内存 fixture 返回 `legacy_candidate_accepted=true`、`environment_required=false`。 |
+| B3 | engineer | 中断处理将损坏的状态文件当作空状态，再覆盖原文件。结束写入也直接覆盖状态文件。 | `RunSession.markInterrupted` 的读取 catch 和 `fs.writeFileSync`。临时目录内的 39 字节损坏状态被替换，剩余字段仅为 `aborted` 和 `abort_reason`。`runResearch` 最终写入和 host restart 恢复同样使用直接写入。 |
+
+旧 U10 状态原文为 `good`。
+当前记录更正为 `engineer`。
+本轮缺少覆盖 B1 至 B3 的修复证据。
+
+当前主容器和 worker 均为 `running`，重启计数为 0。
+主容器验证返回 `protocol=3` 和 `ready=true`。
+容器内 `git rev-parse --short HEAD` 返回 `09f59b6`。
+该版本的运行环境无需重建容器。
+
+本轮核查旧 run `coral-wikitext-ppl-s7-3`。
+该 run 状态版本按缺省值解析为 1。
+`ResearchState.fromDict` 返回成功。
+它包含 4 条 trace、8 个 seed、0 个 checkpoint。
+它没有 incumbent，也没有环境指纹。
+代码引用共 14 项，`git cat-file` 验证全部存在。
+保存的远端配置和诊断命令与当前 fixture 相同。
+旧 baseline 外部文件缺失。
+状态中的 baseline 满足 `baselineIsValid` 的 commit 和有限指标条件。
+`runResearch` 已有缺失外部文件时复用状态 baseline 的分支。
+
+独立启动探测返回 `status=ok`。
+它收集 25 项测试，pytest 耗时为 0.85 秒。
+报告为 `runs/reaudit-startup-1794761497638/artifacts/checks/startup/report.json`。
+远端 GPU 计算进程查询退出码为 0，输出为空。
+本轮未执行真实 run 恢复。
+恢复后的全流程结果为 `unknown`。
+缺少恢复任务的模型、检查和实验日志。
+
+本轮快速回归执行 165 项，165 项通过，0 项失败。
+耗时为 21.898801084 秒。
+日志为 `/tmp/rsi-reaudit-fast.log`。
+类型检查退出码为 0。
+日志为 `/tmp/rsi-reaudit-typecheck.log`。
 
 远端只读 SSH 查询退出码为 0。
 查询命令为 `nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader`。
