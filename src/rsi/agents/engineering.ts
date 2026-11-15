@@ -6,7 +6,7 @@ import { FullSetEngineeringPatch, SubsetEngineeringPatch } from "../schemas.ts";
 import { type Evidence, type Idea, makeEvidence } from "../types.ts";
 import { BaseAgent } from "./base.ts";
 import { askUnifiedDiff } from "./patch.ts";
-import { codeOf, rejectedEvidence, runSeeded, subsetSeeds } from "./coding.ts";
+import { checkRejection, codeOf, rejectedEvidence, runSeeded, subsetSeeds } from "./coding.ts";
 
 export class SubsetEngineer extends BaseAgent {
   readonly NAME = "subset_engineer";
@@ -31,6 +31,8 @@ export class SubsetEngineer extends BaseAgent {
     } catch (error) {
       return rejectedEvidence(idea, "subset", opts.evidence, error);
     }
+    const checkFailure = await checkRejection(this.ctx, idea, "subset", opts.evidence, repo, `${idea.id}-subset-engineered`);
+    if (checkFailure) return checkFailure;
     const measured = await runSeeded(
       this.ctx.workspace,
       repo,
@@ -92,6 +94,8 @@ export class FullSetEngineer extends BaseAgent {
     } catch (error) {
       return { idea: refined, evidence: rejectedEvidence(refined, "full", opts.evidence, error) };
     }
+    const checkFailure = await checkRejection(this.ctx, refined, "full", opts.evidence, repo, `${refined.id}-full`);
+    if (checkFailure) return { idea: refined, evidence: checkFailure };
     this.ctx.budget.chargeExperiment();
     const result = await this.ctx.workspace.run(repo, "full", refined);
     const measured = makeEvidence({

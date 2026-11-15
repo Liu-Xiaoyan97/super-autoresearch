@@ -1,25 +1,8 @@
 #!/usr/bin/env bash
 # Container bootstrap: SSH/rsync/socat + SSH key/config.
 # Runs at container start and from `./container/up.sh bootstrap`.
-# Idempotent; never blocks Pi if apt is unreachable.
+# Idempotent; verifies the image-provided deterministic-code toolchain.
 set -uo pipefail
-
-APT_PROXY="${CONTAINER_APT_PROXY:-http://host.docker.internal:7890}"
-missing=()
-for binary in ssh rsync socat; do
-  command -v "$binary" >/dev/null 2>&1 || missing+=("$binary")
-done
-
-if ((${#missing[@]})); then
-  echo "[bootstrap] installing: ${missing[*]}"
-  apt-get -o Acquire::http::Proxy="$APT_PROXY" \
-          -o Acquire::https::Proxy="$APT_PROXY" update -qq >/dev/null 2>&1 || true
-  DEBIAN_FRONTEND=noninteractive apt-get \
-    -o Acquire::http::Proxy="$APT_PROXY" \
-    -o Acquire::https::Proxy="$APT_PROXY" \
-    install -y -qq openssh-client rsync socat >/dev/null 2>&1 \
-    || echo "[bootstrap] warning: apt install failed; check CONTAINER_APT_PROXY" >&2
-fi
 
 # Compose normally mounts container/ssh at /root/.ssh (read-only). For a
 # container created before that mount existed, copy the same files in.
@@ -49,3 +32,16 @@ if command -v pi >/dev/null 2>&1; then
     fi
   fi
 fi
+
+
+# Open-box deterministic-code toolchain verification. These binaries are
+# installed by container/Dockerfile; startup must never silently install them.
+missing_tools=()
+for tool in ssh rsync socat python3 pyright pyright-langserver ruff pytest rustc cargo rust-analyzer go gopls; do
+  command -v "$tool" >/dev/null 2>&1 || missing_tools+=("$tool")
+done
+if ((${#missing_tools[@]})); then
+  echo "[bootstrap] missing deterministic-code tools: ${missing_tools[*]}" >&2
+  exit 1
+fi
+echo "[bootstrap] deterministic Python/Rust/Go toolchain ready"

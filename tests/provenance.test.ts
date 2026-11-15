@@ -92,14 +92,14 @@ test("the subset critic treats a parent-commit proxy as invalid, not a refutatio
   assert.match(verdict.feedback, /provenance|not.*refutation/i);
 });
 
-test("an invalid implementation is not added to evaluated_ids or nextSeeds", () => {
+test("an invalid implementation stays unknown and may be retried", () => {
   const ctx = makeContext();
   const state = new ResearchState(ctx.problem, ctx.config);
   const idea = makeIdea({ id: "h-invalid" });
   state.seeds = [idea];
   state.record(makeTrace({ idea, decision: "bad", invalid: true, evidence: [] }));
   assert.equal(state.evaluatedIds.has(idea.id), false);
-  assert.deepEqual(state.nextSeeds(1).map((item) => item.id), []);
+  assert.deepEqual(state.nextSeeds(1).map((item) => item.id), ["h-invalid"]);
 });
 
 test("a rejected implementation never reaches the runner and becomes invalid evidence", async () => {

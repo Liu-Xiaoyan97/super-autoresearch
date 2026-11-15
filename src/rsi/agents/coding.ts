@@ -190,6 +190,53 @@ export function rejectedEvidence(idea: Idea, scope: Scope, base: Evidence, error
   return unappliedEvidence(idea, scope, base, (error as Error)?.message ?? String(error));
 }
 
+/** Run target-owned checks after patch; a required failure is not a candidate. */
+export function checkFailedEvidence(
+  idea: Idea,
+  scope: Scope,
+  repo: RepoRef,
+  base: Evidence,
+  message: string,
+): Evidence {
+  return makeEvidence({
+    idea_id: idea.id,
+    scope,
+    metrics: {},
+    baseline_metrics: { ...base.metrics },
+    code: repo,
+    result: {
+      metrics: {},
+      status: "failed",
+      log_path: "",
+      stdout: "",
+      stderr: `deterministic checks failed: ${message}`,
+      wall_time_s: 0,
+    },
+    label: `${repo.label}-check-failed`,
+    samples: [],
+  });
+}
+
+export async function checkRejection(
+  ctx: AgentContext,
+  idea: Idea,
+  scope: Scope,
+  base: Evidence,
+  repo: RepoRef,
+  label: string,
+): Promise<Evidence | null> {
+  if (ctx.config.runner === "simulated" || !ctx.workspace.check) return null;
+  try {
+    const report = await ctx.workspace.check(repo, label);
+    if (report.status === "ok") return null;
+    const failed = report.checks.filter((check) => check.status !== "ok");
+    const detail = failed.map((check) => `${check.id}:${check.status}:${check.stderr}`).join("\n").slice(0, 1200);
+    return checkFailedEvidence(idea, scope, repo, base, detail || report.status);
+  } catch (error) {
+    return checkFailedEvidence(idea, scope, repo, base, (error as Error)?.message ?? String(error));
+  }
+}
+
 export class SubsetCoder extends BaseAgent {
   readonly NAME = "subset_coder";
   readonly task = "code.subset";
@@ -211,6 +258,8 @@ export class SubsetCoder extends BaseAgent {
     } catch (error) {
       return rejectedEvidence(idea, scope, opts.base, error);
     }
+    const checkFailure = await checkRejection(this.ctx, idea, scope, opts.base, repo, `${idea.id}-${scope}`);
+    if (checkFailure) return checkFailure;
     const seeds = scope === "subset" ? (opts.seeds ?? [this.ctx.config.seed]) : [this.ctx.config.seed];
     const measured = await runSeeded(
       this.ctx.workspace,
@@ -258,6 +307,8 @@ export class FullSetCoder extends BaseAgent {
     } catch (error) {
       return rejectedEvidence(idea, "full", opts.subset, error);
     }
+    const checkFailure = await checkRejection(this.ctx, idea, "full", opts.subset, repo, `${idea.id}-full`);
+    if (checkFailure) return checkFailure;
     this.ctx.budget.chargeExperiment();
     const result = await this.ctx.workspace.run(repo, "full", idea);
     return makeEvidence({
@@ -297,6 +348,10 @@ export class AblationCoder extends BaseAgent {
         evidence: rejectedEvidence(idea, "ablation", opts.best, error),
         ok: false,
       };
+    }
+    const checkFailure = await checkRejection(this.ctx, idea, "ablation", opts.best, repo, `${idea.id}-ablation-${plan.id}`);
+    if (checkFailure) {
+      return { plan_id: plan.id, component: plan.component, metrics: {}, evidence: checkFailure, ok: false };
     }
     // Same subset data, 95-step budget, hyperparameters and seeds as the
     // candidate subset control; never a full 954-step run.
@@ -374,6 +429,8 @@ export class RebuttalCoder extends BaseAgent {
     } catch (error) {
       return rejectedEvidence(idea, "rebuttal", opts.best, error);
     }
+    const checkFailure = await checkRejection(this.ctx, idea, "rebuttal", opts.best, repo, `${idea.id}-rebuttal-${task.id}`);
+    if (checkFailure) return checkFailure;
     this.ctx.budget.chargeExperiment();
     const result = await this.ctx.workspace.run(repo, "rebuttal", idea);
     return makeEvidence({
@@ -552,7 +609,7 @@ export class IdeaImplementer extends BaseAgent {
     while (verdictFull.decision === "engineer") {
       state.full_rounds = Math.max(
         state.full_rounds,
-        Math.max(0, trace.evidence.length - 1 - state.full_repairs - state.subset_rounds - 1),
+        Math.max(0, trace.evidence.length - 1 - state.full_repairs - state.subset_rounds - state.subset_repairs - 1),
       );
       if (verdictFull.invalid) {
         if (state.full_repairs >= maxRepairs) break;

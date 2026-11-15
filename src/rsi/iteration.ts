@@ -354,6 +354,7 @@ export async function runIteration(opts: IterationOptions): Promise<IterationRes
     baselineRepo: () => native.baselineRepo(),
     brief: () => sourceBrief,
     diff: (a, b) => native.diff(a, b),
+    check: (repo, label) => native.check(repo, label),
     async writePatch(repo, patch, label) {
       checkAborted(ctx);
       budget.check();

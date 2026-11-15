@@ -23,6 +23,8 @@ import { stableString } from "../json.ts";
 
 import { crc32, unit } from "../crc32.ts";
 import type { Config } from "../config.ts";
+import { type AdapterSpec, type CheckReport, detectLanguages, languageSpecs, loadAdapter, runChecks } from "./checks.ts";
+import { lspDiagnostics } from "./lsp.ts";
 import {
   type Evidence,
   type ExperimentResult,
@@ -110,6 +112,8 @@ export interface Workspace {
   writePatch(repo: RepoRef, patch: string, label: string, opts?: { allowEmpty?: boolean }): Promise<RepoRef>;
   diff(a: RepoRef, b: RepoRef): Promise<string>;
   run(repo: RepoRef, scope: Scope, idea?: Idea | null, seed?: number): Promise<ExperimentResult>;
+  /** Target-owned deterministic checks after patch; absent means unavailable. */
+  check?(repo: RepoRef, label: string): Promise<CheckReport>;
   /** Called after each actual benchmark result, including failures. */
   onExperimentResult?: () => void;
   /** Source context for coding agents (git tree + relevant files at a commit). */
@@ -921,6 +925,11 @@ function safeName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "candidate";
 }
 
+function protectedPathMatch(file: string, rule: string): boolean {
+  const normalized = rule.replace(/^\/+/, "").replace(/\/+$/, "");
+  return file === normalized || file.startsWith(`${normalized}/`);
+}
+
 /** Extract a unified diff from model prose or a fenced block. */
 export function extractUnifiedDiff(text: string): string | null {
   if (!text) return null;
@@ -973,6 +982,8 @@ export class GitWorkspace implements Workspace {
   readonly runner: Runner;
   private readonly sourceOverride: string | undefined;
   private readonly simulatedRunner: boolean;
+  private adapter: AdapterSpec | null = null;
+  private readonly checkCache = new Map<string, CheckReport>();
 
   private source = "";
   private baseCommit = "";
@@ -1024,6 +1035,10 @@ export class GitWorkspace implements Workspace {
       this.source = top.stdout.trim();
       const ref = this.problem.repo_ref || "HEAD";
       this.baseCommit = git(this.source, ["rev-parse", ref]).stdout.trim();
+      const rsiRoot = path.resolve(import.meta.dirname, "..", "..", "..");
+      if (path.resolve(this.source) === rsiRoot) {
+        throw new Error("Problem.repo must not resolve to the RSI repository root");
+      }
     } else if (this.sourceOverride && fs.existsSync(path.join(this.sourceOverride, ".git"))) {
       // A resumed synthetic run reuses the previous repository so the commits
       // recorded in state.json are still reachable.
@@ -1088,6 +1103,7 @@ export class GitWorkspace implements Workspace {
     // Global prune would unregister another runtime's live (locally invisible)
     // user worktrees. Reclaim only our own explicitly selected worktree path.
     git(this.source, ["worktree", "add", "--force", "--detach", this.worktree, this.baseCommit]);
+    this.adapter = loadAdapter(this.source, this.problem);
     this.initialized = true;
   }
 
@@ -1111,6 +1127,57 @@ export class GitWorkspace implements Workspace {
       commit: this.baseCommit,
       branch: "detached",
     };
+  }
+
+  async check(repo: RepoRef, label: string): Promise<CheckReport> {
+    await this.init();
+    const empty = (status: CheckReport["status"]): CheckReport => ({
+      commit: repo.commit ?? "",
+      parent: repo.parent,
+      languages: [],
+      changed_files: [],
+      status,
+      checks: [],
+    });
+    if (this.simulatedRunner || !repo.commit || !repo.parent) return empty("unavailable");
+    const changed = git(this.worktree, ["diff", "--name-only", repo.parent, repo.commit], true);
+    if (changed.status !== 0) return empty("unavailable");
+    const changedFiles = changed.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+    if (!changedFiles.length) return empty("ok");
+    const cacheKey = `${repo.commit}:${changedFiles.slice().sort().join(",")}`;
+    const cached = this.checkCache.get(cacheKey);
+    if (cached) return cached;
+    const specs = languageSpecs(this.adapter);
+    const languages = detectLanguages(changedFiles, specs);
+    if (!languages.length) return empty("failed");
+    const report = runChecks(this.store, repo, label, specs, languages, changedFiles);
+    // LSP is an optional semantic diagnostic. It is advisory unless the target
+    // adapter explicitly requires it. It never edits the worktree.
+    for (const language of languages) {
+      const lsp = this.adapter?.languages?.[language]?.lsp;
+      if (!lsp) continue;
+      const started = Date.now();
+      const result = await lspDiagnostics(repo.path, lsp, changedFiles);
+      const severity = lsp.severity ?? "advisory";
+      report.checks.push({
+        id: `lsp-${language}`,
+        command: lsp.command,
+        status: result.status === "ok" ? "ok" : result.status,
+        severity,
+        exit_code: null,
+        stdout: "",
+        stderr: result.stderr,
+        duration_s: (Date.now() - started) / 1000,
+      });
+      if (severity === "required" && result.status !== "ok") report.status = "failed";
+      this.store.writeText(`checks/${safeName(label)}/lsp-${language}.log`, JSON.stringify(result, null, 2));
+    }
+    // Checks may create caches or generated files. The measured commit, not a
+    // dirty check worktree, is the candidate that goes to the runner.
+    try { this.checkout(repo.commit, true); } catch { /* report remains authoritative */ }
+    this.store.writeJson(`checks/${safeName(label)}/report.json`, report);
+    this.checkCache.set(cacheKey, report);
+    return report;
   }
 
   async writePatch(repo: RepoRef, patch: string, label: string, opts: { allowEmpty?: boolean } = {}): Promise<RepoRef> {
@@ -1213,12 +1280,15 @@ export class GitWorkspace implements Workspace {
       fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\ncommit equals parent\n`, "utf8");
       throw new PatchRejectedError("candidate commit equals its parent; refusing to measure the baseline as a candidate");
     }
-    if (hasPatch && commit !== parent) {
-      const effective = git(this.worktree, ["diff", "--ignore-all-space", "--ignore-blank-lines", parent, commit], true).stdout.trim();
-      if (!effective) {
+    const protectedRules = this.adapter?.protected_paths ?? [];
+    if (protectedRules.length && commit !== parent) {
+      const changed = git(this.worktree, ["diff", "--name-only", parent, commit], true).stdout
+        .split("\n").map((line) => line.trim()).filter(Boolean);
+      const forbidden = changed.filter((file) => protectedRules.some((rule) => protectedPathMatch(file, rule)));
+      if (forbidden.length) {
         fs.writeFileSync(this.store.path("patches", `${safe}.diff`), diff ?? patch, "utf8");
-        fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\nwhitespace-only or reverted change\n`, "utf8");
-        throw new PatchRejectedError("candidate diff has no effective code change (whitespace-only/reverted)");
+        fs.writeFileSync(this.store.path("patches", `${safe}.apply.log`), `${applyLog}\nprotected paths changed: ${forbidden.join(", ")}\n`, "utf8");
+        throw new PatchRejectedError(`candidate changes protected paths: ${forbidden.join(", ")}`);
       }
     }
     fs.writeFileSync(this.store.path("patches", `${safe}.diff`), diff ?? patch, "utf8");

@@ -193,10 +193,10 @@ export class ResearchState {
       const br = -rankKey(b, this.config.guidanceWeight);
       return ar === br ? a.id.localeCompare(b.id) : ar - br;
     });
-    const invalid = new Set(this.traces.filter((trace) => trace.invalid).map((trace) => trace.idea.id));
     const out: Idea[] = [];
     for (const idea of ordered) {
-      if (this.evaluatedIds.has(idea.id) || invalid.has(idea.id)) continue;
+      // invalid implementation is unknown, not evaluated; it may be retried.
+      if (this.evaluatedIds.has(idea.id)) continue;
       out.push(idea);
       if (out.length === n) break;
     }

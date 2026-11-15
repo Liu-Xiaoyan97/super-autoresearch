@@ -742,6 +742,8 @@ export class Orchestrator {
     // finite numbers. An invalid verdict means this is not a candidate result.
     if (checkpoint.verdict?.invalid === true || checkpoint.trace.invalid === true) return;
     for (const evidence of checkpoint.trace.evidence) {
+      // A mixed aggregate is invalid even if one seed happened to succeed.
+      if (evidence.samples?.length && evidence.samples.some((sample) => sample.result?.status !== "ok")) continue;
       // A failed execution or a parent-commit proxy is implementation evidence,
       // not a candidate measurement. Never pollute the scientific ledger with it.
       if (evidence.result?.status !== "ok") continue;
@@ -1031,17 +1033,17 @@ export class Orchestrator {
       for (const task of byId(tasks)) {
         this.ctx.budget.check();
         const evidence = await this.agents.rebuttalCoder.runTask(idea, task, { best });
-        this.state.rebuttals.push(evidence);
-        // A rebuttal is a real measurement: keep it even if the host dies now.
-        this.persist();
         if (
           evidence.result?.status === "ok" &&
           evidenceOk(evidence) &&
           Object.keys(evidence.metrics).length &&
           !evidenceProvenanceError(evidence)
         ) {
+          this.state.rebuttals.push(evidence);
           rebuttal.push(evidence);
         }
+        // A valid rebuttal is a real measurement: keep it even if the host dies now.
+        this.persist();
       }
       if (!rebuttal.length) {
         this.transition("stage.review", "peer.no_evidence");

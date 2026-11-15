@@ -22,6 +22,7 @@ function valid(evidence: Evidence, baseline: Evidence, names: string[]): boolean
     samplesOk(baseline) &&
     !provenance &&
     measured(evidence) &&
+    samplesComplete(evidence, names) &&
     names.length > 0 &&
     names.every(
       (name) =>
@@ -35,7 +36,14 @@ function valid(evidence: Evidence, baseline: Evidence, names: string[]): boolean
 
 /** All screened seeds must finish; a single failed seed is a code repair, not a verdict. */
 function samplesOk(evidence: Evidence): boolean {
-  return !evidence.samples?.length || evidence.samples.every((sample) => sample.result === null || sample.result?.status === "ok");
+  return !evidence.samples?.length || evidence.samples.every((sample) => sample.result?.status === "ok");
+}
+
+function samplesComplete(evidence: Evidence, names: string[]): boolean {
+  if (!evidence.samples?.length) return true;
+  return evidence.samples.every((sample) =>
+    names.every((name) => Number.isFinite(sample.metrics?.[name])),
+  );
 }
 
 /** A candidate must point at an actual measured execution, not a bare metrics stub. */

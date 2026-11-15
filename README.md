@@ -636,6 +636,7 @@ runs/<run_id>/artifacts/experiments/diagnosis-<id>.log
 - [`docs/SPEC.md`](docs/SPEC.md)：研究流程、数据门槛和超参数。
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)：代码结构和状态机。
 - [`docs/PROBLEM.md`](docs/PROBLEM.md)：Problem 与 adapter 契约。
+- [`docs/Deterministic_code.md`](docs/Deterministic_code.md)：确定性代码检查、Python/Rust/Go 工具链和新增语言接入。
 - [`docs/REMOTE.md`](docs/REMOTE.md)：远端 rsync/SSH/GPU 执行。
 - [`docs/SUPERAGENT.md`](docs/SUPERAGENT.md)：run/task ticket 和 policy。
 - [`AGENTS.md`](AGENTS.md)：main agent 与受限执行者的边界。
