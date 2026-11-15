@@ -168,6 +168,8 @@ export interface RepoRef {
   commit?: string;
   /** Candidate branch name. */
   branch?: string;
+  /** Independently authored tests, committed through the test-only channel. */
+  validation?: { requirement: string; commit: string; files: string[] };
 }
 
 export interface ExperimentResult {

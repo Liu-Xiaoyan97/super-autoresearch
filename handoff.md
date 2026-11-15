@@ -5,6 +5,9 @@
 实施生成候选 commit。
 补丁保护限制修改范围和基线独立测试。
 模块核查读取完整变更源码、入口和独立测试。
+缺少测试断言时，独立测试请求生成补充文件。
+专用提交通道只允许新增测试。
+普通实施和修复继续保护测试。
 动态检查验证实际执行的测试标识。
 检查失败进入 bug 修复循环。
 修复后的 commit 重新接受核查和动态测试。
@@ -30,18 +33,15 @@ Go 默认执行 `go test -v ./...`。
 ## 测试记录
 
 `npm run typecheck` 通过。
-日志为 `/tmp/rsi-typecheck-final.log`。
-快速回归执行 157 项，157 项通过，0 项失败。
-耗时为 14.729877916 秒。
-日志为 `/tmp/rsi-fast-tests-final.log`。
-完整回归执行 172 项，172 项通过，0 项失败。
-耗时为 352.510332292 秒。
-日志为 `/tmp/rsi-full-tests-final.log`。
-完整回归启动后仍有恢复和缓存修改。
-最终定向回归覆盖这些修改。
-定向回归执行 63 项，63 项通过，0 项失败。
-耗时为 13.564119917 秒。
-日志为 `/tmp/rsi-final-targeted.log`。
+日志为 `/tmp/rsi-typecheck-delivery-final.log`。
+快速回归执行 165 项，165 项通过，0 项失败。
+耗时为 20.914620208 秒。
+日志为 `/tmp/rsi-fast-delivery-final.log`。
+完整回归执行 178 项，178 项通过，0 项失败。
+耗时为 359.029234208 秒。
+日志为 `/tmp/rsi-full-delivery-current.log`。
+完整回归启动后新增补充测试流程和原生测试标识回归。
+最终快速回归覆盖这些修改。
 
 ## 容器验证
 
@@ -60,23 +60,34 @@ Go 默认执行 `go test -v ./...`。
 `docker inspect` 显示两个容器使用镜像 `e31db013abd7`。
 两个容器均为 `status=running`，`restarts=0`。
 主容器日志确认 Python、Rust、Go 工具链就绪。
-主容器调用 `checkWorkerReady` 输出 `protocol=2` 和 `ready=true`。
-该协议检查退出码为 0。
+上一轮协议检查输出 `protocol=2` 和 `ready=true`。
+本轮两个容器于 2026 年 11 月 16 日 00 时 34 分 42 秒重新启动。
+时区为 Asia/Shanghai。
+主容器调用 `checkWorkerReady` 输出 `protocol=3` 和 `ready=true`。
+`stageOfTask("code.tests")` 返回 `search`。
+该验证退出码为 0。
 容器重建会中断原容器进程。
+
+本轮启动探测选择目标 `.rsi/venv/bin/python`。
+报告状态为 `ok`。
+证据为 `runs/delivery-startup-1794758588335/artifacts/checks/startup/report.json`。
+原基线的 25 项动态测试通过，pytest 耗时为 4.00 秒。
+证据为 `runs/delivery-tests-1794758978779/artifacts/checks/baseline-dynamic/report.json`。
+另一次验证执行原有 25 项测试和新增 1 项训练契约测试。
+两组测试分别耗时 3.20 秒和 1.33 秒，全部通过。
+新增测试覆盖梯度、参数更新和 checkpoint 重载。
+证据为 `runs/delivery-contract-1794759626471/artifacts/checks/training-contract/report.json`。
+远端有界 smoke 执行 1 个训练步骤，并限制每项任务评测 1 条记录。
+该报告返回 `status=ok`。
+证据为 `runs/adapter-smoke-65492906-a2c6-4dc3-af3b-19ddc8056fae/artifacts/smoke-summary.json`。
 
 ## 剩余验证
 
-当前 CORAL 默认检查存在解释器选择问题。
-选中的基线 manifest 缺少测试 venv 配置。
-系统 Python 收集模型测试返回 `ModuleNotFoundError: No module named 'torch'`。
-目标 venv 收集相同文件成功，共 7 项测试。
-模块核查仍缺少可信测试补充步骤。
-测试执行匹配仍存在前缀匹配和自定义命令缺口。
-启动流程缺少前置检查环境探测。
-问题证据和复现结果见 `NOTES.md` 的 A1 至 A5。
+本轮实现修复 A1 至 A5。
+问题证据、实现入口和回归结果见 `NOTES.md`。
 
-远端入口执行结果为 `unknown`。
-缺少本次修改后的实机报告。
+真实候选的完整科研流程结果为 `unknown`。
+缺少真实修复、归因和论文交付的完整报告。
 端到端加速为 `unknown`。
 缺少同一候选的对照计时。
 主容器直接挂载当前 RSI 源码。

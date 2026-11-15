@@ -9,6 +9,7 @@ import {
   FullSetPatch,
   ImplementationInstruction,
   ImplementationAudit,
+  IndependentTests,
   RebuttalPatch,
   SubsetPatch,
 } from "../schemas.ts";
@@ -31,6 +32,7 @@ import {
 } from "../types.ts";
 import { BaseAgent, type AgentContext } from "./base.ts";
 import { BudgetExceeded } from "../runtime/budget.ts";
+import { testIdentity } from "../runtime/checks.ts";
 import { SpecAuditor } from "./integrity.ts";
 import { LLMError } from "../providers/base.ts";
 import { askUnifiedDiff, reviewChunks } from "./patch.ts";
@@ -204,11 +206,12 @@ export class ImplementationVerifier extends BaseAgent {
   async verify(idea: Idea, repo: RepoRef, scope: Scope) {
     const implementationScope = scope === "subset" || scope === "full";
     const key = createHash("sha256").update(stableString({
-      version: 5,
+      version: 6,
       commit: repo.commit,
       scope: implementationScope ? "implementation" : scope,
       mechanism: idea.mechanism,
       hypothesis: idea.hypothesis,
+      validation: repo.validation,
       intervention: implementationScope ? "" : repo.patch,
     })).digest("hex");
     const cachePath = `checks/implementation-cache/${key}.json`;
@@ -222,7 +225,7 @@ export class ImplementationVerifier extends BaseAgent {
       ? sources.map((file) => `FILE ${file.path} trusted_test=${file.trustedTest}\n${file.text}`).join("\n\n")
       : this.ctx.workspace.brief?.(repo, `${idea.mechanism} entrypoint forward train`, 24000) ?? "";
     if (!source.trim()) {
-      return { decision: "engineer" as const, modules: [], tests: [], findings: ["Committed module source is unavailable."] };
+      return { decision: "engineer" as const, modules: [], tests: [], findings: ["Committed module source is unavailable."], test_gaps: [] };
     }
     const pieces = sources
       ? sources.flatMap((file) => reviewChunks(file.text, 15000).map((chunk, index) =>
@@ -235,15 +238,16 @@ export class ImplementationVerifier extends BaseAgent {
       if (previous >= 0 && chunks[previous].length + piece.length + 2 <= 16000) chunks[previous] += `\n\n${piece}`;
       else chunks.push(piece);
     }
-    const modules: string[] = [], tests: string[] = [], findings: string[] = [];
+    const modules: string[] = [], tests: string[] = [], findings: string[] = [], testGaps: string[] = [];
     for (const [index, chunk] of chunks.entries()) {
       const part = await this.ask(ImplementationAudit, {
         user: "Review the committed implementation and trusted independent tests. Map mechanisms to path:symbol evidence. " +
           "Check entry-point integration, interfaces, tensor dimensions and state/cache handling. " +
-          "Record test path:symbol evidence for mechanism assertions, boundary cases and real entry-point execution. " +
+          "Record exact test path::Class::test_name identities for mechanism assertions, boundary cases and real entry-point execution. " +
           "Training methods also need forward, gradient, parameter-update and checkpoint-reload assertions. " +
           "Count only trusted_test=true assertions as independent test evidence. Never count inline tests in mutable source. " +
-          "Review this chunk only. Report concrete defects as findings. Leave evidence arrays empty when absent from this chunk. " +
+          "Review this chunk only. Put implementation defects in findings and missing test assertions in test_gaps. " +
+          "Leave evidence arrays empty when absent from this chunk. " +
           "Task-specification auditing runs separately. For ablation/rebuttal verify the intervention in the patch.\n" +
           stableString({ idea, scope, commit: repo.commit, chunk: index + 1, chunks: chunks.length }) +
           `\nCOMMITTED SOURCE\n${chunk}`,
@@ -252,28 +256,53 @@ export class ImplementationVerifier extends BaseAgent {
       modules.push(...part.modules);
       tests.push(...part.tests);
       findings.push(...part.findings);
-      if (part.decision === "engineer" && !part.findings.length) findings.push("Source review requests engineering repair.");
+      testGaps.push(...part.test_gaps);
+      if (part.decision === "engineer" && !part.findings.length && !part.test_gaps.length) findings.push("Source review requests engineering repair.");
     }
     if (!modules.length) findings.push("Module implementation evidence is missing.");
     if (sources) {
       const trustedPaths = sources.filter((file) => file.trustedTest).map((file) => `${file.path}:`);
       if (!tests.length || tests.some((item) => !trustedPaths.some((prefix) => item.startsWith(prefix)))) {
-        findings.push("Independent test assertions for the mechanism and entry point are missing or untrusted.");
+        testGaps.push("Independent test assertions for the mechanism and entry point are missing or untrusted.");
       } else {
         const coverage = await this.ask(ImplementationAudit, {
           user: "Verify that this collected source/test evidence covers every requested mechanism, real entry point and boundary case. " +
             "Training changes require forward, gradient, parameter-update and checkpoint-reload assertions. " +
-            "Report engineer with concrete missing assertions when coverage is incomplete.\n" + stableString({ idea, modules, tests }),
+            "Put concrete missing assertions in test_gaps when coverage is incomplete.\n" + stableString({ idea, modules, tests }),
           meta: { idea_id: idea.id, scope, commit: repo.commit, coverage: true },
         });
         findings.push(...coverage.findings);
-        if (coverage.decision === "engineer" && !coverage.findings.length) findings.push("Independent test coverage is incomplete.");
+        testGaps.push(...coverage.test_gaps);
+        if (coverage.decision === "engineer" && !coverage.findings.length && !coverage.test_gaps.length) testGaps.push("Independent test coverage is incomplete.");
       }
     }
-    const audit = { decision: findings.length ? "engineer" as const : "good" as const,
-      modules: [...new Set(modules)], tests: [...new Set(tests)], findings: [...new Set(findings)] };
+    const audit = { decision: findings.length || testGaps.length ? "engineer" as const : "good" as const,
+      modules: [...new Set(modules)], tests: [...new Set(tests)], findings: [...new Set(findings)], test_gaps: [...new Set(testGaps)] };
     this.ctx.store.writeJson(cachePath, audit);
     return audit;
+  }
+}
+
+class IndependentTestAuthor extends BaseAgent {
+  readonly NAME = "independent_test_author";
+  readonly task = "code.tests";
+  readonly role = "coding";
+
+  async supplement(idea: Idea, repo: RepoRef, scope: Scope, gaps: string[]) {
+    const sources = this.ctx.workspace.reviewSources?.(repo) ?? [];
+    const output = await this.ask(IndependentTests, {
+      system: "You independently author CPU contract tests from the research requirements. Return complete pytest files only. " +
+        "Preserve the intended behavior when the candidate is wrong. Never weaken assertions to match candidate outputs. " +
+        "Do not alter source, baseline tests, evaluation protocols, or dependencies. Never skip tests or use xfail. " +
+        "Use tiny local fixtures and temporary directories. Require numerical or behavioral assertions through real entry points. " +
+        "Training changes require backward, nonzero finite gradients, parameter updates and save/reload equivalence. " +
+        "For native code, exercise its real entry points through a temporary harness and assert its results. " +
+        "Use repository-relative paths from Path.cwd() for project files, since tests live under .rsi/validation. " +
+        "Tests must check the requested intervention for ablation or rebuttal scopes.",
+      user: stableString({ problem: this.ctx.problem, idea, scope, gaps, sources }),
+      meta: { idea_id: idea.id, commit: repo.commit, scope },
+    });
+    return output.files;
   }
 }
 
@@ -320,8 +349,18 @@ export async function checkRejection(
   let sourceSeconds = 0;
   let checkSeconds = 0;
   try {
+    const requirement = createHash("sha256").update(stableString({ mechanism: idea.mechanism, hypothesis: idea.hypothesis,
+      scope: scope === "subset" || scope === "full" ? "implementation" : scope })).digest("hex").slice(0, 32);
+    if (repo.validation?.requirement !== requirement) delete repo.validation;
+    let audit = await new ImplementationVerifier(ctx).verify(idea, repo, scope);
+    if (label !== "resume" && audit.test_gaps.length && !audit.findings.length && ctx.workspace.addTests) {
+      const files = await new IndependentTestAuthor(ctx).supplement(idea, repo, scope, audit.test_gaps);
+      const previous = repo.commit;
+      Object.assign(repo, await ctx.workspace.addTests(repo, files, requirement));
+      ctx.traces.append("independent_tests", { source_commit: previous, commit: repo.commit, ...repo.validation });
+      audit = await new ImplementationVerifier(ctx).verify(idea, repo, scope);
+    }
     const checkLabel = `${label}-${repo.commit ?? "uncommitted"}`;
-    const audit = await new ImplementationVerifier(ctx).verify(idea, repo, scope);
     const auditPath = ctx.store.writeJson(`checks/${checkLabel.replace(/[^a-zA-Z0-9_.-]+/g, "-")}/implementation.json`, {
       commit: repo.commit, scope, ...audit,
     });
@@ -344,17 +383,19 @@ export async function checkRejection(
       return checkFailedEvidence(idea, scope, repo, base, "execution environment differs from recorded measurements; resume requires fresh measurements", report.report_path);
     }
     if (report.environment_fingerprint) ctx.scratch.check_environment = report.environment_fingerprint;
-    const recordedTests = report.checks.filter((check) => check.severity === "required" && check.executed_tests !== undefined);
-    if (recordedTests.length) {
-      const executed = recordedTests.flatMap((check) => check.executed_tests ?? []);
+    if (report.status === "ok") {
+      const recordedTests = report.checks.filter((check) => check.severity === "required" && check.kind !== "syntax" && !check.empty_suite);
+      if (!recordedTests.length || recordedTests.some((check) => check.status !== "ok" || !check.executed_tests?.length)) {
+        return checkFailedEvidence(idea, scope, repo, base, "Required tests have no execution evidence", report.report_path);
+      }
+      const executed = recordedTests.flatMap((check) => check.executed_tests ?? []).map(testIdentity);
       const missing = audit.tests.filter((item) => {
-        const ref = item.split(/\s/)[0];
-        const [file, symbol] = ref.split(":");
-        return !symbol || !executed.some((test) => test.startsWith(`${file}:${symbol}`) || test.split("::").at(-1) === symbol || test === symbol);
+        const expected = testIdentity(item);
+        return !executed.some((test) => test === expected || test.startsWith(`${expected}[`));
       });
       if (missing.length) return checkFailedEvidence(idea, scope, repo, base, `Reviewed assertions did not execute: ${missing.join(", ")}`, report.report_path);
+      return null;
     }
-    if (report.status === "ok") return null;
     const failed = report.checks.filter((check) => check.severity === "required" && check.status !== "ok");
     const detail = failed.map((check) => [
       `${check.id}:${check.status}:exit=${check.exit_code}`,

@@ -34,7 +34,9 @@ function fixtureRepo(extra: Record<string, string> = {}): string {
 test("baseline uses a git worktree and a commit, not a file copy", async () => {
   const repo = fixtureRepo();
   const problem = makeProblem({ id: "p", repo });
-  const workspace = new GitWorkspace(problem, defaultConfig(), tempDir("rsi-ws-"));
+  const root = tempDir("rsi-ws-");
+  const workspace = new GitWorkspace(problem, defaultConfig(), path.relative(process.cwd(), root));
+  assert.equal(workspace.root, path.resolve(root));
   const snapshot = await workspace.baselineRepo();
   assert.ok(snapshot.commit && snapshot.commit.length >= 7);
   assert.equal(snapshot.branch, "detached");

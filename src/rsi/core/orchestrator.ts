@@ -209,6 +209,17 @@ export class Orchestrator {
     }
     try {
       this.ctx.budget.check();
+      if (this.ctx.config.runner !== "simulated" && this.ctx.workspace.preflight) {
+        const startup = await this.ctx.workspace.preflight();
+        this.ctx.traces.append("startup_check", { status: startup.status, report_path: startup.report_path,
+          environment_fingerprint: startup.environment_fingerprint });
+        if (startup.status !== "ok") {
+          this.state.aborted = true;
+          this.state.abortReason = "check_environment_unavailable";
+          this.transition("stage.abort", "startup.checks", { report_path: startup.report_path });
+          return this.exportArtifacts(true);
+        }
+      }
       // A declared diagnosis needs a reproduced baseline first: defects are
       // measured on the baseline commit, never on an assumed number.
       if (this.ctx.problem.diagnose_command) {

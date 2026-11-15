@@ -376,9 +376,10 @@ export const ImplementationAudit: StructuredSpec<{
   modules: string[];
   tests: string[];
   findings: string[];
+  test_gaps: string[];
 }> = {
   name: "ImplementationAudit",
-  instruction: '{"decision":"good|engineer","modules":["path:symbol and verified requirement"],"tests":["trusted test path:symbol and verified assertions"],"findings":["concrete missing or incorrect implementation"]}',
+  instruction: '{"decision":"good|engineer","modules":["path:symbol and verified requirement"],"tests":["trusted test path::Class::test_name and verified assertions"],"findings":["concrete missing or incorrect implementation"],"test_gaps":["missing independent test assertions"]}',
   parse(raw) {
     const item = asRecord(raw);
     if (!item || !Array.isArray(item.modules) || !Array.isArray(item.findings)) {
@@ -391,10 +392,29 @@ export const ImplementationAudit: StructuredSpec<{
     const modules = strArray(item.modules);
     const findings = strArray(item.findings);
     const tests = strArray(item.tests);
+    const test_gaps = strArray(item.test_gaps);
     if (item.decision !== "good" && item.decision !== "engineer") {
       throw new Error("implementation audit decision must be good or engineer");
     }
-    return { decision: item.decision === "good" && !findings.length ? "good" : "engineer", modules, tests, findings };
+    return { decision: item.decision === "good" && !findings.length && !test_gaps.length ? "good" : "engineer", modules, tests, findings, test_gaps };
   },
-  fallback: () => ({ decision: "engineer", modules: [], tests: [], findings: ["Module review is unavailable."] }),
+  fallback: () => ({ decision: "engineer", modules: [], tests: [], findings: ["Module review is unavailable."], test_gaps: [] }),
+};
+
+export const IndependentTests: StructuredSpec<{ files: Array<{ name: string; source: string }> }> = {
+  name: "IndependentTests",
+  instruction: '{"files":[{"name":"test_contract.py","source":"complete CPU pytest source with independent assertions"}]}',
+  parse(raw) {
+    const files = asRecord(raw)?.files;
+    if (!Array.isArray(files) || !files.length || files.length > 8) throw new Error("independent tests require 1 to 8 files");
+    return { files: files.map((rawFile) => {
+      const file = asRecord(rawFile);
+      if (typeof file?.name !== "string" || !/^test_[A-Za-z0-9_]+\.py$/.test(file.name) ||
+        typeof file.source !== "string" || !file.source.trim() || file.source.length > 60000) {
+        throw new Error("independent tests require a test filename and bounded source");
+      }
+      return { name: file.name, source: file.source };
+    }) };
+  },
+  fallback: () => ({ files: [] }),
 };

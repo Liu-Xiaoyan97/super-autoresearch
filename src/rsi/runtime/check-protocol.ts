@@ -14,6 +14,7 @@ export interface CheckJobRequest {
   /** Hard upper bound for the whole job. */
   timeoutMs: number;
   probeOnly?: boolean;
+  collectOnly?: boolean;
 }
 
 export interface CheckJobResult {

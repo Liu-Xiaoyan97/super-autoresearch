@@ -48,7 +48,7 @@
 | R12 | 控制组和消融组数据集不同。 | 两者采用 subset 数据集。 |
 | R13 | Resume 跳过待修订稿件。 | 恢复逻辑检查接收状态和稿件 commit。 |
 | R14 | 工程修复后的 idea ID 导致原 seed 重复入队。 | 调度使用稳定 seed 身份。 |
-| R15 | 旧语义的检查缓存被复用。 | `check_version` 更新为 8。模块核查缓存版本更新为 5。 |
+| R15 | 旧语义的检查缓存被复用。 | `check_version` 更新为 9。模块核查缓存版本更新为 6。 |
 | R16 | 控制组部分 seed 失败后仍使用均值归因。 | `incumbentSubset` 检查各 seed 的状态和指标。 |
 | R17 | Full 修改代码后继续使用旧 subset 控制组。 | 控制组 commit 必须匹配当前候选。 |
 | R18 | 默认远端源码目录被其他 run 的同步删除覆盖。 | 默认路径包含 `{run_id}`。显式共享路径的风险见 U6。 |
@@ -64,7 +64,7 @@
 
 | 编号 | 状态 | 处理结果 | 实现证据 |
 |---|---|---|---|
-| U1 | engineer | 标准测试报告记录执行标识。前缀匹配和自定义命令仍存在执行证据缺口，见 A3、A4。 | `ImplementationVerifier.verify` 的 `tests`，`runChecks` 的 `executed_tests`，`checkRejection` 的 `missing`。 |
+| U1 | good | 标准测试记录文件、类和符号。自定义测试缺少执行标识会阻断交付。A3、A4 回归通过。 | `testIdentity`，`runChecks` 的 `executed_tests`，`checkRejection` 的 `missing`。 |
 | U2 | unknown | 人工停止跟进。 | 本轮用户指令。 |
 | U3 | good | 增加逐次模型耗时和交付阶段耗时。复用相同 commit 的核查和测试证据。合并小文件审计请求。 | `BaseAgent.ask` 的 `duration_s`，`checkRejection` 的 `delivery_timing`，`ImplementationVerifier.verify` 的 `chunks`。 |
 | U4 | good | 预检与实验共用远端会话。预检失败阻断实验。首个失败 seed 终止后续调度。 | `AdapterSpec.preflight`，`buildRemoteInvocation` 的 `preflight`，`runSeeded`。 |
@@ -79,7 +79,7 @@
 | U13 | good | 默认要求 worker。`auto` 在 worker 缺失时阻断。显式 `off` 选择本地执行。 | `checkWorkerMode`，`GitWorkspace.check` 的 `mode`。 |
 | U14 | good | 全部 diff 正文进入分块审计。方法正文的全部陈述接受审计。 | `SpecAuditor.audit` 和 `MethodCodeAuditor.audit` 的 `reviewChunks`。 |
 | U15 | good | 模块核查检查实施和测试映射。Spec 审计集中检查任务约束，并缓存源码证据。 | `ImplementationVerifier.verify` 的 prompt，`SpecAuditor.audit` 的 `spec-cache`。 |
-| U16 | engineer | 模块核查只接受基线独立测试证据。新增机制缺少可信测试补充流程，见 A2。 | `GitWorkspace.reviewSources` 的 `trustedTest`，`ImplementationVerifier.verify` 的 `trustedPaths`。 |
+| U16 | good | 基线测试和独立通道新增测试提供断言证据。普通实施补丁继续保护测试。A2 回归通过。 | `IndependentTestAuthor`，`GitWorkspace.addTests`、`reviewSources`，`ImplementationVerifier.verify`。 |
 | U17 | good | 读取累计变更文件和入口的完整正文。审计分块覆盖全部正文。 | `GitWorkspace.reviewSources`，`ImplementationVerifier.verify` 的 `pieces`。 |
 | U18 | good | 默认 Rust 和 Go 只执行测试命令。删除独立构建及重复静态检查。 | `BUILTIN.rust.checks` 和 `BUILTIN.go.checks`。 |
 | U19 | unknown | 人工停止跟进。用户确认 baseline 已提交。 | 本轮用户指令。 |
@@ -157,10 +157,10 @@ Go 默认执行 `go test -v ./...`。
 旧日志为 `/tmp/rsi-final-core-tests.log`。
 该批次包含重复的完整流程执行。
 它与新的快速入口采用不同范围。
-当前快速回归执行 157 项，157 项通过，0 项失败。
+上一轮快速回归执行 157 项，157 项通过，0 项失败。
 耗时为 14.729877916 秒。
 日志为 `/tmp/rsi-fast-tests-final.log`。
-完整回归执行 172 项，172 项通过，0 项失败。
+上一轮完整回归执行 172 项，172 项通过，0 项失败。
 耗时为 352.510332292 秒。
 日志为 `/tmp/rsi-full-tests-final.log`。
 完整回归启动后仍有恢复和缓存修改。
@@ -204,15 +204,16 @@ worker 日志包含 `ready`。
 该检查调用 `checkWorkerReady`，退出码为 0。
 容器重建会中断原容器进程。
 
-远端入口执行结果为 `unknown`。
-缺少本次修改后的实机报告。
+上一轮交付时，远端入口执行结果为 `unknown`。
+本轮有界 smoke 的实机报告见后文。
 
 ## 记录更正
 
 旧 `NOTES.md` 将 U1、U16 的状态写为 `good`。
-本次核查将状态更正为 `engineer`。
-执行证据匹配和可信测试补充仍存在缺口。
-复现和源码证据见 A2 至 A4。
+后续核查发现执行证据和可信测试补充缺口。
+该次核查将状态更正为 `engineer`。
+当前实现修复这些缺口，并通过回归验证。
+当前状态和源码证据见 A2 至 A4。
 
 本轮 `docs/CONTAINER.md` 曾写“检查模式默认使用 `RSI_CHECK_WORKER=required`”。
 当前内容区分运行时默认值和 Compose 默认值。
@@ -275,19 +276,72 @@ worker 日志包含 `ready`。
 
 | 编号 | 状态 | 问题及影响 | 证据 |
 |---|---|---|---|
-| A1 | engineer | 选中基线的 manifest 未声明测试解释器。框架选择系统 Python，模型测试收集失败。 | 容器内 `loadIncumbent` 接受 commit `6a2cadc41c4436f4ac08da8db6e7865c66a98ef5`。其 `languages.python.python` 缺失。系统 Python 收集 `tests/test_dense_stack.py` 返回退出码 2，错误为 `ModuleNotFoundError: No module named 'torch'`。 |
-| A2 | engineer | 模块核查要求独立测试覆盖新机制。补丁保护禁止修改测试。当前流程缺少补充可信测试的步骤。 | `GitWorkspace.reviewSources` 只将基线测试标记为 `trustedTest=true`。`writePatch` 保护测试路径。`ImplementationVerifier.verify` 要求训练变更具备 checkpoint 重载断言。CORAL 的 `CpuSmokeTest.test_two_step_run` 使用 `--no-save`。 |
-| A3 | engineer | 执行标识使用前缀匹配。相邻名称能被计入另一断言的执行证据。 | `checkRejection` 的 `test.startsWith`。最小复现将 `tests/test_model.py:test_step_disabled` 匹配到 `tests/test_model.py:test_step`，输出 `matching=true`。 |
-| A4 | engineer | 自定义测试命令缺少执行标识时仍能获得 `status=ok`。此时交付核查跳过断言执行比对。 | 临时目录内调用 `runChecks`。required 自定义命令为 `python3 -c pass`，`kind=test`。输出为 `status=ok`、`executed_tests=null`。`checkRejection` 只在 `recordedTests.length>0` 时比对。 |
-| A5 | engineer | 启动流程缺少前置测试环境探测。检查环境问题在候选交付阶段暴露。 | `Orchestrator.run` 先执行 baseline、diagnose 和 idea search。`checkRejection` 在候选实施后调用 `workspace.check`。 |
+| A1 | good | 旧 manifest 缺少解释器时，优先使用目标已准备的 venv。 | `resolveCheckPython`。`runs/delivery-startup-1794758588335/artifacts/checks/startup/report.json` 返回 `status=ok`，解释器为目标 `.rsi/venv/bin/python`。 |
+| A2 | good | 独立请求生成补充测试。专用提交只允许新增测试文件。模块重新核查，动态检查执行新断言。 | `IndependentTestAuthor`，`GitWorkspace.addTests`，`RepoRef.validation`。`tests/checks.test.ts` 覆盖生成、提交、执行和保护。真实训练契约报告见下文。 |
+| A3 | good | 比对完整文件、类和测试名。参数化测试只接受同一测试的参数后缀。 | `testIdentity` 和 `checkRejection`。`tests/delivery-flow.test.ts` 验证相邻名称和不同文件无法匹配。 |
+| A4 | good | 每项动态测试需要执行标识。自定义命令输出 JSON `executed_tests`。缺少标识会阻断交付。 | `customExecutedTests`，`runChecks`，`checkRejection`。`tests/checks.test.ts` 验证空命令报告无法授权交付。 |
+| A5 | good | 启动探测在模型和实验之前检查环境并收集 pytest。worker 协议更新为 3。 | `GitWorkspace.preflight`，`Orchestrator.run` 的 `startup_check`。`tests/delivery-flow.test.ts` 验证启动失败后调用计数为 0。 |
 | A6 | unknown | 最新框架的远端训练、修复、消融、写作全流程缺少实机验证。 | 现有完整流程测试调用 `mockRun`。远端回归注入模拟 transport。`handoff.md` 缺少本次版本的真实完整 run 报告。 |
 
 目标 `.rsi/venv/bin/python` 包含 pytest、torch 和 pyarrow。
 使用该解释器收集同一测试文件时，退出码为 0。
 该命令收集 7 项测试，耗时为 0.94 秒。
 这次检查仅收集测试。
-测试执行结果为 `unknown`。
-缺少目标 venv 下实际执行这些测试的报告。
+本轮另行执行真实动态测试。
+原基线的 25 项测试全部通过。
+该次 pytest 耗时为 4.00 秒。
+报告为 `runs/delivery-tests-1794758978779/artifacts/checks/baseline-dynamic/report.json`。
+
+真实补充测试覆盖前向、梯度、参数更新和 checkpoint 重载。
+该测试调用真实模型的保存与加载入口。
+该测试要求重载 logits 逐值相等。
+原有 25 项测试通过，pytest 耗时为 3.20 秒。
+新增 1 项测试通过，pytest 耗时为 1.33 秒。
+报告为 `runs/delivery-contract-1794759626471/artifacts/checks/training-contract/report.json`。
+
+远端有界 smoke 返回 `status=ok`。
+该次执行 1 个训练步骤。
+评测限制为每项任务 1 条记录。
+报告为 `runs/adapter-smoke-65492906-a2c6-4dc3-af3b-19ddc8056fae/artifacts/smoke-summary.json`。
+完整科研流程结果仍为 `unknown`。
+缺少真实候选完成修复、归因和论文交付的报告。
+
+最终快速回归执行 165 项，165 项通过，0 项失败。
+耗时为 20.914620208 秒。
+日志为 `/tmp/rsi-fast-delivery-final.log`。
+完整回归执行 178 项，178 项通过，0 项失败。
+耗时为 359.029234208 秒。
+日志为 `/tmp/rsi-full-delivery-current.log`。
+完整回归启动后新增补充测试流程和原生测试标识回归。
+最终快速回归覆盖这些修改。
+最终类型检查退出码为 0。
+日志为 `/tmp/rsi-typecheck-delivery-final.log`。
+
+验证期间，没有基线测试的 fixture 返回 pytest 退出码 5。
+本次 agent 曾通过增加 fixture 基线断言绕过该问题。
+当前实现允许启动收集报告空测试集合。
+实际交付仍要求补充测试提供执行证据。
+生成交付回归使用空基线测试集合，并执行新增断言。
+另一轮新增测试收集插件未执行补充文件。
+当前实现改用独立 required pytest 命令。
+回归确认原有断言和补充断言均执行。
+
+容器探测首次使用相对运行根目录。
+`git worktree add` 将该路径解释为目标仓库的相对目录。
+后续 checkout 返回 `spawnSync git ENOENT`。
+当前 `GitWorkspace` 构造器将运行根目录解析为绝对路径。
+错误 worktree 已通过 `git worktree remove --force` 清除。
+`tests/workspace-patch.test.ts` 的基线 worktree 回归使用相对路径验证该修复。
+该定向回归执行 1 项，1 项通过，0 项失败。
+日志为 `/tmp/rsi-relative-root-final.log`。
+
+两个部署容器于 2026 年 11 月 16 日 00 时 34 分 42 秒重新启动。
+时区为 Asia/Shanghai。
+`./container/up.sh run --force-recreate` 退出码为 0。
+`docker inspect` 显示两个容器为 `running`，重启计数为 0。
+主容器验证输出 `protocol=3`、`ready=true` 和 `test_task_stage=search`。
+该验证调用 `checkWorkerReady` 和 `stageOfTask`，退出码为 0。
+镜像仍为 `e31db013abd7`，本轮源码通过挂载加载。
 
 远端只读 SSH 查询退出码为 0。
 查询命令为 `nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader`。

@@ -251,7 +251,7 @@ test("module review covers complete source and requires immutable independent te
   ctx.workspace.reviewSources = () => [{ path: "model.py", text: "assert forward(1) == 2", trustedTest: false }];
   const rejected = await new ImplementationVerifier(ctx).verify(makeIdea(), evidence("other").code!, "subset");
   assert.equal(rejected.decision, "engineer");
-  assert.match(rejected.findings.join(" "), /untrusted/);
+  assert.match(rejected.test_gaps.join(" "), /untrusted/);
 });
 
 test("resume validates scientific protocol while allowing runtime budget changes", () => {
@@ -290,4 +290,37 @@ test("delivery rejects reviewed assertions absent from the execution report", as
   const base = evidence();
   const failure = await checkRejection(ctx, makeIdea(), "subset", base, base.code!, "assertion-mismatch");
   assert.match(failure!.result!.stderr, /did not execute/);
+});
+
+test("delivery matches file and class identities without accepting name prefixes", async () => {
+  const ctx = verificationContext();
+  (ctx.llm as any).script = { "code.verify": { decision: "good", modules: ["model.py:forward"],
+    tests: ["tests/test_model.py::TestModel::test_step checks the update"], findings: [] } };
+  let executed = ["tests/test_model.py::TestModel::test_step_disabled", "tests/test_other.py::TestModel::test_step"];
+  ctx.workspace.check = async () => ({ commit: "candidate", parent: "base", languages: ["python"], changed_files: ["model.py"], status: "ok", checks: [
+    { id: "tests", command: [], status: "ok", severity: "required", kind: "test", exit_code: 0, stdout: "", stderr: "", duration_s: 0,
+      executed_tests: executed },
+  ] });
+  const candidate = evidence();
+  const failure = await checkRejection(ctx, makeIdea(), "subset", candidate, candidate.code!, "prefix-mismatch");
+  assert.match(failure!.result!.stderr, /did not execute/);
+  executed = ["tests/test_model.py::TestModel::test_step[param]"];
+  assert.equal(await checkRejection(ctx, makeIdea(), "subset", candidate, candidate.code!, "exact-match"), null);
+  executed = [];
+  const absent = await checkRejection(ctx, makeIdea(), "subset", candidate, candidate.code!, "missing-report");
+  assert.match(absent!.result!.stderr, /no execution evidence/);
+});
+
+test("startup failure stops before any model or experiment call", async () => {
+  const o = orchestrator();
+  o.ctx.config.runner = "subprocess";
+  o.ctx.workspace.preflight = async () => ({ commit: "base", parent: null, languages: ["python"], changed_files: [], status: "failed", checks: [] });
+  let calls = 0;
+  (o as any).baseline = async () => { calls++; };
+  (o as any).limitations = async () => { calls++; };
+  (o as any).exportArtifacts = async (interrupted: boolean) => ({ interrupted });
+  const final = await o.run();
+  assert.equal(calls, 0);
+  assert.equal(o.state.abortReason, "check_environment_unavailable");
+  assert.deepEqual(final, { interrupted: true });
 });

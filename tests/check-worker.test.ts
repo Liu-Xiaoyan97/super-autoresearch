@@ -46,7 +46,7 @@ function specs(exitCode = 0): Record<string, LanguageSpec> {
       extensions: [".py"],
       checks: [{
         id: "smoke",
-        command: ["sh", "-c", `printf 'checked' >&2; exit ${exitCode}`],
+        command: ["sh", "-c", `printf 'checked' >&2; printf '%s\\n' '{"executed_tests":["tests/test_worker.py::test_worker"]}'; exit ${exitCode}`],
         timeoutS: 5,
         severity: "required",
       }],

@@ -168,7 +168,7 @@ read `/root/.ssh` or the provider key.
 Compose 默认设置 `RSI_CHECK_WORKER=auto`。
 `required` 和 `auto` 在 worker 未就绪时阻断候选。
 显式设置 `off` 使用主容器执行检查。
-worker 的 ready 协议版本为 2。
+worker 的 ready 协议版本为 3。
 更新镜像后，需要重建运行容器以加载新协议。
 
 ```bash
@@ -227,11 +227,15 @@ python3 skills/rsi-adapter/scripts/test_env.py \
 ```
 
 `RSI_PYTHON` is only the fallback for checks without an adapter interpreter.
+旧 manifest 缺少解释器时，框架优先选择目标 `.rsi/venv/bin/python`。
+启动探测使用 worker 收集 pytest 测试。
+缺少依赖会在模型调用和实验之前阻断运行。
+自定义测试命令需要输出 JSON `executed_tests` 数组。
+动态检查另行执行 `.rsi/validation/` 下的补充测试。
 The target adapter owns the actual checks. `coral-rsi` uses:
 
 ```text
 compile     required
-typecheck   advisory
 lint        advisory
 tests       required
 ```

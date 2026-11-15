@@ -45,7 +45,7 @@ const MARKETING = /\b(state[- ]of[- ]the[- ]art|groundbreaking|breakthrough|revo
 
 /** Code-producing tasks are exempt: their output is a unified diff. */
 export function isCodeSpec(name: string): boolean {
-  return /Patch$/.test(name) || name === "ImplementationInstruction" || name === "ImplementationAudit" || name === "FullSetEngineeringPatch";
+  return /Patch$/.test(name) || name === "ImplementationInstruction" || name === "ImplementationAudit" || name === "IndependentTests" || name === "FullSetEngineeringPatch";
 }
 
 export function splitSentences(text: string): string[] {

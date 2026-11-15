@@ -42,7 +42,7 @@ function processAlive(pid: number): boolean {
 export function checkWorkerReady(dir: string): boolean {
   try {
     const ready = JSON.parse(fs.readFileSync(path.join(dir, "ready.json"), "utf8")) as CheckWorkerReady;
-    if (ready.protocol !== 2) return false;
+    if (ready.protocol !== 3) return false;
     if (typeof ready.pid === "number" && ready.host === os.hostname() && !processAlive(ready.pid)) return false;
     return true;
   } catch {

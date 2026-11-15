@@ -47,6 +47,8 @@ export interface CheckResult {
   duration_s: number;
   kind?: "syntax" | "test";
   executed_tests?: string[];
+  /** Pytest found no baseline tests; separately required supplemental tests run. */
+  empty_suite?: boolean;
   language?: string;
 }
 
@@ -201,7 +203,10 @@ function inside(root: string, candidate: string): boolean {
 }
 
 function resolveCheckPython(repo: RepoRef, spec: LanguageSpec): string {
-  if (!spec.python) return process.env.RSI_PYTHON || "python3";
+  if (!spec.python) {
+    const prepared = path.join(repo.repo ?? repo.path, ".rsi", "venv", "bin", "python");
+    return fs.existsSync(prepared) ? prepared : process.env.RSI_PYTHON || "python3";
+  }
   if (path.isAbsolute(spec.python)) return spec.python;
   // The adapter lives in the source checkout. Candidate worktrees do not
   // contain its untracked test venv, so resolve relative paths against the
@@ -268,6 +273,42 @@ export function safeCheckLabel(label: string): string {
   return label.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "checks";
 }
 
+/** Compare file and symbol identities, preserving class and parameter names. */
+export function testIdentity(reference: string): string {
+  const token = reference.trim().split(/\s/)[0].replaceAll("`", "").replaceAll("\\", "/").replace(/^\.\//, "");
+  const match = /^(.*?\.(?:py|rs|go|[cm]?[jt]sx?)):{1,2}(.+)$/.exec(token);
+  return match ? `${match[1]}::${match[2].replace(/^[^\[]*/, (symbol) => symbol.replaceAll(".", "::"))}` : token;
+}
+
+function customExecutedTests(stdout: string): string[] {
+  for (const line of stdout.trim().split("\n").reverse()) {
+    try {
+      const report = JSON.parse(line);
+      if (Array.isArray(report.executed_tests) && report.executed_tests.every((item: unknown) =>
+        typeof item === "string" && item.trim())) return report.executed_tests;
+    } catch { /* A command may print logs before its JSON report. */ }
+  }
+  return [];
+}
+
+/** Attach native framework symbols to a unique committed declaration. */
+function nativeTestIdentities(repo: RepoRef, language: string, symbols: string[]): string[] {
+  const listed = spawnSync("git", ["ls-files", "-z"], { cwd: repo.path, encoding: "utf8" });
+  if (listed.status !== 0) return [];
+  const files = listed.stdout.split("\0").filter((file) => file.endsWith(language === "rust" ? ".rs" : "_test.go"));
+  const declarations = new Map<string, string[]>();
+  for (const file of files) {
+    const source = fs.readFileSync(path.join(repo.path, file), "utf8");
+    const pattern = language === "rust" ? /\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(/g : /\bfunc\s+(Test[A-Za-z0-9_]+)\s*\(/g;
+    for (const match of source.matchAll(pattern)) declarations.set(match[1], [...(declarations.get(match[1]) ?? []), file]);
+  }
+  return symbols.flatMap((symbol) => {
+    const name = language === "rust" ? symbol.split("::").at(-1)! : symbol.split("/")[0];
+    const paths = declarations.get(name) ?? [];
+    return paths.length === 1 ? [`${paths[0]}::${symbol}`] : [];
+  });
+}
+
 /** Run the selected checks and persist every result under artifacts/checks/<label>/. */
 export function runChecks(
   store: ArtifactStore,
@@ -277,6 +318,7 @@ export function runChecks(
   languages: string[],
   changedFiles: string[],
   probeOnly = false,
+  collectOnly = false,
 ): CheckReport {
   const environment = checkEnvironment(repo, specs, languages);
   const checks: CheckResult[] = [];
@@ -300,8 +342,12 @@ export function runChecks(
       if (check.command.includes("{changed_python_files}") && !changedFiles.some((file) =>
         file.endsWith(".py") && fs.existsSync(path.join(repo.path, file)))) continue;
       const command = expand(check.command, repo, python, changedFiles);
+      const kind = check.kind ?? (/^(compile|syntax|typecheck|lint|fmt|clippy|vet|build|check)$/.test(check.id) ||
+        command.includes("py_compile") || command.includes("compileall") ? "syntax" : "test");
       const testReport = path.join(store.path("checks", safe), `${safeCheckLabel(check.id)}.junit.xml`);
       const pytest = command.some((token) => path.basename(token) === "pytest");
+      if (collectOnly && !pytest) continue;
+      if (collectOnly) command.push("--collect-only");
       if (pytest) {
         fs.rmSync(testReport, { force: true });
         command.push(`--junitxml=${testReport}`, "-o", "junit_family=legacy");
@@ -317,20 +363,40 @@ export function runChecks(
       const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
       const missing = (result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT";
       let status: CheckResult["status"] = timedOut ? "timeout" : missing ? "unavailable" : (result.status ?? 1) === 0 ? "ok" : "failed";
+      const emptySuite = pytest && result.status === 5 && (collectOnly || !!repo.validation?.files.length && check.id !== "independent-tests");
+      if (emptySuite) status = "ok";
       let executedTests: string[] | undefined;
-      if (pytest && status === "ok") {
+      if (pytest && status === "ok" && !collectOnly && !emptySuite) {
         const parsed = spawnSync(python, ["-c",
-          "import json,sys,xml.etree.ElementTree as e; print(json.dumps([str(t.get('file',''))+':'+str(t.get('name','')) for t in e.parse(sys.argv[1]).iter('testcase') if t.find('skipped') is None]))", testReport],
+          [
+            "import json,sys,xml.etree.ElementTree as e",
+            "tests=[]",
+            "for t in e.parse(sys.argv[1]).iter('testcase'):",
+            " if t.find('skipped') is not None: continue",
+            " file=t.get('file','').replace('\\\\','/')",
+            " module=file.removesuffix('.py').replace('/','.')",
+            " cls=t.get('classname','')",
+            " cls=cls[len(module)+1:] if cls.startswith(module+'.') else ''",
+            " symbol='::'.join([x for x in [cls.replace('.','::'),t.get('name','')] if x])",
+            " tests.append(file+'::'+symbol)",
+            "print(json.dumps(tests))",
+          ].join("\n"), testReport],
         { encoding: "utf8", timeout: 10000 });
         try { executedTests = JSON.parse(parsed.stdout); } catch { executedTests = []; }
         if (parsed.status !== 0 || !executedTests?.length) status = "unavailable";
       }
       if (language === "rust" && command[1] === "test" && status === "ok") {
-        executedTests = [...String(result.stdout).matchAll(/^test (.+) \.\.\. ok$/gm)].map((match) => match[1]);
+        executedTests = nativeTestIdentities(repo, language,
+          [...String(result.stdout).matchAll(/^test (.+) \.\.\. ok$/gm)].map((match) => match[1]));
         if (!executedTests.length) status = "unavailable";
       }
       if (language === "go" && command[1] === "test" && status === "ok") {
-        executedTests = [...String(result.stdout).matchAll(/^--- PASS: (\S+)/gm)].map((match) => match[1]);
+        executedTests = nativeTestIdentities(repo, language,
+          [...String(result.stdout).matchAll(/^\s*--- PASS: (\S+)/gm)].map((match) => match[1]));
+        if (!executedTests.length) status = "unavailable";
+      }
+      if (kind === "test" && status === "ok" && !collectOnly && !emptySuite) {
+        executedTests ??= customExecutedTests(String(result.stdout ?? ""));
         if (!executedTests.length) status = "unavailable";
       }
       checks.push({
@@ -340,11 +406,13 @@ export function runChecks(
         severity: check.severity,
         exit_code: result.status ?? null,
         stdout: String(result.stdout ?? ""),
-        stderr: String(result.stderr ?? result.error?.message ?? ""),
+        stderr: [String(result.stderr ?? result.error?.message ?? ""),
+          kind === "test" && !collectOnly && status === "unavailable" && !executedTests?.length
+            ? "Test command did not report executed_tests evidence." : ""].filter(Boolean).join("\n"),
         duration_s: (Date.now() - started) / 1000,
-        kind: check.kind ?? (/^(compile|syntax|typecheck|lint|fmt|clippy|vet|build|check)$/.test(check.id) ||
-          command.includes("py_compile") || command.includes("compileall") ? "syntax" : "test"),
-        executed_tests: executedTests,
+        kind,
+        executed_tests: executedTests?.map(testIdentity),
+        ...(emptySuite ? { empty_suite: true } : {}),
         language,
       });
       if (check.severity === "required" && status !== "ok") break checksLoop;
@@ -352,9 +420,12 @@ export function runChecks(
   }
   const required = checks.filter((check) => check.severity === "required");
   const failed = required.some((check) => check.status !== "ok");
-  const missingTests = languages.filter((language) => !required.some((check) => check.language === language && check.kind === "test" && check.status === "ok"));
-  const status: CheckReport["status"] = failed ? "failed" : !probeOnly && languages.length > 0 && !missingTests.length ? "ok" : "unavailable";
-  if (!failed && !probeOnly && missingTests.length) checks.push({ id: "required-tests", command: [], severity: "required", status: "unavailable",
+  const missingTests = languages.filter((language) => !required.some((check) =>
+    check.language === language && check.kind === "test" && check.status === "ok" && !!check.executed_tests?.length));
+  const status: CheckReport["status"] = failed ? "failed" : collectOnly
+    ? (environment && languages.length > 0 ? "ok" : "unavailable")
+    : !probeOnly && languages.length > 0 && !missingTests.length ? "ok" : "unavailable";
+  if (!failed && !probeOnly && !collectOnly && missingTests.length) checks.push({ id: "required-tests", command: [], severity: "required", status: "unavailable",
     exit_code: null, stdout: "", stderr: `required dynamic tests are missing for: ${missingTests.join(", ")}`, duration_s: 0 });
   const report: CheckReport = {
     commit: repo.commit ?? "",
@@ -400,8 +471,9 @@ export async function runCheckJob(
   languages: string[],
   changedFiles: string[],
   probeOnly = false,
+  collectOnly = false,
 ): Promise<CheckReport> {
-  return runChecks(store, repo, label, specs, languages, changedFiles, probeOnly);
+  return runChecks(store, repo, label, specs, languages, changedFiles, probeOnly, collectOnly);
 }
 
 export { BUILTIN };

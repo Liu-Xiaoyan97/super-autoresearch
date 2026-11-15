@@ -116,6 +116,8 @@ export interface Workspace {
   run(repo: RepoRef, scope: Scope, idea?: Idea | null, seed?: number): Promise<ExperimentResult>;
   /** Target-owned deterministic checks after patch; absent means unavailable. */
   check?(repo: RepoRef, label: string): Promise<CheckReport>;
+  preflight?(): Promise<CheckReport>;
+  addTests?(repo: RepoRef, files: Array<{ name: string; source: string }>, requirement: string): Promise<RepoRef>;
   /** Called after each actual benchmark result, including failures. */
   onExperimentResult?: () => void;
   /** Source context for coding agents (git tree + relevant files at a commit). */
@@ -1001,9 +1003,9 @@ export class GitWorkspace implements Workspace {
   constructor(problem: Problem, config: Config, root: string, runner?: Runner, sourceOverride?: string, signal?: AbortSignal) {
     this.problem = problem;
     this.config = config;
-    this.root = root;
+    this.root = path.resolve(root);
     this.sourceOverride = sourceOverride;
-    this.store = new ArtifactStore(root);
+    this.store = new ArtifactStore(this.root);
     this.runner =
       runner ??
       (config.runner === "simulated"
@@ -1144,7 +1146,7 @@ export class GitWorkspace implements Workspace {
     // upgrade or adapter edit must not replay an old pass.
     const material = JSON.stringify({
       // Invalidate reports when candidate-check semantics change.
-      check_version: 8,
+      check_version: 9,
       environment,
       commit: repo.commit ?? "",
       changedFiles: changedFiles.slice().sort(),
@@ -1170,6 +1172,52 @@ export class GitWorkspace implements Workspace {
     return copy;
   }
 
+  private checkSpecs(repo: RepoRef): Record<string, LanguageSpec> {
+    const specs = languageSpecs(this.adapter);
+    if (repo.validation?.files.length) {
+      specs.python.checks = [...specs.python.checks, {
+        id: "independent-tests", command: ["{python}", "-m", "pytest", "-q", "-x", ...repo.validation.files],
+        kind: "test", severity: "required", timeoutS: 300,
+      }];
+    }
+    return specs;
+  }
+
+  async preflight(): Promise<CheckReport> {
+    if (this.simulatedRunner) return { commit: "", parent: null, languages: [], changed_files: [], status: "ok", checks: [] };
+    const baseline = await this.baselineRepo();
+    const repo = { ...baseline, parent: baseline.commit ?? null };
+    const files = git(this.worktree, ["ls-tree", "-r", "--name-only", "-z", repo.commit!]).stdout.split("\0").filter(Boolean);
+    const specs = languageSpecs(this.adapter);
+    const languages = detectLanguages(files, specs);
+    const mode = checkWorkerMode();
+    const dir = checkWorkerDir(this.root);
+    if (mode !== "off" && !checkWorkerReady(dir)) return workerUnavailableReport(repo, `check worker is not ready at ${dir}`);
+    const report = mode === "off"
+      ? await runCheckJob(this.store, repo, "startup", specs, languages, files, false, true)
+      : await runCheckInWorker(dir, { root: path.resolve(this.root), repo, label: "startup", specs, languages,
+          changedFiles: files, timeoutMs: checkTimeoutMs(specs, languages, files), collectOnly: true });
+    return report;
+  }
+
+  async addTests(repo: RepoRef, files: Array<{ name: string; source: string }>, requirement: string): Promise<RepoRef> {
+    await this.init();
+    if (!/^[a-f0-9]{32}$/.test(requirement) || !files.length || files.length > 8 ||
+      new Set(files.map((file) => file.name)).size !== files.length ||
+      files.some((file) => !/^test_[A-Za-z0-9_]+\.py$/.test(file.name) || !file.source.trim() || file.source.length > 60000)) {
+      throw new PatchRejectedError("independent tests require unique Python test files and a requirement identity");
+    }
+    const directory = `.rsi/validation/${requirement}/${repo.commit}`;
+    const patch = files.map((file) => {
+      const lines = file.source.replace(/\n?$/, "\n").split("\n").slice(0, -1);
+      return `--- /dev/null\n+++ b/${directory}/${file.name}\n@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join("\n")}\n`;
+    }).join("");
+    const tested = await this.applyPatch(repo, patch, `${repo.label}-tests`, { testDirectory: directory });
+    return { ...tested, parent: repo.parent, patch: `${repo.patch}\n${patch}`,
+      validation: { requirement, commit: tested.commit!, files: [...(repo.validation?.requirement === requirement ? repo.validation.files : []),
+        ...files.map((file) => `${directory}/${file.name}`)] } };
+  }
+
   async check(repo: RepoRef, label: string): Promise<CheckReport> {
     await this.init();
     const empty = (status: CheckReport["status"]): CheckReport => ({
@@ -1188,8 +1236,9 @@ export class GitWorkspace implements Workspace {
     if (changed.status !== 0) return empty("unavailable");
     const changedFiles = changed.stdout.split("\0").filter(Boolean);
     if (!changedFiles.length) changedFiles.push(...git(this.worktree, ["ls-tree", "-r", "--name-only", "-z", commit]).stdout.split("\0").filter(Boolean));
-    const specs = languageSpecs(this.adapter);
+    const specs = this.checkSpecs(repo);
     const languages = detectLanguages(changedFiles, specs);
+    if (repo.validation?.files.length && !languages.includes("python")) languages.push("python");
     if (!languages.length) return empty("failed");
     const mode = checkWorkerMode();
     const workerDir = checkWorkerDir(this.root);
@@ -1248,6 +1297,10 @@ export class GitWorkspace implements Workspace {
   }
 
   async writePatch(repo: RepoRef, patch: string, label: string, opts: { allowEmpty?: boolean } = {}): Promise<RepoRef> {
+    return this.applyPatch(repo, patch, label, opts);
+  }
+
+  private async applyPatch(repo: RepoRef, patch: string, label: string, opts: { allowEmpty?: boolean; testDirectory?: string } = {}): Promise<RepoRef> {
     await this.init();
     const parent = repo.commit || this.baseCommit;
     this.checkout(parent, true);
@@ -1319,6 +1372,7 @@ export class GitWorkspace implements Workspace {
     const branch = `${this.branchPrefix}/${safe}-${++this.branchSeq}`;
     git(this.worktree, ["checkout", "-B", branch]);
     git(this.worktree, ["add", "-A"]);
+    if (opts.testDirectory) git(this.worktree, ["add", "-f", "--", opts.testDirectory]);
     const status = git(this.worktree, ["status", "--porcelain"]).stdout.trim();
     // A supplied diff that leaves the tree identical is not a code change; the
     // measurement would silently reuse the parent commit's cached numbers.
@@ -1358,7 +1412,10 @@ export class GitWorkspace implements Workspace {
       const files = git(this.worktree, ["diff", "--no-renames", "--name-only", "-z", parent, commit]).stdout
         .split("\0").filter(Boolean);
       const commands = [...(this.problem.experiment_command ?? []), ...(this.problem.diagnose_command ?? []), ...(this.adapter?.preflight ?? [])];
-      const forbidden = files.filter((file) =>
+      const forbidden = opts.testDirectory ? files.filter((file) =>
+        !file.startsWith(`${opts.testDirectory}/`) || !/^test_[A-Za-z0-9_]+\.py$/.test(path.posix.basename(file)) ||
+        git(this.worktree, ["cat-file", "-e", `${parent}:${file}`], true).status === 0 ||
+        git(this.worktree, ["ls-tree", commit, "--", file]).stdout.startsWith("120000")) : files.filter((file) =>
         protectedRules.some((rule) => matchesProtected(file, rule)) ||
         /(^|\/)(?:tests?|__tests__)(\/|$)/.test(file) ||
         /(^|\/)(?:test_[^/]*|[^/]*(?:_test|\.test|\.spec))\.(?:py|go|ts|tsx|js|jsx|rs)$/.test(file) ||
@@ -1383,6 +1440,7 @@ export class GitWorkspace implements Workspace {
       repo: this.source,
       commit,
       branch,
+      validation: repo.validation,
     };
   }
 
@@ -1456,7 +1514,8 @@ export class GitWorkspace implements Workspace {
     if (this.problem.remote) {
       const changed = repo.parent && repo.commit
         ? git(this.worktree, ["diff", "--name-only", "-z", repo.parent, repo.commit]).stdout.split("\0") : [];
-      const pythonFiles = changed.filter((file) => file.endsWith(".py") && fs.existsSync(path.join(repo.path, file)));
+      const pythonFiles = changed.filter((file) => !file.startsWith(".rsi/validation/") &&
+        file.endsWith(".py") && fs.existsSync(path.join(repo.path, file)));
       req.preflight = this.adapter?.preflight ?? (pythonFiles.length ? ["{python}", "-m", "py_compile", ...pythonFiles] : []);
     }
     const cache = this.measurementCache(req, seed);
@@ -1523,12 +1582,22 @@ export class GitWorkspace implements Workspace {
       ? git(this.worktree, ["diff", "--no-renames", "--name-only", "-z", this.baseCommit, commit]).stdout.split("\0")
       : files);
     const commands = [...(this.problem.experiment_command ?? DEFAULT_EXPERIMENT_COMMAND), ...(this.problem.diagnose_command ?? [])];
-    const selected = files.filter((file) => changed.has(file) || commands.some((token) => token.replaceAll("{repo}/", "") === file));
+    const selected = files.filter((file) => !file.startsWith(".rsi/validation/") &&
+      (changed.has(file) || commands.some((token) => token.replaceAll("{repo}/", "") === file)));
     const sources = selected.map((file) => ({ path: file, text: git(this.worktree, ["show", `${commit}:${file}`]).stdout, trustedTest: false }));
     const tests = git(this.worktree, ["ls-tree", "-r", "--name-only", "-z", this.baseCommit]).stdout.split("\0")
       .filter((file) => /\.(py|go|rs|[cm]?[jt]sx?)$/.test(file) &&
         /(^|\/)(tests?|__tests__)(\/|$)|(^|\/)(test_[^/]*|[^/]*(_test|\.test|\.spec))\.(py|go|[cm]?[jt]sx?|rs)$/.test(file));
     for (const file of tests) sources.push({ path: file, text: git(this.worktree, ["show", `${this.baseCommit}:${file}`]).stdout, trustedTest: true });
+    for (const file of repo.validation?.files ?? []) {
+      if (!file.startsWith(`.rsi/validation/${repo.validation!.requirement}/`) || !/^test_[A-Za-z0-9_]+\.py$/.test(path.posix.basename(file))) {
+        throw new Error("independent test path is invalid");
+      }
+      const expected = git(this.worktree, ["show", `${repo.validation!.commit}:${file}`]).stdout;
+      const actual = git(this.worktree, ["show", `${commit}:${file}`]).stdout;
+      if (expected !== actual) throw new Error(`independent test changed after authorship: ${file}`);
+      sources.push({ path: file, text: actual, trustedTest: true });
+    }
     sources.push({ path: "(target check commands)", text: stableString(languageSpecs(this.adapter)), trustedTest: false });
     return sources;
   }

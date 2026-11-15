@@ -77,6 +77,7 @@ export const SOP_STAGES: readonly StageSpec[] = [
     tasks: [
       "code.implement",
       "code.verify",
+      "code.tests",
       "code.subset",
       "critic.subset",
       "engineer.subset",
