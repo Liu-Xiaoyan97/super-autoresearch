@@ -1180,6 +1180,7 @@ export class GitWorkspace implements Workspace {
     // Checks may create caches or generated files. The measured commit, not a
     // dirty check worktree, is the candidate that goes to the runner.
     try { this.checkout(repo.commit, true); } catch { /* report remains authoritative */ }
+    report.report_path = this.store.artifact(`checks/${safeName(label)}/report.json`);
     this.store.writeJson(`checks/${safeName(label)}/report.json`, report);
     this.checkCache.set(cacheKey, report);
     return report;

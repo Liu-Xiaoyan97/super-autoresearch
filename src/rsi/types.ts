@@ -198,6 +198,8 @@ export interface Evidence {
   label: string;
   /** Per-seed subset measurements; empty/one for full and single-seed scopes. */
   samples?: SeedSample[];
+  /** Artifact path of the deterministic check report, when checks ran. */
+  check_report?: string;
 }
 
 export interface Verdict {

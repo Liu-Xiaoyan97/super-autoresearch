@@ -55,6 +55,8 @@ export interface CheckReport {
   changed_files: string[];
   status: "ok" | "failed" | "unavailable";
   checks: CheckResult[];
+  /** Immutable artifact reference for evidence/repair provenance. */
+  report_path?: string;
 }
 
 export interface AdapterSpec {
@@ -246,6 +248,7 @@ export function runChecks(
     changed_files: changedFiles,
     status,
     checks,
+    report_path: store.artifact(`checks/${safe}/report.json`),
   };
   const root = store.path("checks", safe);
   fs.mkdirSync(root, { recursive: true });

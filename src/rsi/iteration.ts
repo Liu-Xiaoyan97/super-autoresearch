@@ -544,8 +544,18 @@ export async function runIteration(opts: IterationOptions): Promise<IterationRes
     // forbidden action negatively ("never train on the test split").
     store.writeJson("idea.json", result.idea);
     progress(ctx, measureBaseline ? "iteration: changed candidate subset (2/2)" : "iteration: changed candidate subset (1/1)");
-    await new SubsetCoder(ctx).implement(result.idea, { base: result.baseline!, scope: runScope });
-    result.verdict = await new ResultComparison(ctx).compare(result.candidate!, result.baseline!);
+    const candidateEvidence = await new SubsetCoder(ctx).implement(result.idea, { base: result.baseline!, scope: runScope });
+    // A rejected patch/check returns failed evidence without running the
+    // experiment; keep that candidate available for repair/audit instead of
+    // dereferencing a null result.candidate.
+    if (!result.candidate) result.candidate = candidateEvidence;
+    if (candidateEvidence.code) result.candidateRepo = candidateEvidence.code;
+    if (candidateEvidence.result?.status !== "ok") {
+      result.errors.push(candidateEvidence.result?.stderr || "candidate implementation failed");
+      result.verdict = { decision: "refine", feedback: result.errors.at(-1)!, metrics: {}, notes: "implementation failed before measurement" };
+    } else {
+      result.verdict = await new ResultComparison(ctx).compare(result.candidate, result.baseline!);
+    }
     result.executed = true;
     result.status = "executed";
     result.accepted = result.verdict.decision === "good";

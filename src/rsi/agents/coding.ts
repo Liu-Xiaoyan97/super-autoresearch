@@ -197,6 +197,7 @@ export function checkFailedEvidence(
   repo: RepoRef,
   base: Evidence,
   message: string,
+  reportPath = "",
 ): Evidence {
   return makeEvidence({
     idea_id: idea.id,
@@ -214,6 +215,7 @@ export function checkFailedEvidence(
     },
     label: `${repo.label}-check-failed`,
     samples: [],
+    check_report: reportPath || undefined,
   });
 }
 
@@ -231,7 +233,7 @@ export async function checkRejection(
     if (report.status === "ok") return null;
     const failed = report.checks.filter((check) => check.status !== "ok");
     const detail = failed.map((check) => `${check.id}:${check.status}:${check.stderr}`).join("\n").slice(0, 1200);
-    return checkFailedEvidence(idea, scope, repo, base, detail || report.status);
+    return checkFailedEvidence(idea, scope, repo, base, detail || report.status, report.report_path);
   } catch (error) {
     return checkFailedEvidence(idea, scope, repo, base, (error as Error)?.message ?? String(error));
   }
