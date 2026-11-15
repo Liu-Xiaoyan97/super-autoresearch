@@ -177,6 +177,42 @@ The worker never installs tools at startup. Its Python, Rust and Go toolchains
 come from the image, and `bootstrap.sh` verifies the same binaries in the main
 container.
 
+### Target CPU check environment
+
+Target tests often need dependencies that are not in the check image, for
+example `torch` and `pyarrow`. Install a Linux CPU environment in the shared
+`runs/` mount:
+
+```bash
+./container/up.sh exec bash -lc '
+  python3 -m venv /workspace/RSI/runs/.check-env
+  /workspace/RSI/runs/.check-env/bin/python -m pip install \
+    --index-url https://pypi.org/simple \
+    --extra-index-url https://download.pytorch.org/whl/cpu \
+    "torch==2.12.0+cpu" numpy pyarrow pytest
+'
+```
+
+`container/compose.yaml` passes `RSI_PYTHON` to both services, defaulting to
+`/workspace/RSI/runs/.check-env/bin/python`. Built-in Python compile, pyright
+and pytest commands use `{python}`.
+
+The target adapter owns the actual checks. `coral-rsi` uses:
+
+```text
+compile     required
+typecheck   advisory
+lint        advisory
+tests       required
+```
+
+The `tests` check runs in the candidate worktree and therefore imports the
+candidate code. Use the target adapter to select the target's tests and
+environment; the built-in defaults are only a starting point.
+
+The host's macOS Python/torch environment cannot run in the Linux worker.
+Create a Linux environment inside the shared mount instead.
+
 ## External target repositories
 
 Set the host workspace and container mount in `container/.env`:

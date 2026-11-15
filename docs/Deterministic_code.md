@@ -638,6 +638,11 @@ filesystem 边界是“只读 RSI + 只写 runs”，不是嵌套 VM。
 `GOBIN`、`GOCACHE`、`GOMODCACHE`。`HOME`/`TMPDIR` 重定向到 check 隔离目录；
 API key 和 SSH 变量不继承。
 
+`RSI_PYTHON` 指向目标 CPU 测试解释器，默认
+`/workspace/RSI/runs/.check-env/bin/python`。Python built-in 的 compile、
+pyright 和 pytest 使用该解释器；目标 adapter 可以覆盖检查命令。宿主 macOS
+的 Python/torch 不能直接在 Linux worker 中运行。
+
 ---
 
 ## 11. 新增语言接入说明

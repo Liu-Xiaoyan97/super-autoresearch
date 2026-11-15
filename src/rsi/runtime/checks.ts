@@ -76,10 +76,10 @@ const BUILTIN: Record<string, LanguageSpec> = {
     extensions: [".py"],
     manifests: ["pyproject.toml", "requirements.txt", "setup.py"],
     checks: [
-      { id: "compile", command: ["python3", "-m", "compileall", "-q", "."], timeoutS: 60, severity: "required" },
-      { id: "typecheck", command: ["pyright", "--outputjson"], timeoutS: 120, severity: "required" },
+      { id: "compile", command: ["{python}", "-m", "compileall", "-q", "."], timeoutS: 60, severity: "required" },
+      { id: "typecheck", command: ["pyright", "--pythonpath", "{python}", "--outputjson"], timeoutS: 120, severity: "required" },
       { id: "lint", command: ["ruff", "check", "."], timeoutS: 60, severity: "advisory" },
-      { id: "tests", command: ["pytest", "-q", "-x"], timeoutS: 300, severity: "required" },
+      { id: "tests", command: ["{python}", "-m", "pytest", "-q", "-x"], timeoutS: 300, severity: "required" },
     ],
     lsp: { command: ["pyright-langserver", "--stdio"], root: "." },
   },

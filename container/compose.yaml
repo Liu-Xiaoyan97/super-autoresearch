@@ -14,7 +14,7 @@ services:
       PI_MODEL: ${PI_MODEL:-deepseek-v4.1-flash}
       PI_REASONING_LEVEL: ${PI_REASONING_LEVEL:-high}
       NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmmirror.com}
-      RSI_PYTHON: ${RSI_PYTHON:-python3}
+      RSI_PYTHON: ${RSI_PYTHON:-/workspace/RSI/runs/.check-env/bin/python}
       # Optional SSH target used when Problem.remote.host is empty.
       RSI_REMOTE_HOST: ${RSI_REMOTE_HOST:-}
       # Highest permission for superagent SOP rules (experiments included).
@@ -75,6 +75,7 @@ services:
       GOTOOLCHAIN: local
       GOPATH: /root/go
       GOBIN: /usr/local/bin
+      RSI_PYTHON: ${RSI_PYTHON:-/workspace/RSI/runs/.check-env/bin/python}
       RSI_CHECK_WORKER_DIR: ${RSI_CHECK_WORKER_DIR:-/workspace/RSI/runs/.check-worker}
     volumes:
       - ..:/workspace/RSI:ro
