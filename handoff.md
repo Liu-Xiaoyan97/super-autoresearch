@@ -441,6 +441,18 @@ go / gopls
 - 保持主容器在当前 Docker/Kiri 设置中可用；
 - 记录构建参数与 registry/proxy 用法。
 
+### 6.6.1 Current execution boundary
+
+The embedded tools are available in the main `pi-agent:local` image. Checks and
+LSP currently run from that container, with `HOME`/`TMPDIR` redirected to the
+check artifact directory and API/SSH environment variables not inherited.
+This is **not a complete filesystem or network sandbox**: the target process can
+still read mounts visible to the main container and can attempt network access.
+
+The secret-free isolated worker is the recommended hardening step but is not
+implemented in this change. Do not claim filesystem/network isolation until that
+worker exists.
+
 ### 6.7 失败语义
 
 - required 检查失败 → `failed evidence` → `invalid` → 修复；

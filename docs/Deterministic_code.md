@@ -576,11 +576,14 @@ nix develop
 - 检查工作区只挂载候选 worktree；
 - 不把 RSI 源码作为可写输入；
 - 检查环境不暴露 API key、SSH 或无关 secrets；
+- 当前已嵌入主镜像，但主容器仍以 root 运行；已隔离 HOME/TMPDIR 和最小 env，
+  仍未实现完整 filesystem/network sandbox；如需严格隔离应使用 secret-free worker。
 - timeout；
 - 资源限制；
 - check 产物不写回目标仓库；
 - 版本固定；
-- 不自动下载语言工具。
+- 不自动下载语言工具；
+- 当前已嵌入主镜像，但 check/LSP 的完整隔离工作区仍是后续硬化项。
 
 ---
 

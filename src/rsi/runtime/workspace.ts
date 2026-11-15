@@ -1150,6 +1150,8 @@ export class GitWorkspace implements Workspace {
     const specs = languageSpecs(this.adapter);
     const languages = detectLanguages(changedFiles, specs);
     if (!languages.length) return empty("failed");
+    const checkHome = this.store.path("checks", safeName(label), "home");
+    fs.mkdirSync(checkHome, { recursive: true });
     const report = runChecks(this.store, repo, label, specs, languages, changedFiles);
     // LSP is an optional semantic diagnostic. It is advisory unless the target
     // adapter explicitly requires it. It never edits the worktree.
@@ -1157,7 +1159,10 @@ export class GitWorkspace implements Workspace {
       const lsp = this.adapter?.languages?.[language]?.lsp;
       if (!lsp) continue;
       const started = Date.now();
-      const result = await lspDiagnostics(repo.path, lsp, changedFiles);
+      const result = await lspDiagnostics(repo.path, {
+        ...lsp,
+        env: { ...(lsp.env ?? {}), HOME: checkHome, TMPDIR: path.join(checkHome, "tmp") },
+      }, changedFiles);
       const severity = lsp.severity ?? "advisory";
       report.checks.push({
         id: `lsp-${language}`,

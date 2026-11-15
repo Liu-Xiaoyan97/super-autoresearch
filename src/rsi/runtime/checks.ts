@@ -159,9 +159,18 @@ export function detectLanguages(
 
 const SAFE_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "TZ"] as const;
 
-function safeEnv(extra: Record<string, string> | undefined): NodeJS.ProcessEnv {
+function safeEnv(extra: Record<string, string> | undefined, home?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const key of SAFE_ENV_KEYS) if (process.env[key] !== undefined) env[key] = process.env[key];
+  if (home) {
+    // Do not expose /root/.ssh, /root/.pi or other credential-bearing homes to
+    // target check commands.
+    env.HOME = home;
+    env.TMPDIR = path.join(home, "tmp");
+    env.XDG_CACHE_HOME = path.join(home, ".cache");
+    fs.mkdirSync(env.TMPDIR, { recursive: true });
+    fs.mkdirSync(env.XDG_CACHE_HOME, { recursive: true });
+  }
   return { ...env, ...(extra ?? {}) };
 }
 
@@ -187,6 +196,9 @@ export function runChecks(
   changedFiles: string[],
 ): CheckReport {
   const checks: CheckResult[] = [];
+  const safe = label.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "checks";
+  const checkHome = path.join(store.path("checks", safe), "home");
+  fs.mkdirSync(checkHome, { recursive: true });
   for (const language of languages) {
     const spec = specs[language];
     if (!spec) continue;
@@ -204,7 +216,7 @@ export function runChecks(
       const started = Date.now();
       const result = spawnSync(expand(check.command, repo)[0], expand(check.command, repo).slice(1), {
         cwd,
-        env: safeEnv(check.env),
+        env: safeEnv(check.env, checkHome),
         encoding: "utf8",
         timeout: Math.max(1, check.timeoutS) * 1000,
         maxBuffer: 8 * 1024 * 1024,
@@ -235,7 +247,6 @@ export function runChecks(
     status,
     checks,
   };
-  const safe = label.replace(/[^a-zA-Z0-9_.-]+/g, "-").replace(/^-+|-+$/g, "") || "checks";
   const root = store.path("checks", safe);
   fs.mkdirSync(root, { recursive: true });
   for (const check of checks) {
