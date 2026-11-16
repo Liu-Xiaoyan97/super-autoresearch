@@ -4,7 +4,7 @@ import { checkRejection } from "../src/rsi/agents/coding.ts";
 import { Orchestrator } from "../src/rsi/core/orchestrator.ts";
 import { ResearchState } from "../src/rsi/core/state.ts";
 import { GitWorkspace } from "../src/rsi/runtime/workspace.ts";
-import { makeEvidence, makeIdea, makeIntegrity, makeManuscript, makeReview, makeTrace, makeVerdict } from "../src/rsi/types.ts";
+import { makeCheckpoint, makeEvidence, makeIdea, makeIntegrity, makeManuscript, makeReview, makeTrace, makeVerdict } from "../src/rsi/types.ts";
 import { makeContext } from "./helpers.ts";
 
 function verificationContext() {
@@ -300,6 +300,37 @@ test("each persisted candidate checks its own environment before evidence reuse"
   restored.record(makeTrace({ idea: makeIdea({ id: "two" }), decision: "good", evidence: [{ ...two, code: { ...two.code!, check_environment: "changed-env" } }] }));
   restored.invalidateCandidateEnvironment(new Map([["one", "python-env"], ["two", "changed-env"]]));
   assert.equal(restored.evaluatedIds.has("two"), true);
+});
+
+test("environment retirement preserves completed seeds in either trace order and after restore", () => {
+  for (const reverse of [false, true]) {
+    for (const decision of ["good", "bad"] as const) {
+      const ctx = makeContext({ config: { runner: "subprocess" } });
+      const state = new ResearchState(ctx.problem, ctx.config);
+      state.seeds = [makeIdea({ id: "root" }), makeIdea({ id: "retry" })];
+      const old = evidence("old"), current = evidence("current"), retry = evidence("retry");
+      old.code!.check_environment = "old-env";
+      current.code!.check_environment = "current-env";
+      const traces = [
+        makeTrace({ seed_id: "root", idea: makeIdea({ id: "old" }), decision: "good", evidence: [old] }),
+        makeTrace({ seed_id: "root", idea: makeIdea({ id: "current" }), decision, evidence: [current] }),
+      ];
+      for (const trace of reverse ? traces.reverse() : traces) state.record(trace);
+      state.record(makeTrace({ seed_id: "retry", idea: makeIdea({ id: "retry" }), decision: "good", evidence: [retry] }));
+      state.checkpoint(makeCheckpoint({ idea_id: "root", trace: makeTrace({ seed_id: "root", evidence: [old] }) }));
+      const environments = new Map([["old", "changed-env"], ["current", "current-env"]]);
+      state.invalidateCandidateEnvironment(environments);
+      for (const restored of [state, ResearchState.fromDict(ctx.problem, ctx.config, JSON.parse(JSON.stringify(state.toDict())))]) {
+        restored.invalidateCandidateEnvironment(environments);
+        assert.equal(restored.evaluatedIds.has("root"), true);
+        assert.equal(restored.evaluatedIds.has("current"), true);
+        assert.equal(restored.evaluatedIds.has("old"), false);
+        assert.equal(restored.checkpointFor("root"), null);
+        assert.deepEqual(restored.nextSeeds(2).map((idea) => idea.id), ["retry"]);
+        assert.equal(restored.traces.filter((trace) => !trace.invalid).length, 1);
+      }
+    }
+  }
 });
 
 test("normal resume retires changed-environment evidence before continuing research", async () => {

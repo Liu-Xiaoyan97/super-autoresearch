@@ -277,6 +277,11 @@ export class ResearchState {
       retired++;
     }
     if (retired) {
+      for (const trace of this.traces) {
+        if (trace.invalid) continue;
+        this.evaluatedIds.add(trace.seed_id ?? trace.idea.id);
+        this.evaluatedIds.add(trace.idea.id);
+      }
       this.searchDone = false;
       this.specReports = {};
       this.ablations = this.ablations.filter((result) => !stale(result.evidence));

@@ -450,3 +450,42 @@ baseline 按用户已授权的可信协议保留。
 查询命令为 `nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader`。
 查询输出为空。
 该结果只说明查询时没有列出的 GPU 计算进程。
+
+## 当前框架复查新增缺陷 C1
+
+C1 当前状态为 `good`。
+上轮环境证据修复遗漏同一 seed 的多个历史候选。
+修复前，旧 trace 环境失效会删除 seed 的 evaluated 标记。
+修复前，同一 seed 的有效新 trace 无法恢复该标记。
+最小复现输出 `valid_winner=["new"]` 和 `evaluated_after=false`。
+同次复现的 `nextSeeds(1)` 返回 `root`。
+该行为使已存在有效结果的 seed 再次进入调度。
+实现证据为 `src/rsi/core/state.ts` 的 `invalidateCandidateEnvironment` 和 `nextSeeds`。
+本次复现使用内存状态，没有启动实验。
+真实重复训练的耗时为 `unknown`。
+缺少该分支的实机训练记录。
+
+本轮在环境证据失效处理后，恢复有效 trace 的已评估标记。
+该规则同时保留有效的 good 和 bad 判定。
+新增回归覆盖 trace 两种顺序、checkpoint 清理、状态恢复和重复核对。
+原复现现在输出 `evaluated_after=true` 和 `scheduled_again=[]`。
+证据为 `/tmp/rsi-c1-repro.log`。
+组合检查执行 512 组，失败数为 0。
+证据为 `/tmp/rsi-c1-combinations.log`。
+快速回归执行 172 项，172 项通过，0 项失败。
+耗时为 25.079780125 秒。
+日志为 `/tmp/rsi-c1-fast.log`。
+类型检查退出码为 0。
+日志为 `/tmp/rsi-c1-typecheck.log`。
+完整回归执行 187 项，187 项通过，0 项失败。
+耗时为 435.46406575 秒。
+日志为 `/tmp/rsi-c1-full.log`。
+本轮复查未复现 C1 的旧行为。
+完整科研恢复结果仍为 `unknown`，缺少长期 run 的恢复报告。
+独立 worktree 验证本次暂存快照。
+其快速回归执行 172 项，172 项通过，0 项失败。
+耗时为 24.67932375 秒。
+日志为 `/tmp/rsi-c1-isolated-fast.log`。
+独立类型检查退出码为 0。
+日志为 `/tmp/rsi-c1-isolated-typecheck.log`。
+本次提交范围为 C1 源码、回归测试和对应记录。

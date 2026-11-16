@@ -130,3 +130,23 @@ U2、U6、U7、U8、U19 按用户指令人工停止跟进。
 
 系统架构与流程概览见 `docs/figures/rsi-system-overview.png`。
 提示词见 `docs/figures/rsi-system-overview.prompt.txt`。
+
+
+本次复查新增 C1，修复后的状态为 `good`。
+修复前，旧环境失效会删除仍有有效候选的 evaluated 标记。
+最小复现中有效 winner 保留，`nextSeeds(1)` 仍返回该 seed。
+源码证据为 `ResearchState.invalidateCandidateEnvironment` 和 `nextSeeds`。
+详细复现结果见 `NOTES.md` 的 C1。
+
+C1 修复后，有效 trace 恢复 seed 和候选的已评估标记。
+原复现返回 `scheduled_again=[]`。
+快速回归 172 项通过，类型检查通过。
+512 组调度组合检查通过。
+证据分别为 `/tmp/rsi-c1-repro.log`、`/tmp/rsi-c1-fast.log` 和 `/tmp/rsi-c1-combinations.log`。
+
+C1 修复的完整回归执行 187 项，187 项通过，0 项失败。
+耗时为 435.46406575 秒。
+日志为 `/tmp/rsi-c1-full.log`。
+
+本次提交快照另通过独立 worktree 的 172 项快速回归和类型检查。
+日志为 `/tmp/rsi-c1-isolated-fast.log` 和 `/tmp/rsi-c1-isolated-typecheck.log`。
